@@ -1,4 +1,5 @@
 #include "gl_renderer.hpp"
+#include "gl_quad.hpp"
 
 #include <gbm.h>
 #include <EGL/egl.h>
@@ -36,6 +37,7 @@ PFNGLEGLIMAGETARGETRENDERBUFFERSTORAGEOESPROC       glEGLImageTargetRenderbuffer
 PFNEGLCREATESYNCKHRPROC                             eglCreateSyncKHR_ = nullptr;
 PFNEGLDESTROYSYNCKHRPROC                            eglDestroySyncKHR_ = nullptr;
 PFNEGLCLIENTWAITSYNCKHRPROC                         eglClientWaitSyncKHR_ = nullptr;
+PFNGLEGLIMAGETARGETTEXTURE2DOESPROC                 glEGLImageTargetTexture2DOES_ = nullptr;
 
 } // namespace
 
@@ -87,6 +89,13 @@ struct GlRenderer::Impl {
     // малювання.
     mutable std::mutex src_mtx;
     std::vector<std::shared_ptr<source::FrameSource>> sources;
+
+    // Дві програми, бо sampler2D і samplerExternalOES — різні типи GLSL
+    // і в одну не компілюються. Перемикань за кадр буде одне, не по
+    // одному на прямокутник: відео знизу, OSD зверху, тож групуються самі.
+    GLuint prog_ext = 0;
+    GLuint vbo = 0;
+    DmabufTextureCache textures;
 
     // --- налаштування EGL ---
 
@@ -143,6 +152,8 @@ struct GlRenderer::Impl {
         glEGLImageTargetRenderbufferStorageOES_ =
             (PFNGLEGLIMAGETARGETRENDERBUFFERSTORAGEOESPROC)
             eglGetProcAddress("glEGLImageTargetRenderbufferStorageOES");
+        glEGLImageTargetTexture2DOES_ = (PFNGLEGLIMAGETARGETTEXTURE2DOESPROC)
+            eglGetProcAddress("glEGLImageTargetTexture2DOES");
         eglCreateSyncKHR_     = (PFNEGLCREATESYNCKHRPROC)eglGetProcAddress("eglCreateSyncKHR");
         eglDestroySyncKHR_    = (PFNEGLDESTROYSYNCKHRPROC)eglGetProcAddress("eglDestroySyncKHR");
         eglClientWaitSyncKHR_ = (PFNEGLCLIENTWAITSYNCKHRPROC)eglGetProcAddress("eglClientWaitSyncKHR");
@@ -237,19 +248,30 @@ struct GlRenderer::Impl {
         return f;
     }
 
+    // Створюється в робочому потоці: GL-об'єкти потребують поточного
+    // контексту.
+    bool create_gl_objects() {
+        prog_ext = link_program(kQuadVS, kExternalFS);
+        if (!prog_ext) return false;
+        glGenBuffers(1, &vbo);
+        textures.init(egl, eglCreateImageKHR_, eglDestroyImageKHR_,
+                      glEGLImageTargetTexture2DOES_);
+        return true;
+    }
+
+    void destroy_gl_objects() {
+        textures.clear();
+        if (vbo) { glDeleteBuffers(1, &vbo); vbo = 0; }
+        if (prog_ext) { glDeleteProgram(prog_ext); prog_ext = 0; }
+    }
+
     // Малює один кадр: тло плюс усі джерела, що дали кадр.
-    //
-    // ТИМЧАСОВО кожне джерело — просто заливка кольором через scissor.
-    // Текстур ще немає, але геометрія вже справжня: розміщення, вписування
-    // за пропорцією, якір і порядок за z. Коли з'являться текстури, тут
-    // заміниться лише спосіб заповнення прямокутника.
     void draw_frame() {
         // Чистимо ЗАВЖДИ. Під кадром, що не покрив увесь екран, інакше
         // лишиться вміст ПОЗАминулого кадру — буферів два, вони
         // чергуються. Плюс на тайловому GPU (Mali) очищення на початку
         // проходу дозволяє не завантажувати попередній вміст у тайлову
         // пам'ять, тобто виходить швидше, ніж без нього.
-        glDisable(GL_SCISSOR_TEST);
         glClearColor(0.02f, 0.02f, 0.03f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
 
@@ -264,57 +286,49 @@ struct GlRenderer::Impl {
 
         struct Item {
             layout::Placement p;
-            int idx;
+            source::SourceFrame f;
         };
         std::vector<Item> items;
         items.reserve(snap.size());
 
-        for (size_t i = 0; i < snap.size(); ++i) {
+        for (auto& src : snap) {
             source::SourceFrame f;
             // Джерела немає або сигналу немає — не малюємо нічого.
             // Програма одна, а дрони різні: заглушка припускала б знання
             // про конкретну конфігурацію, якого в програми немає.
-            if (!snap[i]->acquire(f)) continue;
+            if (!src->acquire(f)) continue;
             if (!f.valid() || !f.where.enabled) continue;
+            if (f.image.fd[0] < 0) continue;      // кадру як буфера немає
 
             const float a = f.aspect();
             if (a <= 0.0f) continue;
 
-            items.push_back({layout::fit_source(f.where, a, screen_aspect), (int)i});
+            items.push_back({layout::fit_source(f.where, a, screen_aspect), f});
         }
+        if (items.empty()) return;
 
         // Порядок за z: менше — далі. Джерел одиниці, тож stable_sort
-        // тут дешевший за будь-яку хитрість, і зберігає порядок
-        // реєстрації для однакових z.
+        // дешевший за будь-яку хитрість і зберігає порядок реєстрації
+        // для однакових z.
         std::stable_sort(items.begin(), items.end(),
                          [](const Item& a, const Item& b) { return a.p.z < b.p.z; });
 
-        glEnable(GL_SCISSOR_TEST);
+        glUseProgram(prog_ext);
+        glActiveTexture(GL_TEXTURE0);
+        glUniform1i(glGetUniformLocation(prog_ext, "uTex"), 0);
+
         for (const Item& it : items) {
-            // Частки 0..1 від ВЕРХНЬОГО лівого -> пікселі від НИЖНЬОГО
-            // лівого: у GL початок координат унизу. Це те місце, де
-            // забутий переворот дає картинку догори дриґом.
-            const int px = (int)(it.p.x * info.width + 0.5f);
-            const int pw = (int)(it.p.w * info.width + 0.5f);
-            const int ph = (int)(it.p.h * info.height + 0.5f);
-            const int py_top = (int)(it.p.y * info.height + 0.5f);
-            const int py = info.height - (py_top + ph);
+            // Розмір звіряється ЩОКАДРУ, а не за таймером: це кілька
+            // порівнянь усередині кеша, тоді як раз на секунду означало б
+            // до 60 кадрів із неправильною геометрією. Привід реальний —
+            // електронна стабілізація ріже роздільність кропом на ходу.
+            GLuint tex = textures.get(it.f.image);
+            if (!tex) continue;
 
-            if (pw <= 0 || ph <= 0) continue;
-
-            static const float palette[][3] = {
-                {0.878f, 0.627f, 0.000f},   // бурштин
-                {0.000f, 0.545f, 0.769f},   // блакить
-                {0.400f, 0.733f, 0.192f},   // зелень
-                {0.769f, 0.278f, 0.408f},   // малина
-            };
-            const float* c = palette[it.idx % 4];
-
-            glScissor(px, py, pw, ph);
-            glClearColor(c[0], c[1], c[2], 1.0f);
-            glClear(GL_COLOR_BUFFER_BIT);
+            glBindTexture(GL_TEXTURE_EXTERNAL_OES, tex);
+            draw_textured_quad(vbo, it.p, it.f.image.visible(),
+                               it.f.image.width, it.f.image.height);
         }
-        glDisable(GL_SCISSOR_TEST);
     }
 
     void wake() {
@@ -356,7 +370,7 @@ struct GlRenderer::Impl {
                      (const char*)glGetString(GL_RENDERER),
                      (const char*)glGetString(GL_VERSION));
 
-        if (!create_buffers()) {
+        if (!create_buffers() || !create_gl_objects()) {
             running.store(false);
             return;
         }
@@ -406,6 +420,7 @@ struct GlRenderer::Impl {
             }
         }
 
+        destroy_gl_objects();
         destroy_buffers();
         eglMakeCurrent(egl, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
     }
