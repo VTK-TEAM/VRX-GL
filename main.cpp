@@ -22,6 +22,7 @@
 
 #include "display/kms_display_manager.hpp"
 #include "render/gl_renderer.hpp"
+#include "source/test_source.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -103,6 +104,32 @@ int main() {
         return 1;
     }
 
+    // ТИМЧАСОВО: два тестові джерела замість декодерів. Перевіряють
+    // реєстрацію, вписування за пропорцією, якір і порядок за z. Коли
+    // з'явиться декод, тут просто зміняться класи джерел.
+    auto main_src = std::make_shared<vrx::source::TestSource>("main", 1920, 1080);
+    auto pip_src  = std::make_shared<vrx::source::TestSource>("pip", 720, 480, 4.0f / 3.0f / (720.0f / 480.0f));
+
+    {
+        vrx::layout::Placement p;          // на весь екран
+        p.z = 0;
+        main_src->set_placement(p);
+    }
+    {
+        vrx::layout::Placement p;          // у правий верхній кут
+        p.x = 0.02f; p.y = 0.02f; p.w = 0.30f; p.h = 0.30f;
+        p.anchor = vrx::layout::Anchor::TopRight;
+        p.x = 1.0f - 0.30f - 0.02f;
+        p.z = 1;                            // поверх основного
+        pip_src->set_placement(p);
+    }
+
+    main_src->start();
+    pip_src->start();
+    renderer.add_source(main_src);
+    renderer.add_source(pip_src);
+    std::printf("Джерел зареєстровано: %d\n", renderer.source_count());
+
     std::printf("Працюю. Ctrl+C для виходу.\n");
 
     auto t0 = std::chrono::steady_clock::now();
@@ -126,6 +153,8 @@ int main() {
     }
 
     renderer.stop();
+    main_src->stop();
+    pip_src->stop();
 
     auto ds = display.stats();
     auto rs = renderer.stats();

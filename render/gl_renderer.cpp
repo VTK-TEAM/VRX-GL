@@ -17,6 +17,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <mutex>
+#include <algorithm>
 #include <thread>
 #include <vector>
 
@@ -80,6 +81,12 @@ struct GlRenderer::Impl {
 
     mutable std::mutex stats_mtx;
     RenderStats st{};
+
+    // Зареєстровані джерела. Список беремо зрізом на кожен кадр, щоб
+    // додавання/видалення на ходу не вимагало тримати лок під час
+    // малювання.
+    mutable std::mutex src_mtx;
+    std::vector<std::shared_ptr<source::FrameSource>> sources;
 
     // --- налаштування EGL ---
 
@@ -230,24 +237,83 @@ struct GlRenderer::Impl {
         return f;
     }
 
-    // ТИМЧАСОВО: поки джерел немає, малюємо рухому смугу — того самого
-    // вигляду, що й попередній тест на CPU, щоб результат був порівнянний.
-    // Свідомо без шейдерів: glClear зі scissor доводить, що рендер у
-    // буфер сканування працює, і не тягне за собою ще й VBO з програмами.
-    void draw_test_pattern(int frame_no) {
-        const int bar_w = 60;
-        const int span = info.width - bar_w;
-        int phase = span > 0 ? (frame_no * 6) % (2 * span) : 0;
-        int x = phase <= span ? phase : 2 * span - phase;
-
+    // Малює один кадр: тло плюс усі джерела, що дали кадр.
+    //
+    // ТИМЧАСОВО кожне джерело — просто заливка кольором через scissor.
+    // Текстур ще немає, але геометрія вже справжня: розміщення, вписування
+    // за пропорцією, якір і порядок за z. Коли з'являться текстури, тут
+    // заміниться лише спосіб заповнення прямокутника.
+    void draw_frame() {
+        // Чистимо ЗАВЖДИ. Під кадром, що не покрив увесь екран, інакше
+        // лишиться вміст ПОЗАминулого кадру — буферів два, вони
+        // чергуються. Плюс на тайловому GPU (Mali) очищення на початку
+        // проходу дозволяє не завантажувати попередній вміст у тайлову
+        // пам'ять, тобто виходить швидше, ніж без нього.
         glDisable(GL_SCISSOR_TEST);
-        glClearColor(0.063f, 0.094f, 0.125f, 1.0f);   // те саме тло 0x101820
+        glClearColor(0.02f, 0.02f, 0.03f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
+
+        std::vector<std::shared_ptr<source::FrameSource>> snap;
+        {
+            std::lock_guard<std::mutex> lk(src_mtx);
+            snap = sources;
+        }
+        if (snap.empty()) return;
+
+        const float screen_aspect = float(info.width) / float(info.height);
+
+        struct Item {
+            layout::Placement p;
+            int idx;
+        };
+        std::vector<Item> items;
+        items.reserve(snap.size());
+
+        for (size_t i = 0; i < snap.size(); ++i) {
+            source::SourceFrame f;
+            // Джерела немає або сигналу немає — не малюємо нічого.
+            // Програма одна, а дрони різні: заглушка припускала б знання
+            // про конкретну конфігурацію, якого в програми немає.
+            if (!snap[i]->acquire(f)) continue;
+            if (!f.valid() || !f.where.enabled) continue;
+
+            const float a = f.aspect();
+            if (a <= 0.0f) continue;
+
+            items.push_back({layout::fit_source(f.where, a, screen_aspect), (int)i});
+        }
+
+        // Порядок за z: менше — далі. Джерел одиниці, тож stable_sort
+        // тут дешевший за будь-яку хитрість, і зберігає порядок
+        // реєстрації для однакових z.
+        std::stable_sort(items.begin(), items.end(),
+                         [](const Item& a, const Item& b) { return a.p.z < b.p.z; });
 
         glEnable(GL_SCISSOR_TEST);
-        glScissor(x, 0, bar_w, info.height);
-        glClearColor(0.878f, 0.627f, 0.0f, 1.0f);     // та сама смуга 0xE0A000
-        glClear(GL_COLOR_BUFFER_BIT);
+        for (const Item& it : items) {
+            // Частки 0..1 від ВЕРХНЬОГО лівого -> пікселі від НИЖНЬОГО
+            // лівого: у GL початок координат унизу. Це те місце, де
+            // забутий переворот дає картинку догори дриґом.
+            const int px = (int)(it.p.x * info.width + 0.5f);
+            const int pw = (int)(it.p.w * info.width + 0.5f);
+            const int ph = (int)(it.p.h * info.height + 0.5f);
+            const int py_top = (int)(it.p.y * info.height + 0.5f);
+            const int py = info.height - (py_top + ph);
+
+            if (pw <= 0 || ph <= 0) continue;
+
+            static const float palette[][3] = {
+                {0.878f, 0.627f, 0.000f},   // бурштин
+                {0.000f, 0.545f, 0.769f},   // блакить
+                {0.400f, 0.733f, 0.192f},   // зелень
+                {0.769f, 0.278f, 0.408f},   // малина
+            };
+            const float* c = palette[it.idx % 4];
+
+            glScissor(px, py, pw, ph);
+            glClearColor(c[0], c[1], c[2], 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+        }
         glDisable(GL_SCISSOR_TEST);
     }
 
@@ -312,7 +378,8 @@ struct GlRenderer::Impl {
             double t0 = now_ms();
 
             glBindFramebuffer(GL_FRAMEBUFFER, b.fbo);
-            draw_test_pattern(frame_no++);
+            draw_frame();
+            frame_no++;
 
             // Чекаємо РЕАЛЬНОГО завершення GPU. Без цього на екран поїде
             // недомальований буфер: команди лише поставлені в чергу.
@@ -413,6 +480,23 @@ void GlRenderer::stop() {
     }
     if (d.gbm) { gbm_device_destroy(d.gbm); d.gbm = nullptr; }
     if (d.drm_fd >= 0) { ::close(d.drm_fd); d.drm_fd = -1; }
+}
+
+void GlRenderer::add_source(std::shared_ptr<source::FrameSource> src) {
+    if (!src) return;
+    std::lock_guard<std::mutex> lk(impl_->src_mtx);
+    impl_->sources.push_back(std::move(src));
+}
+
+void GlRenderer::remove_source(const std::shared_ptr<source::FrameSource>& src) {
+    std::lock_guard<std::mutex> lk(impl_->src_mtx);
+    impl_->sources.erase(std::remove(impl_->sources.begin(), impl_->sources.end(), src),
+                         impl_->sources.end());
+}
+
+int GlRenderer::source_count() const {
+    std::lock_guard<std::mutex> lk(impl_->src_mtx);
+    return (int)impl_->sources.size();
 }
 
 bool GlRenderer::is_running() const { return impl_->running.load(); }

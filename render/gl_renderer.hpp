@@ -17,6 +17,7 @@
 // нього — без опитування й без сну "на око".
 
 #include "../display/display_manager.hpp"
+#include "../source/frame_source.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -72,6 +73,16 @@ public:
 
     bool is_running() const;
     RenderStats stats() const;
+
+    // Реєстрація джерел. Можна в будь-який момент, зокрема на ходу:
+    // рендерер бере зріз списку на кожен кадр.
+    //
+    // Рендерер НЕ володіє життям джерела і не запускає його — за це
+    // відповідає той, хто джерело створив. Тут лише shared_ptr, щоб
+    // джерело не зникло посеред кадру.
+    void add_source(std::shared_ptr<source::FrameSource> src);
+    void remove_source(const std::shared_ptr<source::FrameSource>& src);
+    int source_count() const;
 
 private:
     struct Impl;
