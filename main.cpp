@@ -107,8 +107,8 @@ int main() {
     // ТИМЧАСОВО: два тестові джерела замість декодерів. Перевіряють
     // реєстрацію, вписування за пропорцією, якір і порядок за z. Коли
     // з'явиться декод, тут просто зміняться класи джерел.
-    auto main_src = std::make_shared<vrx::source::TestSource>("main", 1920, 1080);
-    auto pip_src  = std::make_shared<vrx::source::TestSource>("pip", 720, 480, 4.0f / 3.0f / (720.0f / 480.0f));
+    auto main_src = std::make_shared<vrx::source::TestSource>("main", 1440, 1080);
+    auto pip_src  = std::make_shared<vrx::source::TestSource>("pip", 1920, 1080);
 
     {
         vrx::layout::Placement p;          // на весь екран
