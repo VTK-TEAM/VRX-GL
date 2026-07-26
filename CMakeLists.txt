@@ -33,6 +33,7 @@ pkg_check_modules(GST REQUIRED
 add_executable(vrx_gl
     main.cpp
     display/kms_display_manager.cpp
+    render/gl_renderer.cpp
 )
 
 target_include_directories(vrx_gl PRIVATE
