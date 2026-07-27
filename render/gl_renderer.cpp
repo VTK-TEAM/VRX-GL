@@ -118,6 +118,7 @@ struct GlRenderer::Impl {
     double phase_prev = -1;
     int64_t phase_prev_ns = 0;
     double phase_drift = 0;
+    int64_t phase_last_produced = 0;   // щоб не міряти той самий кадр двічі
 
     mutable std::mutex stats_mtx;
     RenderStats st{};
@@ -356,7 +357,15 @@ struct GlRenderer::Impl {
         // Фаза: скільки минуло від останнього vblank до появи кадру.
         // Береться за модулем періоду, бо кадр міг прийти й на кілька
         // періодів раніше (тоді нас цікавить лише його позиція в сітці).
-        if (newest_produced > 0 && period_ns > 0) {
+        //
+        // Рахуємо ЛИШЕ по нових кадрах. Коли нового немає, джерело за
+        // контрактом віддає попередній — з його старою міткою. Пустити
+        // таку мітку у фільтр означало б виміряти той самий прихід
+        // двічі, причому вдруге вже з іншого vblank'а: рівно та частина
+        // вибірки, яка ЗМІЩЕНА в бік цілі, отримала б подвійну вагу.
+        // Для контролера це систематична похибка, а не шум.
+        if (newest_produced > 0 && newest_produced != phase_last_produced && period_ns > 0) {
+            phase_last_produced = newest_produced;
             const int64_t last_v = last_present_ns.load(std::memory_order_relaxed);
             if (last_v > 0) {
                 int64_t rel = (newest_produced - last_v) % period_ns;

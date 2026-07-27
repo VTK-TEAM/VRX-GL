@@ -131,6 +131,11 @@ struct KmsDisplayManager::Impl : public Layer {
     PresentStats st{};
     PresentCallback on_present;
 
+    // Анкер вікна, на якому міряється точна частота розгортки.
+    int64_t hz_anchor_ns = 0;
+    uint32_t hz_anchor_seq = 0;
+    bool hz_seq_valid = false;
+
     std::thread event_thread;
     std::atomic<bool> running{false};
     bool modeset_done = false;
@@ -261,20 +266,37 @@ struct KmsDisplayManager::Impl : public Layer {
     }
 
     // Викликається з потоку подій після ПІДТВЕРДЖЕННЯ показу.
-    void on_flip(int64_t when_ns) {
+    // seq — лічильник розгорток від ядра.
+    void on_flip(int64_t when_ns, unsigned seq) {
         PresentCallback cb;
         {
             std::lock_guard<std::mutex> lock(mtx);
 
-            // Фактичний період розгортки: заявлена в режимі частота і
-            // те, що реально видає PLL, збігаються не завжди.
-            if (st.last_present_ns > 0) {
-                const double dt_ns = double(when_ns - st.last_present_ns);
-                if (dt_ns > 1e6 && dt_ns < 1e8) {
-                    const double hz = 1e9 / dt_ns;
-                    st.measured_hz = st.measured_hz == 0.0
-                                         ? hz : st.measured_hz * 0.99 + hz * 0.01;
+            // ТОЧНА частота розгортки. Рахується по лічильнику vblank'ів
+            // на довгому вікні, а не по сусідніх інтервалах: похибка
+            // мітки часу ділиться на довжину вікна, тож уже за секунду
+            // виходить краще за 0.0005 Гц. Це принципово — камера
+            // підстроюється кроком 1 мГц, і міряти грубіше за її крок
+            // означало б ганяти контролер по шуму.
+            //
+            // Лічильник, а не кількість подій: якщо ми пропустили
+            // розгортку, seq це врахує, а підрахунок подій — ні.
+            if (hz_seq_valid) {
+                const uint32_t dseq = seq - hz_anchor_seq;   // беззнакове, коректне через переповнення
+                const int64_t span = when_ns - hz_anchor_ns;
+                if (span > 1000000000LL && dseq > 0) {
+                    st.measured_hz = double(dseq) * 1e9 / double(span);
+                    // Переанкорення: щоб оцінка йшла за повільним дрейфом
+                    // кварцу, а не усереднювала весь час роботи.
+                    if (span > 30000000000LL) {
+                        hz_anchor_ns = when_ns;
+                        hz_anchor_seq = seq;
+                    }
                 }
+            } else {
+                hz_anchor_ns = when_ns;
+                hz_anchor_seq = seq;
+                hz_seq_valid = true;
             }
             // Кадр, що був на екрані, більше не читається — саме тут
             // падає його keepalive і буфер повертається рендереру.
@@ -292,8 +314,16 @@ struct KmsDisplayManager::Impl : public Layer {
     void event_loop() {
         drmEventContext ctx{};
         ctx.version = 2;
-        ctx.page_flip_handler = [](int, unsigned, unsigned, unsigned, void* data) {
-            static_cast<Impl*>(data)->on_flip(now_ns());
+        ctx.page_flip_handler = [](int, unsigned seq, unsigned tv_sec,
+                                   unsigned tv_usec, void* data) {
+            // Мітка ЯДРА — момент самої розгортки, а не момент, коли цей
+            // потік прокинувся її обробляти. Різниця — затримка доставки
+            // події, сотні мікросекунд із власним джитером; вона однаково
+            // отруювала б і вимір частоти, і вимір фази, і розрахунок
+            // дедлайну опиту, бо всі три відлічуються звідси.
+            // Годинник той самий, CLOCK_MONOTONIC (DRM_CAP_TIMESTAMP_MONOTONIC).
+            const int64_t ts = int64_t(tv_sec) * 1000000000LL + int64_t(tv_usec) * 1000LL;
+            static_cast<Impl*>(data)->on_flip(ts > 0 ? ts : now_ns(), seq);
         };
 
         while (running.load(std::memory_order_relaxed)) {

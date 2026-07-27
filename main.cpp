@@ -20,6 +20,7 @@
 // main НІЧИМ не керує покадрово: кожна підсистема має власний потік і
 // власний темп. Тут лише ініціалізація, запуск і зупинка.
 
+#include "control/phase_controller.hpp"
 #include "display/kms_display_manager.hpp"
 #include "render/gl_renderer.hpp"
 #include "source/h265_source.hpp"
@@ -143,6 +144,14 @@ int main(int argc, char** argv) {
     renderer.add_source(pip_src);
     std::printf("Джерел зареєстровано: %d\n", renderer.source_count());
 
+    // Фазове автопідстроювання. Веде ЧАСТОТУ камери так, щоб прихід
+    // кадру стояв у центрі вікна прийому: тоді ні мережевий джитер, ні
+    // розбіжність кварців не здатні перекинути кадр через точку опиту.
+    vrx::control::PhaseController::Config ph_cfg;
+    ph_cfg.camera.host = "192.168.1.10";
+    vrx::control::PhaseController phase(display, renderer, main_src, ph_cfg);
+    phase.start();
+
     std::printf("Працюю. Ctrl+C для виходу.\n");
 
     auto t0 = std::chrono::steady_clock::now();
@@ -179,9 +188,21 @@ int main(int argc, char** argv) {
                     in_mn, in_avg, in_mx,
                     ms.interval_min_ms, ms.interval_avg_ms, ms.interval_max_ms,
                     dc_mn, dc_avg, dc_mx);
+
+        auto ps = phase.stats();
+        if (ps.engaged) {
+            std::printf("          ФАПЧ: фаза %.2f -> ціль %.2f (похибка %+.2f мс)"
+                        " | камера %+d мГц | екран %.4f Гц | %s%s\n",
+                        ps.phase_ms, ps.target_ms, ps.error_ms, ps.trim_mhz,
+                        ps.display_hz, ps.locked ? "ЗАХОПЛЕНО" : "ведення",
+                        ps.failed ? " | ЗАПИСИ ПАДАЮТЬ" : "");
+        } else {
+            std::printf("          ФАПЧ: не веде (%s)\n", ps.holding);
+        }
         std::fflush(stdout);
     }
 
+    phase.stop();
     renderer.stop();
     main_src->stop();
     pip_src->stop();

@@ -35,6 +35,8 @@ add_executable(vrx_gl
     display/kms_display_manager.cpp
     source/h265_source.cpp
     render/gl_renderer.cpp
+    control/camera_api.cpp
+    control/phase_controller.cpp
 )
 
 target_include_directories(vrx_gl PRIVATE
