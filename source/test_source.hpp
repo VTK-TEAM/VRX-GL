@@ -71,20 +71,25 @@ public:
 
     bool acquire(SourceFrame& out) override {
         std::lock_guard<std::mutex> lk(mtx_);
-        if (!present_ || ready_ < 0) return false;
+        if (!present_) return false;
 
-        // Звільнення НЕЯВНЕ: рендерер просить новий кадр — отже з
-        // попереднім закінчив, і той буфер можна знову віддавати під
-        // запис. Безпечно лише тому, що між викликами рендерер чекає
-        // fence (див. коментар у FrameSource::acquire).
-        if (in_use_ >= 0) free_.push_back(in_use_);
-        in_use_ = ready_;
-        ready_ = -1;
+        // Є новіший — беремо. Звільнення НЕЯВНЕ: попередній in_use
+        // повертається у вільні саме тут. Безпечно лише тому, що між
+        // викликами рендерер чекає fence (див. FrameSource::acquire).
+        if (ready_ >= 0) {
+            if (in_use_ >= 0) free_.push_back(in_use_);
+            in_use_ = ready_;
+            ready_ = -1;
+            st_.taken++;
+        }
+
+        // Нового немає — віддаємо попередній, а не false: питання
+        // рендерера "що показувати зараз", а не "чи є щось свіже".
+        if (in_use_ < 0) return false;
 
         out.image = frame_of(bufs_[in_use_]);
         out.pixel_aspect = par_;
         out.where = p_;
-        st_.taken++;
         return true;
     }
 

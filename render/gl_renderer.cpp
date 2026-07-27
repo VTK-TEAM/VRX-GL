@@ -31,6 +31,12 @@ double now_ms() {
     return ts.tv_sec * 1000.0 + ts.tv_nsec / 1e6;
 }
 
+int64_t now_ns() {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000000000LL + ts.tv_nsec;
+}
+
 PFNEGLCREATEIMAGEKHRPROC                            eglCreateImageKHR_ = nullptr;
 PFNEGLDESTROYIMAGEKHRPROC                           eglDestroyImageKHR_ = nullptr;
 PFNGLEGLIMAGETARGETRENDERBUFFERSTORAGEOESPROC       glEGLImageTargetRenderbufferStorageOES_ = nullptr;
@@ -80,6 +86,38 @@ struct GlRenderer::Impl {
     std::mutex wake_mtx;
     std::condition_variable wake_cv;
     bool woken = false;
+
+    // Час підтвердження останнього показу і період розгортки — з них
+    // рахується момент, коли питати джерела.
+    std::atomic<int64_t> last_present_ns{0};
+    int64_t period_ns = 0;
+
+    // produced_ns кадру, який щойно віддали на показ. Наступне
+    // підтвердження flip'а стосується саме його — звідси й затримка.
+    std::atomic<int64_t> inflight_produced_ns{0};
+
+    // Адаптивний зсув опиту від початку періоду, мс.
+    //
+    // Фіксований момент опиту не працює в принципі: джерело 60.00, показ
+    // 59.789, тож фаза приходу кадру вільно пливе по всьому періоду
+    // (повний оберт ~4.7 с). Коли прихід трохи раніше опиту — все добре,
+    // коли трохи пізніше — повтор і дроп.
+    //
+    // Тому зсув СЛІДУЄ за фазою, керуючись спостережуваним сигналом:
+    // стався повтор -> опитали зарано, посуваємось пізніше; повторів
+    // немає -> повільно повертаємось до меншої затримки.
+    //
+    // Теоретична межа так — 0.21 пропуску/с (сама різниця частот), бо
+    // раз на оберт фази прихід неминуче потрапляє в зону, куди опит уже
+    // не встигає (там треба ще звести й закомітити).
+    double poll_offset_ms = 8.0;
+    int64_t last_shown_produced_ns = 0;
+
+    // Замір фази приходу кадру відносно сітки розгортки.
+    double phase_ms = 0;
+    double phase_prev = -1;
+    int64_t phase_prev_ns = 0;
+    double phase_drift = 0;
 
     mutable std::mutex stats_mtx;
     RenderStats st{};
@@ -290,6 +328,7 @@ struct GlRenderer::Impl {
         };
         std::vector<Item> items;
         items.reserve(snap.size());
+        int64_t newest_produced = 0;
 
         for (auto& src : snap) {
             source::SourceFrame f;
@@ -303,6 +342,7 @@ struct GlRenderer::Impl {
             const float a = f.aspect();
             if (a <= 0.0f) continue;
 
+            if (f.produced_ns > newest_produced) newest_produced = f.produced_ns;
             items.push_back({layout::fit_source(f.where, a, screen_aspect), f});
         }
         if (items.empty()) return;
@@ -312,6 +352,50 @@ struct GlRenderer::Impl {
         // для однакових z.
         std::stable_sort(items.begin(), items.end(),
                          [](const Item& a, const Item& b) { return a.p.z < b.p.z; });
+
+        // Фаза: скільки минуло від останнього vblank до появи кадру.
+        // Береться за модулем періоду, бо кадр міг прийти й на кілька
+        // періодів раніше (тоді нас цікавить лише його позиція в сітці).
+        if (newest_produced > 0 && period_ns > 0) {
+            const int64_t last_v = last_present_ns.load(std::memory_order_relaxed);
+            if (last_v > 0) {
+                int64_t rel = (newest_produced - last_v) % period_ns;
+                if (rel < 0) rel += period_ns;
+                const double ms = rel / 1e6;
+
+                // Згладжуємо по колу: перехід через межу періоду не має
+                // виглядати як стрибок на 16 мс.
+                if (phase_prev < 0) {
+                    phase_ms = ms;
+                } else {
+                    double d = ms - phase_ms;
+                    if (d > period_ns / 2e6) d -= period_ns / 1e6;
+                    if (d < -period_ns / 2e6) d += period_ns / 1e6;
+                    phase_ms += d * 0.02;
+                    if (phase_ms < 0) phase_ms += period_ns / 1e6;
+                    if (phase_ms > period_ns / 1e6) phase_ms -= period_ns / 1e6;
+
+                    // Швидкість дрейфу — саме її має прибрати genlock.
+                    if (phase_prev_ns > 0) {
+                        const double dt_s = (newest_produced - phase_prev_ns) / 1e9;
+                        if (dt_s > 0.5) {
+                            double dd = phase_ms - phase_prev;
+                            if (dd > period_ns / 2e6) dd -= period_ns / 1e6;
+                            if (dd < -period_ns / 2e6) dd += period_ns / 1e6;
+                            phase_drift = phase_drift * 0.8 + (dd / dt_s) * 0.2;
+                            phase_prev = phase_ms;
+                            phase_prev_ns = newest_produced;
+                        }
+                    } else {
+                        phase_prev = phase_ms;
+                        phase_prev_ns = newest_produced;
+                    }
+                }
+                if (phase_prev < 0) { phase_prev = phase_ms; phase_prev_ns = newest_produced; }
+            }
+        }
+
+        inflight_produced_ns.store(newest_produced, std::memory_order_relaxed);
 
         glUseProgram(prog_ext);
         glActiveTexture(GL_TEXTURE0);
@@ -359,6 +443,69 @@ struct GlRenderer::Impl {
         }
     }
 
+    // Спить до моменту, коли треба питати кадр.
+    //
+    // ЧОМУ НЕ ОДРАЗУ ПІСЛЯ FLIP'А. Кадр від борту завершується не на
+    // початку свого періоду, а через 5-11 мс: кодер кодує, шейпер пакетує
+    // (заміряно на живому лінку — передача кадру 5.0/7.2/10.6 мс за
+    // p50/p90/max). Якщо питати одразу після flip'а, ми систематично
+    // застаємо момент, коли свіжий кадр ЩЕ В ДОРОЗІ, показуємо старий, а
+    // той, що прийшов через 3 мс, чекає цілу розгортку.
+    //
+    // Симптом — мікрофризи: частина кадрів показується двічі, частина
+    // викидається. По лічильниках виглядає як "дроп 12/с, повтор 12/с"
+    // при живих 60 к/с з обох боків.
+    //
+    // Питаємо натомість ПЕРЕД дедлайном: настільки пізно, наскільки
+    // встигаємо звести й закомітити. Тоді кадр, готовий у будь-який
+    // момент періоду, потрапляє на найближчу розгортку. Заразом падає
+    // затримка: обраний кадр показується не через період, а через
+    // час_зведення.
+    void sleep_until_poll_deadline() {
+        const int64_t last = last_present_ns.load(std::memory_order_relaxed);
+        if (last == 0 || period_ns <= 0) return;   // ще не показували
+
+        // Запас: зведення плаває, а коміт має встигнути до того, як VOP2
+        // засуне конфігурацію. Півтори тривалості зведення плюс 1.5 мс —
+        // якщо не встигнемо, кадр поїде на наступну розгортку, тобто
+        // вийде рівно та проблема, яку лікуємо.
+        double draw_ms;
+        {
+            std::lock_guard<std::mutex> lk(stats_mtx);
+            draw_ms = st.avg_draw_ms > 0.0 ? st.avg_draw_ms : 3.0;
+        }
+        const int64_t reserve_ns = (int64_t)(draw_ms * 1.3e6) + 1000000;
+
+        // Пізніше цієї межі опитувати не можна: не встигнемо звести й
+        // закомітити до того, як VOP2 засуне конфігурацію.
+        // СТАЛИЙ пізній зсув, без підстроювання.
+        //
+        // Спроба вести зсув контролером (повтор -> пізніше, інакше ->
+        // раніше) дала 1.5 повтору/с замість 5, але почала ПОЛЮВАТИ:
+        // кожен рух зсуву — це зайвий перетин фази приходу, тобто
+        // контролер сам собі створював пропуски.
+        //
+        // При сталому зсуві повтор трапляється лише коли фаза приходу
+        // перетинає точку опиту, а вона пливе повільно (оберт ~4.7 с
+        // через різницю 60.00 проти 59.789). Двічі за оберт => ~0.43/с,
+        // і це вже теоретична межа без буферизації.
+        poll_offset_ms = (period_ns - reserve_ns) / 1e6;
+        if (poll_offset_ms < 0.0) poll_offset_ms = 0.0;
+
+        int64_t deadline = last + (int64_t)(poll_offset_ms * 1e6);
+        const int64_t now = now_ns();
+        if (deadline <= now) return;               // вже пізно, працюємо негайно
+
+        // Обмеження зверху: не спати довше за період, навіть якщо
+        // підтвердження flip'а раптом загубилося.
+        int64_t wait_ns = deadline - now;
+        if (wait_ns > period_ns) wait_ns = period_ns;
+
+        std::unique_lock<std::mutex> lk(wake_mtx);
+        wake_cv.wait_for(lk, std::chrono::nanoseconds(wait_ns),
+                         [this] { return !running.load(std::memory_order_relaxed); });
+    }
+
     void loop() {
         if (!eglMakeCurrent(egl, EGL_NO_SURFACE, EGL_NO_SURFACE, ctx)) {
             std::fprintf(stderr, "[gl] eglMakeCurrent у робочому потоці провалився\n");
@@ -378,6 +525,10 @@ struct GlRenderer::Impl {
                      (int)bufs.size(), info.width, info.height,
                      bufs.empty() ? 0 : bufs[0].stride, have_fence ? "є" : "немає");
 
+        period_ns = info.frame_time_ns();
+        std::fprintf(stderr, "[gl] період розгортки %.2f мс, зсув опиту адаптивний\n",
+                     period_ns / 1e6);
+
         glViewport(0, 0, info.width, info.height);
         glDisable(GL_DEPTH_TEST);
 
@@ -387,6 +538,11 @@ struct GlRenderer::Impl {
         while (running.load(std::memory_order_relaxed)) {
             int idx = wait_free_buffer();
             if (idx < 0) break;
+
+            // Спимо до моменту опитування — щоб узяти найсвіжіший кадр,
+            // а не найстаріший.
+            sleep_until_poll_deadline();
+            if (!running.load(std::memory_order_relaxed)) break;
 
             Buffer& b = bufs[idx];
             double t0 = now_ms();
@@ -460,7 +616,19 @@ bool GlRenderer::init(display::DisplayManager& display, Config cfg) {
 
     // Прокидаємось на підтвердженні показу: саме тоді звільняється буфер.
     // Опитування тут було б і марною роботою, і зайвою затримкою.
-    display.set_present_callback([&d](int64_t) { d.wake(); });
+    display.set_present_callback([&d](int64_t t) {
+        d.last_present_ns.store(t, std::memory_order_relaxed);
+
+        const int64_t produced = d.inflight_produced_ns.load(std::memory_order_relaxed);
+        if (produced > 0 && t > produced) {
+            const double ms = (t - produced) / 1e6;
+            std::lock_guard<std::mutex> lk(d.stats_mtx);
+            d.st.latency_avg_ms = d.st.latency_avg_ms == 0.0
+                                      ? ms : d.st.latency_avg_ms * 0.95 + ms * 0.05;
+            if (ms > d.st.latency_max_ms) d.st.latency_max_ms = ms;
+        }
+        d.wake();
+    });
 
     std::fprintf(stderr, "[gl] init: %dx%d fourcc=0x%08x, буферів %d\n",
                  d.info.width, d.info.height, d.info.fourcc, d.cfg.buffers);
@@ -518,7 +686,11 @@ bool GlRenderer::is_running() const { return impl_->running.load(); }
 
 RenderStats GlRenderer::stats() const {
     std::lock_guard<std::mutex> lk(impl_->stats_mtx);
-    return impl_->st;
+    RenderStats s = impl_->st;
+    s.poll_offset_ms = impl_->poll_offset_ms;
+    s.phase_ms = impl_->phase_ms;
+    s.phase_drift_ms_per_s = impl_->phase_drift;
+    return s;
 }
 
 } // namespace vrx::render

@@ -22,7 +22,10 @@
 
 #include "display/kms_display_manager.hpp"
 #include "render/gl_renderer.hpp"
+#include "source/h265_source.hpp"
 #include "source/test_source.hpp"
+
+#include <gst/gst.h>
 
 #include <atomic>
 #include <chrono>
@@ -72,13 +75,18 @@ const char* color_format_str(vrx::display::ColorFormat f) {
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    gst_init(&argc, &argv);
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);
 
     stop_desktop_if_running();
 
-    vrx::display::KmsDisplayManager display;
+    // Підганяємо розгортку під частоту камери — без цього фаза приходу
+    // кадру пливе, і раз на ~4.7 с кадр неминуче дублюється або гине.
+    vrx::display::KmsDisplayManager::Config disp_cfg;
+    disp_cfg.genlock_hz = 60.0;
+    vrx::display::KmsDisplayManager display(disp_cfg);
     if (!display.open()) {
         std::fprintf(stderr, "[main] дисплей не відкрився\n");
         return 1;
@@ -107,8 +115,13 @@ int main() {
     // ТИМЧАСОВО: два тестові джерела замість декодерів. Перевіряють
     // реєстрацію, вписування за пропорцією, якір і порядок за z. Коли
     // з'явиться декод, тут просто зміняться класи джерел.
-    auto main_src = std::make_shared<vrx::source::TestSource>("main", 1920, 1080);
-    auto pip_src  = std::make_shared<vrx::source::TestSource>("pip", 640, 480);
+    vrx::source::H265Source::Config h265_cfg;
+    h265_cfg.udp_port = 5600;
+    auto main_src = std::make_shared<vrx::source::H265Source>("h265", h265_cfg);
+
+    // Другим поки лишається тестове джерело: другого декодера ще немає,
+    // а перевіряти розкладку на чомусь треба.
+    auto pip_src = std::make_shared<vrx::source::TestSource>("pip", 640, 480);
 
     {
         vrx::layout::Placement p;          // на весь екран
@@ -144,11 +157,28 @@ int main() {
         auto ds = display.stats();
         auto rs = renderer.stats();
         double sec = std::chrono::duration<double>(now - t0).count();
-        std::printf("  %5.1f с | показано %llu (%.1f/с) | дропнуто %llu"
-                    " | GPU %.2f мс | простоїв %llu\n",
+
+        auto ms = main_src->stats();
+        double in_mn = 0, in_avg = 0, in_mx = 0;
+        main_src->input_intervals(&in_mn, &in_avg, &in_mx);
+        double dc_mn = 0, dc_avg = 0, dc_mx = 0;
+        main_src->decode_latency(&dc_mn, &dc_avg, &dc_mx);
+
+        std::printf("  %5.1f с | показано %llu (%.1f/с) | GPU %.2f мс"
+                    " | h265 %dx%d: нових %llu, повтор %llu, дроп %llu"
+                    " | ЗАТРИМКА %.1f мс | ФАЗА %.1f мс (дрейф %+.2f мс/с) | опит %.1f | екран %.3f Гц\n"
+                    "          інтервали: вхід %.1f/%.1f/%.1f -> вихід %.1f/%.1f/%.1f"
+                    " | ДЕКОД %.1f/%.1f/%.1f мс\n",
                     sec, (unsigned long long)ds.presented, ds.presented / sec,
-                    (unsigned long long)ds.dropped, rs.avg_draw_ms,
-                    (unsigned long long)rs.stalls);
+                    rs.avg_draw_ms,
+                    main_src->frame_width(), main_src->frame_height(),
+                    (unsigned long long)ms.taken, (unsigned long long)ms.reused,
+                    (unsigned long long)ms.dropped,
+                    rs.latency_avg_ms, rs.phase_ms, rs.phase_drift_ms_per_s,
+                    rs.poll_offset_ms, ds.measured_hz,
+                    in_mn, in_avg, in_mx,
+                    ms.interval_min_ms, ms.interval_avg_ms, ms.interval_max_ms,
+                    dc_mn, dc_avg, dc_mx);
         std::fflush(stdout);
     }
 

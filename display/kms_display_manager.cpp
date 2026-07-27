@@ -265,6 +265,17 @@ struct KmsDisplayManager::Impl : public Layer {
         PresentCallback cb;
         {
             std::lock_guard<std::mutex> lock(mtx);
+
+            // Фактичний період розгортки: заявлена в режимі частота і
+            // те, що реально видає PLL, збігаються не завжди.
+            if (st.last_present_ns > 0) {
+                const double dt_ns = double(when_ns - st.last_present_ns);
+                if (dt_ns > 1e6 && dt_ns < 1e8) {
+                    const double hz = 1e9 / dt_ns;
+                    st.measured_hz = st.measured_hz == 0.0
+                                         ? hz : st.measured_hz * 0.99 + hz * 0.01;
+                }
+            }
             // Кадр, що був на екрані, більше не читається — саме тут
             // падає його keepalive і буфер повертається рендереру.
             current = in_flight;
@@ -387,6 +398,29 @@ bool KmsDisplayManager::open() {
     }
     if (!chosen) chosen = &conn->modes[0];   // PREFERRED не позначений — беремо перший
     d.mode = *chosen;
+
+    // --- genlock: підганяємо клок під частоту джерела ---
+    if (d.cfg.genlock_hz > 1.0 && d.mode.htotal && d.mode.vtotal) {
+        const double before =
+            (double)d.mode.clock * 1000.0 / (d.mode.htotal * d.mode.vtotal);
+        const double want_khz =
+            d.cfg.genlock_hz * d.mode.htotal * d.mode.vtotal / 1000.0;
+        const uint32_t new_clock = (uint32_t)(want_khz + 0.5);
+
+        // Захист від дурних значень: більше ніж на 5% клок не рухаємо,
+        // інакше можна вийти за межі того, що приймає панель.
+        if (new_clock > d.mode.clock * 95 / 100 && new_clock < d.mode.clock * 105 / 100) {
+            std::fprintf(stderr,
+                "[kms] genlock: клок %u -> %u кГц, частота %.3f -> %.3f Гц\n",
+                d.mode.clock, new_clock, before, d.cfg.genlock_hz);
+            d.mode.clock = new_clock;
+            d.mode.vrefresh = (uint32_t)(d.cfg.genlock_hz + 0.5);
+        } else {
+            std::fprintf(stderr,
+                "[kms] genlock: %.3f Гц вимагає клока %u кГц — надто далеко від %u, пропускаю\n",
+                d.cfg.genlock_hz, new_clock, d.mode.clock);
+        }
+    }
 
     // --- CRTC: той, що може живити цей коннектор ---
     for (int i = 0; i < conn->count_encoders && !d.crtc_id; ++i) {
@@ -622,6 +656,87 @@ void KmsDisplayManager::set_present_callback(PresentCallback cb) {
 PresentStats KmsDisplayManager::stats() const {
     std::lock_guard<std::mutex> lock(impl_->mtx);
     return impl_->st;
+}
+
+bool KmsDisplayManager::has_crtc_property(const char* name) const {
+    return impl_->crtc_props.has(name);
+}
+
+bool KmsDisplayManager::set_crtc_property(const char* name, uint64_t value) {
+    Impl& d = *impl_;
+    if (d.fd < 0 || !d.crtc_props.has(name)) return false;
+
+    drmModeAtomicReq* req = drmModeAtomicAlloc();
+    drmModeAtomicAddProperty(req, d.crtc_id, d.crtc_props[name], value);
+    // Свідомо БЕЗ ALLOW_MODESET: якщо драйвер вимагає modeset, ми хочемо
+    // отримати відмову, а не тихе згасання екрана.
+    const int ret = drmModeAtomicCommit(d.fd, req, 0, nullptr);
+    drmModeAtomicFree(req);
+
+    if (ret != 0) {
+        std::fprintf(stderr, "[kms] %s = %llu відхилено: %s\n",
+                     name, (unsigned long long)value, std::strerror(errno));
+        return false;
+    }
+    return true;
+}
+
+uint32_t KmsDisplayManager::pixel_clock() const { return impl_->mode.clock; }
+
+bool KmsDisplayManager::set_pixel_clock(uint32_t khz) {
+    Impl& d = *impl_;
+    if (d.fd < 0 || khz == 0) return false;
+
+    drmModeModeInfo m = d.mode;
+    m.clock = khz;
+
+    uint32_t blob = 0;
+    if (drmModeCreatePropertyBlob(d.fd, &m, sizeof(m), &blob) != 0) {
+        std::fprintf(stderr, "[kms] clock: CreatePropertyBlob: %s\n", std::strerror(errno));
+        return false;
+    }
+
+    // Комітимо новий режим разом із ПОТОЧНИМ станом плейна: інакше
+    // modeset лишив би плейн вимкненим і екран згас би напевно.
+    Impl::Slot cur;
+    {
+        std::lock_guard<std::mutex> lock(d.mtx);
+        cur = d.current.valid ? d.current : d.in_flight;
+    }
+    if (!cur.valid) {
+        drmModeDestroyPropertyBlob(d.fd, blob);
+        return false;
+    }
+
+    drmModeAtomicReq* req = drmModeAtomicAlloc();
+    const Rect vis = cur.frame.visible();
+    drmModeAtomicAddProperty(req, d.crtc_id, d.crtc_props["MODE_ID"], blob);
+    drmModeAtomicAddProperty(req, d.crtc_id, d.crtc_props["ACTIVE"], 1);
+    drmModeAtomicAddProperty(req, d.connector_id, d.conn_props["CRTC_ID"], d.crtc_id);
+    drmModeAtomicAddProperty(req, d.plane_id, d.plane_props["FB_ID"], cur.fb_id);
+    drmModeAtomicAddProperty(req, d.plane_id, d.plane_props["CRTC_ID"], d.crtc_id);
+    drmModeAtomicAddProperty(req, d.plane_id, d.plane_props["CRTC_X"], 0);
+    drmModeAtomicAddProperty(req, d.plane_id, d.plane_props["CRTC_Y"], 0);
+    drmModeAtomicAddProperty(req, d.plane_id, d.plane_props["CRTC_W"], d.info_.width);
+    drmModeAtomicAddProperty(req, d.plane_id, d.plane_props["CRTC_H"], d.info_.height);
+    drmModeAtomicAddProperty(req, d.plane_id, d.plane_props["SRC_X"], (uint64_t)vis.x << 16);
+    drmModeAtomicAddProperty(req, d.plane_id, d.plane_props["SRC_Y"], (uint64_t)vis.y << 16);
+    drmModeAtomicAddProperty(req, d.plane_id, d.plane_props["SRC_W"], (uint64_t)vis.w << 16);
+    drmModeAtomicAddProperty(req, d.plane_id, d.plane_props["SRC_H"], (uint64_t)vis.h << 16);
+
+    const int ret = drmModeAtomicCommit(d.fd, req, DRM_MODE_ATOMIC_ALLOW_MODESET, nullptr);
+    drmModeAtomicFree(req);
+
+    if (ret != 0) {
+        std::fprintf(stderr, "[kms] clock %u кГц відхилено: %s\n", khz, std::strerror(errno));
+        drmModeDestroyPropertyBlob(d.fd, blob);
+        return false;
+    }
+
+    if (d.mode_blob) drmModeDestroyPropertyBlob(d.fd, d.mode_blob);
+    d.mode_blob = blob;
+    d.mode = m;
+    return true;
 }
 
 const std::string& KmsDisplayManager::description() const { return impl_->desc; }
