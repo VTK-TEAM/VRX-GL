@@ -18,6 +18,7 @@
 #include <ctime>
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <mutex>
 #include <algorithm>
@@ -645,25 +646,63 @@ struct GlRenderer::Impl {
                      (const char*)glGetString(GL_RENDERER),
                      (const char*)glGetString(GL_VERSION));
 
-        if (!create_buffers() || !create_gl_objects()) {
+        // Програми шейдерів від геометрії не залежать — робимо один раз.
+        if (!create_gl_objects()) {
             running.store(false);
             return;
         }
-        std::fprintf(stderr, "[gl] %d буфер(и) %dx%d, крок %u | fence: %s\n",
-                     (int)bufs.size(), info.width, info.height,
-                     bufs.empty() ? 0 : bufs[0].stride, have_fence ? "є" : "немає");
-
-        period_ns = info.frame_time_ns();
-        std::fprintf(stderr, "[gl] період розгортки %.2f мс, зсув опиту адаптивний\n",
-                     period_ns / 1e6);
-
-        glViewport(0, 0, info.width, info.height);
         glDisable(GL_DEPTH_TEST);
 
         int frame_no = 0;
         double avg = 0.0;
+        uint32_t my_generation = 0;
 
         while (running.load(std::memory_order_relaxed)) {
+            // ГАРЯЧА ЗАМІНА МОНІТОРА. Дисплей піднімає номер конфігурації
+            // щоразу, коли вивід переналаштовано. Порівнювати ширину й
+            // висоту було б недостатньо: новий монітор може мати ту саму
+            // роздільність, але це вже інший тракт, з іншим CRTC і
+            // плейном, і старі фреймбуфери на ньому недійсні.
+            const display::LayerInfo cur = dpy->layer().info();
+            if (cur.generation != my_generation) {
+                if (my_generation != 0) {
+                    std::fprintf(stderr, "[gl] вивід змінився, перестворюю буфери\n");
+                }
+                destroy_buffers();
+                info = cur;
+                my_generation = cur.generation;
+
+                if (cur.generation == 0 || cur.width <= 0) {
+                    // Виводу зараз немає. Не крутимось намарно: дисплей
+                    // сам підніме номер, коли монітор під'єднають.
+                    period_ns = 0;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                    continue;
+                }
+
+                if (!create_buffers()) {
+                    std::fprintf(stderr, "[gl] буфери на %dx%d не створилися\n",
+                                 info.width, info.height);
+                    my_generation = 0;      // спробуємо ще раз на наступній події
+                    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                    continue;
+                }
+
+                period_ns = info.frame_time_ns();
+                glViewport(0, 0, info.width, info.height);
+
+                std::fprintf(stderr,
+                    "[gl] %d буфер(и) %dx%d, крок %u | період %.2f мс | fence: %s\n",
+                    (int)bufs.size(), info.width, info.height,
+                    bufs.empty() ? 0 : bufs[0].stride, period_ns / 1e6,
+                    have_fence ? "є" : "немає");
+            }
+
+            if (bufs.empty()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                continue;
+            }
+
             int idx = wait_free_buffer();
             if (idx < 0) break;
 

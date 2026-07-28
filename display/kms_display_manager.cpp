@@ -6,6 +6,8 @@
 
 #include <fcntl.h>
 #include <poll.h>
+#include <sys/socket.h>
+#include <linux/netlink.h>
 #include <unistd.h>
 #include <cerrno>
 #include <cstdio>
@@ -87,6 +89,44 @@ bool enum_value_by_name(int fd, uint32_t prop_id, const char* want, uint64_t* ou
     return found;
 }
 
+// Сокет ядра з подіями гарячого підключення. Беремо саме uevent, а не
+// libudev: потрібна рівно одна подія ("щось сталося в підсистемі drm"),
+// а тягнути залежність заради неї нема сенсу.
+int open_uevent_socket() {
+    int fd = ::socket(AF_NETLINK, SOCK_DGRAM | SOCK_CLOEXEC | SOCK_NONBLOCK,
+                      NETLINK_KOBJECT_UEVENT);
+    if (fd < 0) return -1;
+
+    sockaddr_nl sa{};
+    sa.nl_family = AF_NETLINK;
+    sa.nl_groups = 1;                 // 1 = повідомлення від ядра
+    if (::bind(fd, (sockaddr*)&sa, sizeof(sa)) != 0) {
+        ::close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+// Вичитує всі накопичені події й каже, чи була серед них drm-подія.
+// Читаємо ДО КІНЦЯ навіть після першого збігу: не вичитані повідомлення
+// лишили б сокет готовим до читання, і poll крутився б вхолосту.
+bool drain_uevents(int fd) {
+    bool drm = false;
+    char buf[4096];
+    for (;;) {
+        ssize_t n = ::recv(fd, buf, sizeof(buf) - 1, 0);
+        if (n <= 0) break;
+        buf[n] = 0;
+        // Повідомлення — послідовність рядків, розділених нулями.
+        for (ssize_t i = 0; i < n; ) {
+            const char* line = buf + i;
+            if (std::strstr(line, "drm") || std::strstr(line, "DRM")) drm = true;
+            i += (ssize_t)std::strlen(line) + 1;
+        }
+    }
+    return drm;
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------
@@ -141,10 +181,57 @@ struct KmsDisplayManager::Impl : public Layer {
     std::atomic<bool> running{false};
     bool modeset_done = false;
 
+    // Гаряча заміна монітора.
+    int udev_fd = -1;
+    std::atomic<uint32_t> generation_{0};
+    std::atomic<bool> has_output{false};
+
+    bool configure_output();
+
+    // Знімає поточний вивід, лишаючи карту відкритою. Саме цим
+    // відрізняється від close(): дескриптор картки, майстер і потік
+    // подій переживають заміну монітора.
+    void teardown_output() {
+        if (fd >= 0 && plane_id && plane_props.has("FB_ID")) {
+            drmModeAtomicReq* req = drmModeAtomicAlloc();
+            drmModeAtomicAddProperty(req, plane_id, plane_props["FB_ID"], 0);
+            drmModeAtomicAddProperty(req, plane_id, plane_props["CRTC_ID"], 0);
+            drmModeAtomicCommit(fd, req, DRM_MODE_ATOMIC_ALLOW_MODESET, nullptr);
+            drmModeAtomicFree(req);
+        }
+        if (fd >= 0) {
+            for (auto& kv : fb_cache) drmModeRmFB(fd, kv.second.fb_id);
+            if (mode_blob) drmModeDestroyPropertyBlob(fd, mode_blob);
+        }
+        fb_cache.clear();
+        mode_blob = 0;
+
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            pending = {};
+            in_flight = {};
+            current = {};
+            // Вимір частоти прив'язаний до конкретного тракту розгортки:
+            // після заміни монітора продовжувати старе вікно не можна.
+            hz_seq_valid = false;
+            st.measured_hz = 0;
+            st.last_present_ns = 0;
+        }
+
+        connector_id = crtc_id = plane_id = 0;
+        plane_props = crtc_props = conn_props = PropTable{};
+        mode = drmModeModeInfo{};
+        modeset_done = false;
+        info_ = LayerInfo{};
+        desc = "<немає виводу>";
+        has_output.store(false, std::memory_order_release);
+    }
+
     // --- Layer ---
     const LayerInfo& info() const override { return info_; }
 
     bool submit(const Frame& f) override {
+        if (!has_output.load(std::memory_order_acquire)) return false;
         if (!f.valid()) {
             std::fprintf(stderr, "[kms] submit: некоректний кадр\n");
             return false;
@@ -259,8 +346,13 @@ struct KmsDisplayManager::Impl : public Layer {
         drmModeAtomicFree(req);
 
         if (ret != 0) {
-            std::fprintf(stderr, "[kms] atomic commit%s: %s\n",
-                         allow_modeset ? " (modeset)" : "", std::strerror(errno));
+            // Поки ми готували коміт, потік подій міг зняти вивід:
+            // монітор висмикнули. Це не помилка, це гонка з гарячою
+            // заміною, і кадр однаково не було куди показувати.
+            if (has_output.load(std::memory_order_acquire)) {
+                std::fprintf(stderr, "[kms] atomic commit%s: %s\n",
+                             allow_modeset ? " (modeset)" : "", std::strerror(errno));
+            }
             return false;
         }
         return true;
@@ -328,13 +420,64 @@ struct KmsDisplayManager::Impl : public Layer {
         };
 
         while (running.load(std::memory_order_relaxed)) {
-            struct pollfd pfd{fd, POLLIN, 0};
-            int r = poll(&pfd, 1, 200);
-            if (r > 0 && (pfd.revents & POLLIN)) {
+            struct pollfd pfd[2];
+            pfd[0] = {fd, POLLIN, 0};
+            pfd[1] = {udev_fd, POLLIN, 0};
+            const int n = udev_fd >= 0 ? 2 : 1;
+
+            int r = poll(pfd, n, 200);
+
+            if (r > 0 && (pfd[0].revents & POLLIN)) {
                 drmHandleEvent(fd, &ctx);
             }
+
+            bool recheck = false;
+            if (r > 0 && n > 1 && (pfd[1].revents & POLLIN)) {
+                recheck = drain_uevents(udev_fd);
+            }
+
+            // Без сокета — опитуємо самі, раз на пів секунди. Повільніше,
+            // але монітор, увімкнений після старту, все одно підхопиться.
+            if (udev_fd < 0) {
+                const int64_t t = now_ns();
+                if (t - last_poll_ns > 500000000LL) {
+                    last_poll_ns = t;
+                    recheck = true;
+                }
+            }
+
+            if (recheck) handle_hotplug();
         }
     }
+
+    // Реакція на подію підсистеми drm. Подія каже лише "щось сталося",
+    // тож стан з'ясовуємо самі й діємо лише на РЕАЛЬНУ зміну: uevent-и
+    // сиплються й на власні modeset-и, і зациклитись тут дуже легко.
+    void handle_hotplug() {
+        const bool have = has_output.load(std::memory_order_acquire);
+
+        if (have) {
+            // Наш коннектор ще на місці? drmModeGetConnectorCurrent НЕ
+            // ініціює зчитування EDID по DDC — саме те, що треба для
+            // частої перевірки.
+            drmModeConnector* c = drmModeGetConnectorCurrent(fd, connector_id);
+            const bool alive = c && c->connection == DRM_MODE_CONNECTED;
+            if (c) drmModeFreeConnector(c);
+            if (alive) return;
+
+            std::fprintf(stderr, "[kms] монітор відключено\n");
+            teardown_output();
+            return;
+        }
+
+        // Виводу немає — пробуємо підняти. Якщо ще нічого не під'єднано,
+        // configure_output() тихо повернеться з невдачею.
+        if (configure_output()) {
+            std::fprintf(stderr, "[kms] монітор підключено: %s\n", desc.c_str());
+        }
+    }
+
+    int64_t last_poll_ns = 0;
 };
 
 // ---------------------------------------------------------------------
@@ -377,10 +520,38 @@ bool KmsDisplayManager::open() {
         return false;
     }
 
+    // Гаряча заміна: слухаємо uevent-и підсистеми drm. Без сокета
+    // програма працює, просто без реакції на перепідключення.
+    d.udev_fd = open_uevent_socket();
+    if (d.udev_fd < 0) {
+        std::fprintf(stderr, "[kms] uevent-сокет не відкрився — гарячої заміни не буде\n");
+    }
+
+    d.running.store(true, std::memory_order_relaxed);
+    d.event_thread = std::thread([&d] { d.event_loop(); });
+
+    // Дисплея може ще не бути: увімкнуть монітор — підхопимо самі.
+    if (!d.configure_output()) {
+        std::fprintf(stderr, "[kms] виводу поки немає, чекаю підключення монітора\n");
+    }
+    return true;
+}
+
+// Підбирає коннектор, режим, CRTC і плейн та робить modeset.
+// Викликається і на старті, і при кожній гарячій заміні монітора.
+bool KmsDisplayManager::Impl::configure_output() {
+    Impl& d = *this;
+    if (d.fd < 0) return false;
+
+    // Починаємо з чистого аркуша: після заміни монітора id коннектора,
+    // CRTC і плейна майже напевно інші, а пошук нижче спирається на те,
+    // що вони обнулені.
+    d.teardown_output();
+
     drmModeRes* res = drmModeGetResources(d.fd);
     if (!res) {
         std::fprintf(stderr, "[kms] drmModeGetResources: %s\n", std::strerror(errno));
-        close();
+        teardown_output();
         return false;
     }
 
@@ -396,9 +567,8 @@ bool KmsDisplayManager::open() {
         drmModeFreeConnector(c);
     }
     if (!conn) {
-        std::fprintf(stderr, "[kms] жодного підключеного коннектора\n");
+        // МОВЧКИ: сюди ми приходимо щоразу, поки монітора немає.
         drmModeFreeResources(res);
-        close();
         return false;
     }
     d.connector_id = conn->connector_id;
@@ -479,7 +649,7 @@ bool KmsDisplayManager::open() {
         std::fprintf(stderr, "[kms] не знайшовся CRTC для коннектора\n");
         drmModeFreeConnector(conn);
         drmModeFreeResources(res);
-        close();
+        teardown_output();
         return false;
     }
 
@@ -517,7 +687,7 @@ bool KmsDisplayManager::open() {
         std::fprintf(stderr, "[kms] не знайшовся primary-плейн на CRTC %u\n", d.crtc_id);
         drmModeFreeConnector(conn);
         drmModeFreeResources(res);
-        close();
+        teardown_output();
         return false;
     }
 
@@ -529,7 +699,7 @@ bool KmsDisplayManager::open() {
         std::fprintf(stderr, "[kms] drmModeCreatePropertyBlob: %s\n", std::strerror(errno));
         drmModeFreeConnector(conn);
         drmModeFreeResources(res);
-        close();
+        teardown_output();
         return false;
     }
 
@@ -602,8 +772,6 @@ bool KmsDisplayManager::open() {
     drmModeFreeConnector(conn);
     drmModeFreeResources(res);
 
-    d.running.store(true, std::memory_order_relaxed);
-    d.event_thread = std::thread([&d] { d.event_loop(); });
 
     std::fprintf(stderr,
         "[kms] %s | crtc=%u plane=%u | %d форматів | колір: %s %d біт | бюджет кадру %.2f мс\n",
@@ -611,6 +779,11 @@ bool KmsDisplayManager::open() {
         color_format_name(d.cfg.color_format), d.cfg.color_depth_bits,
         d.info_.frame_time_ns() / 1e6);
 
+
+    // Рендерер стежить саме за цим номером: змінився — значить
+    // геометрія виводу інша, і буфери треба перестворити.
+    d.info_.generation = generation_.fetch_add(1, std::memory_order_release) + 1;
+    d.has_output.store(true, std::memory_order_release);
     return true;
 }
 
@@ -642,6 +815,12 @@ void KmsDisplayManager::close() {
             drmDropMaster(d.fd);
             d.master_taken = false;
         }
+    }
+    if (d.udev_fd >= 0) {
+        ::close(d.udev_fd);
+        d.udev_fd = -1;
+    }
+    if (d.fd >= 0) {
         ::close(d.fd);
         d.fd = -1;
     }
@@ -661,6 +840,7 @@ Layer& KmsDisplayManager::layer() { return *impl_; }
 bool KmsDisplayManager::present() {
     Impl& d = *impl_;
     if (d.fd < 0) return false;
+    if (!d.has_output.load(std::memory_order_acquire)) return false;
 
     Impl::Slot to_show;
     {

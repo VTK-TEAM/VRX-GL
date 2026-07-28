@@ -117,14 +117,21 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // Монітора може ще не бути — це не помилка. Дисплей слухає uevent-и
+    // й підніме вивід сам, щойно його під'єднають; рендерер побачить це
+    // за номером конфігурації й перестворить буфери під нову геометрію.
     const vrx::display::LayerInfo& i = display.layer().info();
     std::printf("\n=== шар виводу ===\n");
-    std::printf("  %s\n", display.description().c_str());
-    std::printf("  розмір     %dx%d\n", i.width, i.height);
-    std::printf("  частота    %.3f Гц (бюджет кадру %.3f мс)\n",
-                i.refresh_hz(), i.frame_time_ns() / 1e6);
-    std::printf("  формат     0x%08x\n", i.fourcc);
-    std::printf("  колір      %s\n\n", color_format_str(i.color_format));
+    if (i.generation == 0) {
+        std::printf("  монітора немає — чекаю підключення\n\n");
+    } else {
+        std::printf("  %s\n", display.description().c_str());
+        std::printf("  розмір     %dx%d\n", i.width, i.height);
+        std::printf("  частота    %.3f Гц (бюджет кадру %.3f мс)\n",
+                    i.refresh_hz(), i.frame_time_ns() / 1e6);
+        std::printf("  формат     0x%08x\n", i.fourcc);
+        std::printf("  колір      %s\n\n", color_format_str(i.color_format));
+    }
 
     vrx::render::GlRenderer renderer;
     if (!renderer.init(display)) {
