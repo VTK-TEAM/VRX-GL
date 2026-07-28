@@ -25,6 +25,7 @@
 #include "record/storage.hpp"
 #include "diag/link_monitor.hpp"
 #include "display/kms_display_manager.hpp"
+#include "osd/osd.hpp"
 #include "render/gl_renderer.hpp"
 #include "source/h265_source.hpp"
 #include "source/mjpeg_source.hpp"
@@ -186,6 +187,20 @@ int main(int argc, char** argv) {
     renderer.add_source(pip_src);
     std::printf("Джерел зареєстровано: %d\n", renderer.source_count());
 
+    // OSD. Два власні потоки всередині: приймач телеметрії й збирач
+    // списку квадів. Тут — лише init, start і реєстрація; покадрово
+    // ним ніхто не керує, як і джерелами.
+    auto osd = std::make_shared<vrx::osd::Osd>(vrx::osd::Osd::Config{});
+    if (osd->init() && osd->start()) {
+        renderer.add_overlay(osd);
+        std::printf("OSD піднято.\n");
+    } else {
+        // Немає атласу чи конфігу — працюємо без OSD, а не падаємо:
+        // відео важливіше за телеметрію.
+        std::fprintf(stderr, "[main] OSD не піднявся, працюю без нього\n");
+        osd.reset();
+    }
+
     // Фазове автопідстроювання. Веде ЧАСТОТУ камери так, щоб прихід
     // кадру стояв трохи раніше за опит рендерера — настільки раніше,
     // наскільки дістає виміряний джитер, і не більше. Обидві величини
@@ -292,6 +307,15 @@ int main(int argc, char** argv) {
             std::printf("          ФАПЧ: не веде (%s)\n", ps.holding);
         }
 
+        if (osd) {
+            auto os = osd->stats();
+            std::printf("          OSD: квадів %llu | збірок %llu по %.2f мс"
+                        " | телеметрія: пакетів %llu, CRC-збоїв %llu\n",
+                        (unsigned long long)os.quads, (unsigned long long)os.builds,
+                        os.build_ms, (unsigned long long)os.packets,
+                        (unsigned long long)os.crc_fails);
+        }
+
         // Крок ЗЙОМКИ між показаними кадрами — те, що визначає плавність
         // руху. Лічильники повторів мовчать, поки ми беремо по кадру на
         // розгортку, навіть якщо зняті вони були врозбіг.
@@ -345,6 +369,7 @@ int main(int argc, char** argv) {
     }
 
     link.stop();
+    if (osd) osd->stop();
     recorder.stop();
     recorder2.stop();
     storage.stop();

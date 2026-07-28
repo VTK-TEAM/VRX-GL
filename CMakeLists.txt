@@ -40,6 +40,9 @@ add_executable(vrx_gl
     diag/link_monitor.cpp
     record/storage.cpp
     record/recorder.cpp
+    osd/osd.cpp
+    osd/stb_image_impl.cpp
+    osd/telemetry/vt_telemetry_listener.cpp
 )
 
 target_include_directories(vrx_gl PRIVATE

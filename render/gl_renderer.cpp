@@ -188,6 +188,25 @@ struct GlRenderer::Impl {
     // і в одну не компілюються. Перемикань за кадр буде одне, не по
     // одному на прямокутник: відео знизу, OSD зверху, тож групуються самі.
     GLuint prog_ext = 0;
+
+    // Друга програма — для звичайних текстур (атлас OSD, картинки барів
+    // і горизонту). Окрема, бо sampler2D і samplerExternalOES це різні
+    // типи GLSL і в одну програму не компілюються.
+    GLuint prog_tex = 0;
+
+    // Зареєстровані оверлеї. Кожен тримає власні текстури й останній
+    // знімок квадів — знімок лишається між кадрами, бо оверлей оновлює
+    // його рідше, ніж іде показ.
+    struct OverlaySlot {
+        std::shared_ptr<Overlay> ovl;
+        std::vector<GLuint> textures;
+        DrawList list;
+        bool have = false;
+    };
+    mutable std::mutex ovl_mtx;
+    std::vector<OverlaySlot> overlays;
+    GLuint ovl_vbo = 0;
+    std::vector<GLfloat> ovl_verts;
     GLuint vbo = 0;
     DmabufTextureCache textures;
 
@@ -347,7 +366,10 @@ struct GlRenderer::Impl {
     bool create_gl_objects() {
         prog_ext = link_program(kQuadVS, kExternalFS);
         if (!prog_ext) return false;
+        prog_tex = link_program(kQuadVS, kTexture2dFS);
+        if (!prog_tex) return false;
         glGenBuffers(1, &vbo);
+        glGenBuffers(1, &ovl_vbo);
         textures.init(egl, eglCreateImageKHR_, eglDestroyImageKHR_,
                       glEGLImageTargetTexture2DOES_);
         return true;
@@ -355,8 +377,17 @@ struct GlRenderer::Impl {
 
     void destroy_gl_objects() {
         textures.clear();
+        {
+            std::lock_guard<std::mutex> lk(ovl_mtx);
+            for (OverlaySlot& s : overlays) {
+                for (GLuint t : s.textures) if (t) glDeleteTextures(1, &t);
+                s.textures.clear();
+            }
+        }
         if (vbo) { glDeleteBuffers(1, &vbo); vbo = 0; }
+        if (ovl_vbo) { glDeleteBuffers(1, &ovl_vbo); ovl_vbo = 0; }
         if (prog_ext) { glDeleteProgram(prog_ext); prog_ext = 0; }
+        if (prog_tex) { glDeleteProgram(prog_tex); prog_tex = 0; }
     }
 
     // Малює один кадр: тло плюс усі джерела, що дали кадр.
@@ -558,6 +589,138 @@ struct GlRenderer::Impl {
             draw_textured_quad(vbo, it.p, it.f.image.visible(),
                                it.f.image.width, it.f.image.height);
         }
+
+        draw_overlays();
+    }
+
+    // Оверлеї малюються ПІСЛЯ джерел, тобто поверх відео, і завжди зі
+    // змішуванням: гліф має напівпрозорі краї (згладжування зроблене ще
+    // в атласі), і без альфи він вийде з рваною облямівкою.
+    //
+    // Змішування вмикається тільки тут. Для відео воно шкідливе: кадр
+    // непрозорий, а зайвий blend — це зайве читання цілі, тобто та сама
+    // смуга пам'яті, заради якої вся ця архітектура й затіяна.
+    void draw_overlays() {
+        std::lock_guard<std::mutex> lk(ovl_mtx);
+        if (overlays.empty() || !prog_tex) return;
+
+        bool blend_on = false;
+
+        for (OverlaySlot& slot : overlays) {
+            // Знімок. Немає нового — малюємо попередній: OSD оновлюється
+            // разів у двадцять на секунду, показ іде шістдесят.
+            if (slot.ovl->acquire(slot.list)) slot.have = true;
+            if (!slot.have || slot.list.quads.empty()) continue;
+
+            ensure_overlay_textures(slot);
+
+            if (!blend_on) {
+                glEnable(GL_BLEND);
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                glUseProgram(prog_tex);
+                glActiveTexture(GL_TEXTURE0);
+                glUniform1i(glGetUniformLocation(prog_tex, "uTex"), 0);
+                blend_on = true;
+            }
+
+            // Квади йдуть пачками з однією текстурою: підряд лежать усі
+            // гліфи одного напису, і всі вони з атласу. Тому просто
+            // ріжемо список на відрізки з однаковим image і малюємо
+            // кожен одним викликом — двісті гліфів дають одну-дві пачки
+            // замість двохсот перемикань стану.
+            size_t i = 0;
+            while (i < slot.list.quads.size()) {
+                const int img = slot.list.quads[i].image;
+                size_t j = i;
+                while (j < slot.list.quads.size() && slot.list.quads[j].image == img) ++j;
+
+                if (img >= 0 && img < (int)slot.textures.size() && slot.textures[img]) {
+                    build_overlay_batch(slot.list, i, j);
+                    glBindTexture(GL_TEXTURE_2D, slot.textures[img]);
+                    glBindBuffer(GL_ARRAY_BUFFER, ovl_vbo);
+                    glBufferData(GL_ARRAY_BUFFER,
+                                 (GLsizeiptr)(ovl_verts.size() * sizeof(GLfloat)),
+                                 ovl_verts.data(), GL_STREAM_DRAW);
+                    glEnableVertexAttribArray(0);
+                    glEnableVertexAttribArray(1);
+                    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE,
+                                          4 * sizeof(GLfloat), (void*)0);
+                    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE,
+                                          4 * sizeof(GLfloat),
+                                          (void*)(2 * sizeof(GLfloat)));
+                    glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(ovl_verts.size() / 4));
+                }
+                i = j;
+            }
+        }
+
+        if (blend_on) glDisable(GL_BLEND);
+    }
+
+    // Вершини для відрізка квадів [from, to). Два трикутники на квад,
+    // порядок вершин у квада: ЛВ, ПВ, ЛН, ПН.
+    //
+    // Частки екрана переводяться в NDC тут, а не в оверлеї: оверлей не
+    // повинен знати ні про GL, ні про те, що вісь Y у ньому дивиться вгору.
+    void build_overlay_batch(const DrawList& dl, size_t from, size_t to) {
+        ovl_verts.clear();
+        ovl_verts.reserve((to - from) * 6 * 4);
+
+        // ВІСЬ Y ПЕРЕВЕРНУТА, і це не помилка оверлея, а властивість
+        // цього тракту виводу. Перевірено на екрані трьома кроками:
+        // з природним відображенням (1-2y) уся картинка виходила
+        // дзеркальною; після перевороту лише текстурних координат гліфи
+        // стали правильними, але опинилися не на своїх місцях — тобто
+        // дзеркальний саме ВИВІД, а не вміст.
+        //
+        // Тому переворот тут один і стосується позиції. Оверлей лишається
+        // в координатах картинки (Y вниз, v вниз) і про GL не знає нічого.
+        //
+        // Відео цього не помічає з тієї ж причини, з якої помилку було
+        // важко впіймати: воно малюється одним прямокутником на весь
+        // екран і перевертає свої текстурні координати (див.
+        // draw_textured_quad), тож два дзеркала гасять одне одного.
+        auto push = [this](const OverlayQuad& q, int k) {
+            ovl_verts.push_back(2.0f * q.x[k] - 1.0f);
+            ovl_verts.push_back(2.0f * q.y[k] - 1.0f);
+            ovl_verts.push_back(q.u[k]);
+            ovl_verts.push_back(q.v[k]);
+        };
+
+        for (size_t i = from; i < to; ++i) {
+            const OverlayQuad& q = dl.quads[i];
+            push(q, 0); push(q, 1); push(q, 2);
+            push(q, 2); push(q, 1); push(q, 3);
+        }
+    }
+
+    // Текстури оверлея вантажаться один раз: атлас і картинки не
+    // змінюються за час роботи.
+    void ensure_overlay_textures(OverlaySlot& slot) {
+        const auto& imgs = slot.ovl->images();
+        if (slot.textures.size() == imgs.size()) return;
+
+        slot.textures.assign(imgs.size(), 0);
+        for (size_t i = 0; i < imgs.size(); ++i) {
+            const OverlayImage& im = imgs[i];
+            if (im.width <= 0 || im.height <= 0 || im.rgba.empty()) continue;
+
+            GLuint tex = 0;
+            glGenTextures(1, &tex);
+            glBindTexture(GL_TEXTURE_2D, tex);
+            // Лінійна фільтрація: гліфи в атласі побудовані під свій
+            // піксельний розмір і малюються 1:1, але екран може бути
+            // іншої роздільності, і тоді найближчий сусід дав би драбинку.
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, im.width, im.height, 0,
+                         GL_RGBA, GL_UNSIGNED_BYTE, im.rgba.data());
+            slot.textures[i] = tex;
+            std::fprintf(stderr, "[gl] текстура оверлея %s: %dx%d\n",
+                         im.id.c_str(), im.width, im.height);
+        }
     }
 
     void wake() {
@@ -687,6 +850,18 @@ struct GlRenderer::Impl {
                 destroy_buffers();
                 info = cur;
                 my_generation = cur.generation;
+
+                // Оверлеї рахують розміри гліфів у частках кадру, тож
+                // нову геометрію треба сказати їм ТУТ. Інакше після
+                // перепідключення монітора з іншою роздільністю OSD
+                // лишився б із масштабом від попереднього — і це було б
+                // не падіння, а тихо неправильний розмір тексту.
+                if (cur.width > 0 && cur.height > 0) {
+                    std::lock_guard<std::mutex> lk(ovl_mtx);
+                    for (OverlaySlot& s : overlays) {
+                        s.ovl->set_frame_size(cur.width, cur.height);
+                    }
+                }
 
                 if (cur.generation == 0 || cur.width <= 0) {
                     // Виводу зараз немає. Не крутимось намарно: дисплей
@@ -879,6 +1054,15 @@ void GlRenderer::add_source(std::shared_ptr<source::FrameSource> src) {
     if (!src) return;
     std::lock_guard<std::mutex> lk(impl_->src_mtx);
     impl_->sources.push_back(std::move(src));
+}
+
+void GlRenderer::add_overlay(std::shared_ptr<Overlay> ovl) {
+    if (!ovl) return;
+    ovl->set_frame_size(impl_->info.width, impl_->info.height);
+    std::lock_guard<std::mutex> lk(impl_->ovl_mtx);
+    Impl::OverlaySlot slot;
+    slot.ovl = std::move(ovl);
+    impl_->overlays.push_back(std::move(slot));
 }
 
 void GlRenderer::remove_source(const std::shared_ptr<source::FrameSource>& src) {

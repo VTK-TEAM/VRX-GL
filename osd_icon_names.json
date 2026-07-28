@@ -1,0 +1,876 @@
+{
+  "version": 1,
+  "generated_by": "osd_atlas_builder",
+  "icons": [
+    {
+      "name": "battery",
+      "token": "<battery>",
+      "file": "OSD_ATLAS/img/battery.png",
+      "hash": 3214,
+      "code_base": 60558,
+      "loaded": true,
+      "codes": {
+        "xs": 60558,
+        "small": 64654,
+        "mid": 68750,
+        "big": 72846,
+        "xl": 76942
+      }
+    },
+    {
+      "name": "fpv_battery",
+      "token": "<fpv_battery>",
+      "file": "OSD_ATLAS/img/fpv_battery.png",
+      "hash": 3797,
+      "code_base": 61141,
+      "loaded": true,
+      "codes": {
+        "xs": 61141,
+        "small": 65237,
+        "mid": 69333,
+        "big": 73429,
+        "xl": 77525
+      }
+    },
+    {
+      "name": "fpv_current",
+      "token": "<fpv_current>",
+      "file": "OSD_ATLAS/img/fpv_current.png",
+      "hash": 2445,
+      "code_base": 59789,
+      "loaded": true,
+      "codes": {
+        "xs": 59789,
+        "small": 63885,
+        "mid": 67981,
+        "big": 72077,
+        "xl": 76173
+      }
+    },
+    {
+      "name": "gps_sat",
+      "token": "<gps_sat>",
+      "file": "OSD_ATLAS/img/gps_sat.png",
+      "hash": 2056,
+      "code_base": 59400,
+      "loaded": true,
+      "codes": {
+        "xs": 59400,
+        "small": 63496,
+        "mid": 67592,
+        "big": 71688,
+        "xl": 75784
+      }
+    },
+    {
+      "name": "no_drive",
+      "token": "<no_drive>",
+      "file": "OSD_ATLAS/img/no_drive.png",
+      "hash": 453,
+      "code_base": 57797,
+      "loaded": true,
+      "codes": {
+        "xs": 57797,
+        "small": 61893,
+        "mid": 65989,
+        "big": 70085,
+        "xl": 74181
+      }
+    },
+    {
+      "name": "audio_downlink",
+      "token": "<audio_downlink>",
+      "file": "OSD_ATLAS/img/osd_icons/audio_downlink.png",
+      "hash": 2210,
+      "code_base": 59554,
+      "loaded": true,
+      "codes": {
+        "xs": 59554,
+        "small": 63650,
+        "mid": 67746,
+        "big": 71842,
+        "xl": 75938
+      }
+    },
+    {
+      "name": "battery_capacity",
+      "token": "<battery_capacity>",
+      "file": "OSD_ATLAS/img/osd_icons/battery_capacity.png",
+      "hash": 3287,
+      "code_base": 60631,
+      "loaded": true,
+      "codes": {
+        "xs": 60631,
+        "small": 64727,
+        "mid": 68823,
+        "big": 72919,
+        "xl": 77015
+      }
+    },
+    {
+      "name": "beeper_muted",
+      "token": "<beeper_muted>",
+      "file": "OSD_ATLAS/img/osd_icons/beeper_muted.png",
+      "hash": 3994,
+      "code_base": 61338,
+      "loaded": true,
+      "codes": {
+        "xs": 61338,
+        "small": 65434,
+        "mid": 69530,
+        "big": 73626,
+        "xl": 77722
+      }
+    },
+    {
+      "name": "beeper_state",
+      "token": "<beeper_state>",
+      "file": "OSD_ATLAS/img/osd_icons/beeper_state.png",
+      "hash": 1716,
+      "code_base": 59060,
+      "loaded": true,
+      "codes": {
+        "xs": 59060,
+        "small": 63156,
+        "mid": 67252,
+        "big": 71348,
+        "xl": 75444
+      }
+    },
+    {
+      "name": "blackbox_record",
+      "token": "<blackbox_record>",
+      "file": "OSD_ATLAS/img/osd_icons/blackbox_record.png",
+      "hash": 1555,
+      "code_base": 58899,
+      "loaded": true,
+      "codes": {
+        "xs": 58899,
+        "small": 62995,
+        "mid": 67091,
+        "big": 71187,
+        "xl": 75283
+      }
+    },
+    {
+      "name": "cell_count",
+      "token": "<cell_count>",
+      "file": "OSD_ATLAS/img/osd_icons/cell_count.png",
+      "hash": 1597,
+      "code_base": 58941,
+      "loaded": true,
+      "codes": {
+        "xs": 58941,
+        "small": 63037,
+        "mid": 67133,
+        "big": 71229,
+        "xl": 75325
+      }
+    },
+    {
+      "name": "climb_rate",
+      "token": "<climb_rate>",
+      "file": "OSD_ATLAS/img/osd_icons/climb_rate.png",
+      "hash": 2645,
+      "code_base": 59989,
+      "loaded": true,
+      "codes": {
+        "xs": 59989,
+        "small": 64085,
+        "mid": 68181,
+        "big": 72277,
+        "xl": 76373
+      }
+    },
+    {
+      "name": "compass_heading",
+      "token": "<compass_heading>",
+      "file": "OSD_ATLAS/img/osd_icons/compass_heading.png",
+      "hash": 2222,
+      "code_base": 59566,
+      "loaded": true,
+      "codes": {
+        "xs": 59566,
+        "small": 63662,
+        "mid": 67758,
+        "big": 71854,
+        "xl": 75950
+      }
+    },
+    {
+      "name": "cpu_load",
+      "token": "<cpu_load>",
+      "file": "OSD_ATLAS/img/osd_icons/cpu_load.png",
+      "hash": 2298,
+      "code_base": 59642,
+      "loaded": true,
+      "codes": {
+        "xs": 59642,
+        "small": 63738,
+        "mid": 67834,
+        "big": 71930,
+        "xl": 76026
+      }
+    },
+    {
+      "name": "cpu_temperature",
+      "token": "<cpu_temperature>",
+      "file": "OSD_ATLAS/img/osd_icons/cpu_temperature.png",
+      "hash": 3560,
+      "code_base": 60904,
+      "loaded": true,
+      "codes": {
+        "xs": 60904,
+        "small": 65000,
+        "mid": 69096,
+        "big": 73192,
+        "xl": 77288
+      }
+    },
+    {
+      "name": "critical_low_battery",
+      "token": "<critical_low_battery>",
+      "file": "OSD_ATLAS/img/osd_icons/critical_low_battery.png",
+      "hash": 3171,
+      "code_base": 60515,
+      "loaded": true,
+      "codes": {
+        "xs": 60515,
+        "small": 64611,
+        "mid": 68707,
+        "big": 72803,
+        "xl": 76899
+      }
+    },
+    {
+      "name": "current_amperage",
+      "token": "<current_amperage>",
+      "file": "OSD_ATLAS/img/osd_icons/current_amperage.png",
+      "hash": 967,
+      "code_base": 58311,
+      "loaded": true,
+      "codes": {
+        "xs": 58311,
+        "small": 62407,
+        "mid": 66503,
+        "big": 70599,
+        "xl": 74695
+      }
+    },
+    {
+      "name": "direction_to_home",
+      "token": "<direction_to_home>",
+      "file": "OSD_ATLAS/img/osd_icons/direction_to_home.png",
+      "hash": 772,
+      "code_base": 58116,
+      "loaded": true,
+      "codes": {
+        "xs": 58116,
+        "small": 62212,
+        "mid": 66308,
+        "big": 70404,
+        "xl": 74500
+      }
+    },
+    {
+      "name": "distance_to_home",
+      "token": "<distance_to_home>",
+      "file": "OSD_ATLAS/img/osd_icons/distance_to_home.png",
+      "hash": 2236,
+      "code_base": 59580,
+      "loaded": true,
+      "codes": {
+        "xs": 59580,
+        "small": 63676,
+        "mid": 67772,
+        "big": 71868,
+        "xl": 75964
+      }
+    },
+    {
+      "name": "dvr_recording",
+      "token": "<dvr_recording>",
+      "file": "OSD_ATLAS/img/osd_icons/dvr_recording.png",
+      "hash": 1523,
+      "code_base": 58867,
+      "loaded": true,
+      "codes": {
+        "xs": 58867,
+        "small": 62963,
+        "mid": 67059,
+        "big": 71155,
+        "xl": 75251
+      }
+    },
+    {
+      "name": "efficiency_glide",
+      "token": "<efficiency_glide>",
+      "file": "OSD_ATLAS/img/osd_icons/efficiency_glide.png",
+      "hash": 1842,
+      "code_base": 59186,
+      "loaded": true,
+      "codes": {
+        "xs": 59186,
+        "small": 63282,
+        "mid": 67378,
+        "big": 71474,
+        "xl": 75570
+      }
+    },
+    {
+      "name": "esc_telemetry",
+      "token": "<esc_telemetry>",
+      "file": "OSD_ATLAS/img/osd_icons/esc_telemetry.png",
+      "hash": 1334,
+      "code_base": 58678,
+      "loaded": true,
+      "codes": {
+        "xs": 58678,
+        "small": 62774,
+        "mid": 66870,
+        "big": 70966,
+        "xl": 75062
+      }
+    },
+    {
+      "name": "esc_temperature",
+      "token": "<esc_temperature>",
+      "file": "OSD_ATLAS/img/osd_icons/esc_temperature.png",
+      "hash": 3583,
+      "code_base": 60927,
+      "loaded": true,
+      "codes": {
+        "xs": 60927,
+        "small": 65023,
+        "mid": 69119,
+        "big": 73215,
+        "xl": 77311
+      }
+    },
+    {
+      "name": "failsafe_active",
+      "token": "<failsafe_active>",
+      "file": "OSD_ATLAS/img/osd_icons/failsafe_active.png",
+      "hash": 3495,
+      "code_base": 60839,
+      "loaded": true,
+      "codes": {
+        "xs": 60839,
+        "small": 64935,
+        "mid": 69031,
+        "big": 73127,
+        "xl": 77223
+      }
+    },
+    {
+      "name": "flight_mission",
+      "token": "<flight_mission>",
+      "file": "OSD_ATLAS/img/osd_icons/flight_mission.png",
+      "hash": 1810,
+      "code_base": 59154,
+      "loaded": true,
+      "codes": {
+        "xs": 59154,
+        "small": 63250,
+        "mid": 67346,
+        "big": 71442,
+        "xl": 75538
+      }
+    },
+    {
+      "name": "flight_timer",
+      "token": "<flight_timer>",
+      "file": "OSD_ATLAS/img/osd_icons/flight_timer.png",
+      "hash": 709,
+      "code_base": 58053,
+      "loaded": true,
+      "codes": {
+        "xs": 58053,
+        "small": 62149,
+        "mid": 66245,
+        "big": 70341,
+        "xl": 74437
+      }
+    },
+    {
+      "name": "fuel_drawn",
+      "token": "<fuel_drawn>",
+      "file": "OSD_ATLAS/img/osd_icons/fuel_drawn.png",
+      "hash": 1546,
+      "code_base": 58890,
+      "loaded": true,
+      "codes": {
+        "xs": 58890,
+        "small": 62986,
+        "mid": 67082,
+        "big": 71178,
+        "xl": 75274
+      }
+    },
+    {
+      "name": "goal_reached",
+      "token": "<goal_reached>",
+      "file": "OSD_ATLAS/img/osd_icons/goal_reached.png",
+      "hash": 3771,
+      "code_base": 61115,
+      "loaded": true,
+      "codes": {
+        "xs": 61115,
+        "small": 65211,
+        "mid": 69307,
+        "big": 73403,
+        "xl": 77499
+      }
+    },
+    {
+      "name": "goggles_link",
+      "token": "<goggles_link>",
+      "file": "OSD_ATLAS/img/osd_icons/goggles_link.png",
+      "hash": 3464,
+      "code_base": 60808,
+      "loaded": true,
+      "codes": {
+        "xs": 60808,
+        "small": 64904,
+        "mid": 69000,
+        "big": 73096,
+        "xl": 77192
+      }
+    },
+    {
+      "name": "gps_satellites",
+      "token": "<gps_satellites>",
+      "file": "OSD_ATLAS/img/osd_icons/gps_satellites.png",
+      "hash": 4042,
+      "code_base": 61386,
+      "loaded": true,
+      "codes": {
+        "xs": 61386,
+        "small": 65482,
+        "mid": 69578,
+        "big": 73674,
+        "xl": 77770
+      }
+    },
+    {
+      "name": "ground_speed",
+      "token": "<ground_speed>",
+      "file": "OSD_ATLAS/img/osd_icons/ground_speed.png",
+      "hash": 2222,
+      "code_base": 59566,
+      "loaded": true,
+      "codes": {
+        "xs": 59566,
+        "small": 63662,
+        "mid": 67758,
+        "big": 71854,
+        "xl": 75950
+      }
+    },
+    {
+      "name": "gs_battery",
+      "token": "<gs_battery>",
+      "file": "OSD_ATLAS/img/osd_icons/gs_battery.png",
+      "hash": 1501,
+      "code_base": 58845,
+      "loaded": true,
+      "codes": {
+        "xs": 58845,
+        "small": 62941,
+        "mid": 67037,
+        "big": 71133,
+        "xl": 75229
+      }
+    },
+    {
+      "name": "gyro_overflow",
+      "token": "<gyro_overflow>",
+      "file": "OSD_ATLAS/img/osd_icons/gyro_overflow.png",
+      "hash": 3049,
+      "code_base": 60393,
+      "loaded": true,
+      "codes": {
+        "xs": 60393,
+        "small": 64489,
+        "mid": 68585,
+        "big": 72681,
+        "xl": 76777
+      }
+    },
+    {
+      "name": "home_point",
+      "token": "<home_point>",
+      "file": "OSD_ATLAS/img/osd_icons/home_point.png",
+      "hash": 2443,
+      "code_base": 59787,
+      "loaded": true,
+      "codes": {
+        "xs": 59787,
+        "small": 63883,
+        "mid": 67979,
+        "big": 72075,
+        "xl": 76171
+      }
+    },
+    {
+      "name": "i2c_errors",
+      "token": "<i2c_errors>",
+      "file": "OSD_ATLAS/img/osd_icons/i2c_errors.png",
+      "hash": 499,
+      "code_base": 57843,
+      "loaded": true,
+      "codes": {
+        "xs": 57843,
+        "small": 61939,
+        "mid": 66035,
+        "big": 70131,
+        "xl": 74227
+      }
+    },
+    {
+      "name": "link_quality",
+      "token": "<link_quality>",
+      "file": "OSD_ATLAS/img/osd_icons/link_quality.png",
+      "hash": 1231,
+      "code_base": 58575,
+      "loaded": true,
+      "codes": {
+        "xs": 58575,
+        "small": 62671,
+        "mid": 66767,
+        "big": 70863,
+        "xl": 74959
+      }
+    },
+    {
+      "name": "mode_acro",
+      "token": "<mode_acro>",
+      "file": "OSD_ATLAS/img/osd_icons/mode_acro.png",
+      "hash": 1492,
+      "code_base": 58836,
+      "loaded": true,
+      "codes": {
+        "xs": 58836,
+        "small": 62932,
+        "mid": 67028,
+        "big": 71124,
+        "xl": 75220
+      }
+    },
+    {
+      "name": "mode_stabilized",
+      "token": "<mode_stabilized>",
+      "file": "OSD_ATLAS/img/osd_icons/mode_stabilized.png",
+      "hash": 2980,
+      "code_base": 60324,
+      "loaded": true,
+      "codes": {
+        "xs": 60324,
+        "small": 64420,
+        "mid": 68516,
+        "big": 72612,
+        "xl": 76708
+      }
+    },
+    {
+      "name": "motor_rpm",
+      "token": "<motor_rpm>",
+      "file": "OSD_ATLAS/img/osd_icons/motor_rpm.png",
+      "hash": 1296,
+      "code_base": 58640,
+      "loaded": true,
+      "codes": {
+        "xs": 58640,
+        "small": 62736,
+        "mid": 66832,
+        "big": 70928,
+        "xl": 75024
+      }
+    },
+    {
+      "name": "position_hold",
+      "token": "<position_hold>",
+      "file": "OSD_ATLAS/img/osd_icons/position_hold.png",
+      "hash": 2166,
+      "code_base": 59510,
+      "loaded": true,
+      "codes": {
+        "xs": 59510,
+        "small": 63606,
+        "mid": 67702,
+        "big": 71798,
+        "xl": 75894
+      }
+    },
+    {
+      "name": "radio_rssi",
+      "token": "<radio_rssi>",
+      "file": "OSD_ATLAS/img/osd_icons/radio_rssi.png",
+      "hash": 1082,
+      "code_base": 58426,
+      "loaded": true,
+      "codes": {
+        "xs": 58426,
+        "small": 62522,
+        "mid": 66618,
+        "big": 70714,
+        "xl": 74810
+      }
+    },
+    {
+      "name": "relative_altitude",
+      "token": "<relative_altitude>",
+      "file": "OSD_ATLAS/img/osd_icons/relative_altitude.png",
+      "hash": 3732,
+      "code_base": 61076,
+      "loaded": true,
+      "codes": {
+        "xs": 61076,
+        "small": 65172,
+        "mid": 69268,
+        "big": 73364,
+        "xl": 77460
+      }
+    },
+    {
+      "name": "sensor_failure",
+      "token": "<sensor_failure>",
+      "file": "OSD_ATLAS/img/osd_icons/sensor_failure.png",
+      "hash": 1638,
+      "code_base": 58982,
+      "loaded": true,
+      "codes": {
+        "xs": 58982,
+        "small": 63078,
+        "mid": 67174,
+        "big": 71270,
+        "xl": 75366
+      }
+    },
+    {
+      "name": "signal_noise",
+      "token": "<signal_noise>",
+      "file": "OSD_ATLAS/img/osd_icons/signal_noise.png",
+      "hash": 556,
+      "code_base": 57900,
+      "loaded": true,
+      "codes": {
+        "xs": 57900,
+        "small": 61996,
+        "mid": 66092,
+        "big": 70188,
+        "xl": 74284
+      }
+    },
+    {
+      "name": "status_armed",
+      "token": "<status_armed>",
+      "file": "OSD_ATLAS/img/osd_icons/status_armed.png",
+      "hash": 4091,
+      "code_base": 61435,
+      "loaded": true,
+      "codes": {
+        "xs": 61435,
+        "small": 65531,
+        "mid": 69627,
+        "big": 73723,
+        "xl": 77819
+      }
+    },
+    {
+      "name": "status_disarmed",
+      "token": "<status_disarmed>",
+      "file": "OSD_ATLAS/img/osd_icons/status_disarmed.png",
+      "hash": 1279,
+      "code_base": 58623,
+      "loaded": true,
+      "codes": {
+        "xs": 58623,
+        "small": 62719,
+        "mid": 66815,
+        "big": 70911,
+        "xl": 75007
+      }
+    },
+    {
+      "name": "system_warning",
+      "token": "<system_warning>",
+      "file": "OSD_ATLAS/img/osd_icons/system_warning.png",
+      "hash": 1739,
+      "code_base": 59083,
+      "loaded": true,
+      "codes": {
+        "xs": 59083,
+        "small": 63179,
+        "mid": 67275,
+        "big": 71371,
+        "xl": 75467
+      }
+    },
+    {
+      "name": "total_voltage",
+      "token": "<total_voltage>",
+      "file": "OSD_ATLAS/img/osd_icons/total_voltage.png",
+      "hash": 444,
+      "code_base": 57788,
+      "loaded": true,
+      "codes": {
+        "xs": 57788,
+        "small": 61884,
+        "mid": 65980,
+        "big": 70076,
+        "xl": 74172
+      }
+    },
+    {
+      "name": "trip_odometer",
+      "token": "<trip_odometer>",
+      "file": "OSD_ATLAS/img/osd_icons/trip_odometer.png",
+      "hash": 2574,
+      "code_base": 59918,
+      "loaded": true,
+      "codes": {
+        "xs": 59918,
+        "small": 64014,
+        "mid": 68110,
+        "big": 72206,
+        "xl": 76302
+      }
+    },
+    {
+      "name": "video_bitrate_hd",
+      "token": "<video_bitrate_hd>",
+      "file": "OSD_ATLAS/img/osd_icons/video_bitrate_hd.png",
+      "hash": 631,
+      "code_base": 57975,
+      "loaded": true,
+      "codes": {
+        "xs": 57975,
+        "small": 62071,
+        "mid": 66167,
+        "big": 70263,
+        "xl": 74359
+      }
+    },
+    {
+      "name": "video_rssi",
+      "token": "<video_rssi>",
+      "file": "OSD_ATLAS/img/osd_icons/video_rssi.png",
+      "hash": 3042,
+      "code_base": 60386,
+      "loaded": true,
+      "codes": {
+        "xs": 60386,
+        "small": 64482,
+        "mid": 68578,
+        "big": 72674,
+        "xl": 76770
+      }
+    },
+    {
+      "name": "voltage_sag",
+      "token": "<voltage_sag>",
+      "file": "OSD_ATLAS/img/osd_icons/voltage_sag.png",
+      "hash": 2479,
+      "code_base": 59823,
+      "loaded": true,
+      "codes": {
+        "xs": 59823,
+        "small": 63919,
+        "mid": 68015,
+        "big": 72111,
+        "xl": 76207
+      }
+    },
+    {
+      "name": "vtx_status",
+      "token": "<vtx_status>",
+      "file": "OSD_ATLAS/img/osd_icons/vtx_status.png",
+      "hash": 2200,
+      "code_base": 59544,
+      "loaded": true,
+      "codes": {
+        "xs": 59544,
+        "small": 63640,
+        "mid": 67736,
+        "big": 71832,
+        "xl": 75928
+      }
+    },
+    {
+      "name": "pilot",
+      "token": "<pilot>",
+      "file": "OSD_ATLAS/img/pilot.png",
+      "hash": 2785,
+      "code_base": 60129,
+      "loaded": true,
+      "codes": {
+        "xs": 60129,
+        "small": 64225,
+        "mid": 68321,
+        "big": 72417,
+        "xl": 76513
+      }
+    },
+    {
+      "name": "rec_dot",
+      "token": "<rec_dot>",
+      "file": "OSD_ATLAS/img/rec_dot.png",
+      "hash": 3177,
+      "code_base": 60521,
+      "loaded": true,
+      "codes": {
+        "xs": 60521,
+        "small": 64617,
+        "mid": 68713,
+        "big": 72809,
+        "xl": 76905
+      }
+    },
+    {
+      "name": "target",
+      "token": "<target>",
+      "file": "OSD_ATLAS/img/target.png",
+      "hash": 2120,
+      "code_base": 59464,
+      "loaded": true,
+      "codes": {
+        "xs": 59464,
+        "small": 63560,
+        "mid": 67656,
+        "big": 71752,
+        "xl": 75848
+      }
+    },
+    {
+      "name": "target2",
+      "token": "<target2>",
+      "file": "OSD_ATLAS/img/target2.png",
+      "hash": 2062,
+      "code_base": 59406,
+      "loaded": true,
+      "codes": {
+        "xs": 59406,
+        "small": 63502,
+        "mid": 67598,
+        "big": 71694,
+        "xl": 75790
+      }
+    },
+    {
+      "name": "tokko",
+      "token": "<tokko>",
+      "file": "OSD_ATLAS/img/tokko.png",
+      "hash": 3735,
+      "code_base": 61079,
+      "loaded": true,
+      "codes": {
+        "xs": 61079,
+        "small": 65175,
+        "mid": 69271,
+        "big": 73367,
+        "xl": 77463
+      }
+    }
+  ]
+}

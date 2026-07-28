@@ -18,6 +18,7 @@
 
 #include "../display/display_manager.hpp"
 #include "../source/frame_source.hpp"
+#include "overlay.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -117,6 +118,15 @@ public:
     void add_source(std::shared_ptr<source::FrameSource> src);
     void remove_source(const std::shared_ptr<source::FrameSource>& src);
     int source_count() const;
+
+    // Оверлей малюється ПОВЕРХ джерел, зі змішуванням. Реєстрація така
+    // сама, як у джерела: рендерер не володіє його життям і не запускає
+    // його — лише питає квади щокадру.
+    //
+    // Геометрію кадру рендерер повідомляє сам, тут же при реєстрації:
+    // оверлею вона потрібна, щоб перевести піксельні розміри гліфів у
+    // частки екрана, а зовнішній код не має про це думати.
+    void add_overlay(std::shared_ptr<Overlay> ovl);
 
 private:
     struct Impl;

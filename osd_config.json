@@ -1,0 +1,329 @@
+{
+  "elements": {
+    "// === 200+ = VRX-локальні (recording.state=200, line_loss=201) ===": {},
+    "// === GROUP: DRONE POWER (TOP-LEFT) ===": {},
+    "// === GROUP: FLIGHT DATA ROW (BOTTOM-CENTER-RIGHT EQUAL SPACING) ===": {},
+    "// === GROUP: OPTICS TELEMETRY (MID-RIGHT) ===": {},
+    "// === GROUP: SATELLITES (BOTTOM-LEFT) ===": {},
+    "// === osd_atlas_builder.cpp і мати відповідні png в OSD_ATLAS/img/. ===": {},
+    "// === Іконки battery_empty/low/mid/full ЩЕ ТРЕБА додати в TARGET_ICONS ===": {},
+    "// === КАНАЛИ ТЕПЕР ЧИСЛА (VT_telemetry_index_e, OSD/vt_telemetry_index.h) ===": {},
+    "// === НОВЕ: BAR приклад — ДВІ картинки (не з атласу): фон+заповнення ===": {},
+    "// === НОВЕ: ENUM_SWITCH приклад — іконка заряду замість цифри. ===": {},
+    "// === НОВЕ: HORIZON приклад — ОКРЕМА картинка (не з атласу), крен борта ===": {},
+    "// === НОВЕ: META-канали — діагностика телеметрії, не самі дані ===": {},
+    "// === Файл /opt/vrx/osd/horizon.png ще треба підготувати окремо: ===": {},
+    "// === Файли ще треба підготувати: battery_bar_empty.png / _fill.png ===": {},
+    "// === зверху як індекс — так само як на стандартних AH-індикаторах. ===": {},
+    "// === квадратне PNG з альфою, лінія горизонту по центру, стрілка/риска ===": {},
+    "arm_status_display": {
+      "CASES": [
+        {
+          "LABEL": "ARM",
+          "OP": "EQ",
+          "VALUE": 1
+        }
+      ],
+      "DATACHANNEL": 21,
+      "DEFAULT": "DISARM",
+      "L": 0.6674679517745972,
+      "S": 1,
+      "T": 0.018518518656492233,
+      "TYPE": "ENUM",
+      "UNITS": ""
+    },
+    "attitude_horizon_display": {
+      "BASE_IMAGE": "img/horizont_0.png",
+      "DATACHANNEL": 13,
+      "L": 0.5388755798339844,
+      "POINTER_IMAGE": "img/horizont_1.png",
+      "S": 0,
+      "T": 0.43358129262924194,
+      "TYPE": "HORIZON"
+    },
+    "custom_icon": {
+      "L": 0.375,
+      "LABEL": "<pilot>",
+      "S": 3,
+      "T": 0.0010626992443576455,
+      "TYPE": "LABEL",
+      "UNITS": ""
+    },
+    "drone_battery_display": {
+      "DATACHANNEL": 2,
+      "DECIMALS": 1,
+      "L": 0.004032257944345474,
+      "LABEL": "<fpv_battery>",
+      "S": 1,
+      "T": 0.01578192226588726,
+      "UNITS": "V"
+    },
+    "drone_current_display": {
+      "DATACHANNEL": 1,
+      "DECIMALS": 0,
+      "L": 0.005980861373245716,
+      "LABEL": "<fpv_current>",
+      "S": 1,
+      "T": 0.051009565591812134,
+      "UNITS": "A"
+    },
+    "flight_altitude_display": {
+      "DATACHANNEL": 16,
+      "DECIMALS": 0,
+      "L": 0.08373206108808517,
+      "LABEL": "ALT ",
+      "S": 1,
+      "T": 0.9638682007789612,
+      "UNITS": "m"
+    },
+    "flight_distance_display": {
+      "DATACHANNEL": 3,
+      "DECIMALS": 0,
+      "L": 0.4150717556476593,
+      "LABEL": "DIST ",
+      "S": 1,
+      "T": 0.9670563340187073,
+      "UNITS": "m"
+    },
+    "flight_gforce_value": {
+      "DATACHANNEL": 4,
+      "DECIMALS": 1,
+      "L": 0.005980861373245716,
+      "LABEL": "<current_amperage>",
+      "S": 1,
+      "T": 0.08289054036140442,
+      "TYPE": "VALUE",
+      "UNITS": "G"
+    },
+    "flight_mode_display": {
+      "CASES": [
+        {
+          "LABEL": "ACRO",
+          "OP": "EQ",
+          "VALUE": 0
+        },
+        {
+          "LABEL": "ANGLE",
+          "OP": "EQ",
+          "VALUE": 1
+        },
+        {
+          "LABEL": "HORIZON",
+          "OP": "EQ",
+          "VALUE": 2
+        },
+        {
+          "LABEL": "HEADFREE",
+          "OP": "EQ",
+          "VALUE": 3
+        },
+        {
+          "LABEL": "PASSTHRU",
+          "OP": "EQ",
+          "VALUE": 4
+        },
+        {
+          "LABEL": "RESCUE",
+          "OP": "EQ",
+          "VALUE": 5
+        },
+        {
+          "LABEL": "FAILSAFE",
+          "OP": "EQ",
+          "VALUE": 6
+        }
+      ],
+      "DATACHANNEL": 24,
+      "DEFAULT": "",
+      "L": 0.7483974099159241,
+      "LABEL": "MODE:",
+      "S": 1,
+      "T": 0.017094017937779427,
+      "TYPE": "ENUM",
+      "UNITS": ""
+    },
+    "flight_odometer_value": {
+      "DATACHANNEL": 18,
+      "DECIMALS": 0,
+      "L": 0.41626793146133423,
+      "LABEL": "ODO ",
+      "S": 1,
+      "T": 0.9330499172210693,
+      "TYPE": "VALUE",
+      "UNITS": "m"
+    },
+    "flight_sats_display": {
+      "DATACHANNEL": 7,
+      "DECIMALS": 0,
+      "L": 0.008971291594207287,
+      "LABEL": "<gps_sat> ",
+      "S": 1,
+      "T": 0.9670563340187073,
+      "UNITS": ""
+    },
+    "flight_speed_display": {
+      "DATACHANNEL": 11,
+      "DECIMALS": 0,
+      "L": 0.23026315867900848,
+      "LABEL": "SPD ",
+      "S": 1,
+      "T": 0.9659936428070068,
+      "UNITS": "km/h"
+    },
+    "flight_time_display": {
+      "DATACHANNEL": 19,
+      "DECIMALS": 0,
+      "L": 0.5490430593490601,
+      "LABEL": "TIME ",
+      "S": 1,
+      "T": 0.9659936428070068,
+      "UNITS": "",
+      "FORMAT": "MM:SS",
+      "// NOTE": "FLIGHT_TIME(19) - сирі секунди з FC; FORMAT=MM:SS переводить їх у хвилини:секунди при виводі."
+    },
+    "h265_fps_display": {
+      "DATACHANNEL": 202,
+      "DECIMALS": 0,
+      "L": 0.880382776260376,
+      "LABEL": "Main ",
+      "S": 0,
+      "T": 0.181,
+      "UNITS": "fps"
+    },
+    "h265_shown_fps_display": {
+      "DATACHANNEL": 204,
+      "DECIMALS": 0,
+      "L": 0.880382776260376,
+      "LABEL": "Screen ",
+      "S": 0,
+      "T": 0.245,
+      "UNITS": "fps"
+    },
+    "line_loss_display": {
+      "DATACHANNEL": 201,
+      "DECIMALS": 1,
+      "L": 0.880382776260376,
+      "LABEL": "LOSS",
+      "S": 1,
+      "T": 0.01381509006023407,
+      "UNITS": "dB"
+    },
+    "mjpeg_fps_display": {
+      "DATACHANNEL": 203,
+      "DECIMALS": 0,
+      "L": 0.880382776260376,
+      "LABEL": "Sub ",
+      "S": 0,
+      "T": 0.213,
+      "UNITS": "fps"
+    },
+    "optics_drone_rx_display": {
+      "DATACHANNEL": 29,
+      "DECIMALS": 1,
+      "L": 0.8815789222717285,
+      "LABEL": "ARx ",
+      "S": 0,
+      "T": 0.08501593768596649,
+      "UNITS": "dBm"
+    },
+    "optics_drone_tx_display": {
+      "DATACHANNEL": 28,
+      "DECIMALS": 1,
+      "L": 0.8827751278877258,
+      "LABEL": "ATx ",
+      "S": 0,
+      "T": 0.05526036024093628,
+      "UNITS": "dBm"
+    },
+    "optics_gcs_rx_display": {
+      "DATACHANNEL": 34,
+      "DECIMALS": 1,
+      "L": 0.8797847032546997,
+      "LABEL": "GRx ",
+      "S": 0,
+      "T": 0.14771519601345062,
+      "UNITS": "dBm"
+    },
+    "optics_gcs_tx_display": {
+      "DATACHANNEL": 33,
+      "DECIMALS": 1,
+      "L": 0.880382776260376,
+      "LABEL": "GTx ",
+      "S": 0,
+      "T": 0.11583422124385834,
+      "UNITS": "dBm"
+    },
+    "pilot_name": {
+      "L": 0.4066985547542572,
+      "LABEL": "Rost",
+      "S": 2,
+      "T": 0.009564293548464775,
+      "UNITS": ""
+    },
+    "power_supply_A_value": {
+      "DATACHANNEL": 35,
+      "DECIMALS": 1,
+      "L": 0.011217948980629444,
+      "LABEL": "A ",
+      "S": 1,
+      "T": 0.9301994442939758,
+      "TYPE": "VALUE",
+      "UNITS": "V"
+    },
+    "power_supply_G_value": {
+      "DATACHANNEL": 36,
+      "DECIMALS": 1,
+      "L": 0.08971291780471802,
+      "LABEL": "G ",
+      "S": 1,
+      "T": 0.929861843585968,
+      "TYPE": "VALUE",
+      "UNITS": "V"
+    },
+    "rc_ch2_bar": {
+      "BAR_H": 0.015,
+      "BAR_W": 0.1,
+      "DATACHANNEL": 20,
+      "EMPTY_IMAGE": "img/pgbar_empy.png",
+      "FILL_IMAGE": "img/pgbar_green.png",
+      "L": 0.15430621802806854,
+      "LABEL": "",
+      "MAX": 2000,
+      "MIN": 1000,
+      "S": 1,
+      "T": 0.02231668494641781,
+      "TYPE": "BAR",
+      "UNITS": ""
+    },
+    "record_indicator": {
+      "CASES": [
+        {
+          "LABEL": "<rec_dot>",
+          "OP": "EQ",
+          "VALUE": 1
+        },
+        {
+          "LABEL": "<no_drive>",
+          "OP": "EQ",
+          "VALUE": 0
+        }
+      ],
+      "DATACHANNEL": 200,
+      "DEFAULT": "",
+      "L": 0.945,
+      "S": 3,
+      "T": 0.93,
+      "TYPE": "ENUM"
+    },
+    "throttle": {
+      "DATACHANNEL": 20,
+      "DECIMALS": 0,
+      "L": 0.07692307978868484,
+      "LABEL": "THR",
+      "S": 1,
+      "T": 0.017094017937779427,
+      "TYPE": "VALUE",
+      "UNITS": ""
+    }
+  }
+}

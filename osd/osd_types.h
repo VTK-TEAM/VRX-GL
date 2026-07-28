@@ -1,0 +1,114 @@
+// osd_types.h
+#pragma once
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+// БІНАРНО МУСИТЬ ЗБІГАТИСЯ з osd_glyph_info у osd_atlas_builder.cpp
+// (той самий офлайн-білдер атласу, що й у попередньому проекті — ще
+// не перенесений, наступна сесія). Тільки чисті, нормалізовані
+// текстурні координати (0..1) для рендеру 1:1, без пересчотів у рантаймі.
+struct OsdGlyphInfo {
+    uint32_t unicode_char;
+    float left;   // U_MIN (0..1)
+    float top;    // V_MIN (0..1)
+    float width;  // Текстурна ширина клітинки (0..1)
+    float height; // Текстурна висота клітинки (0..1)
+};
+
+// Тип елемента layout. Визначає, ЯК рендериться елемент — див.
+// OsdSource::render() у osd_source.cpp для диспетчеризації за типом.
+enum class OsdElementType : uint8_t {
+    LABEL = 0,       // статичний текст/іконка, без каналу даних
+    VALUE = 1,       // LABEL (опційно) + текстове/іконкове значення каналу
+    ENUM_SWITCH = 2, // значення каналу -> switch/case по порогах -> текст/іконка
+    BAR = 3,         // прогрес-бар від MIN до MAX
+    HORIZON = 4,     // окреме зображення (не з атласу), обертається за значенням каналу (град.)
+};
+
+// Оператор порівняння для одного CASE в ENUM_SWITCH.
+enum class OsdCompareOp : uint8_t { EQ, GT, LT };
+
+// Мета-запит ПРО канал (не його власне значення). AGE_S рахується прямо з
+// VtTelemetryStorage (та й так вже трекає час останнього set_value на
+// кожен id). RATE_HZ — з часів хеш-протоколу (MapOsdDataSource рахував
+// EMA-частоту апдейтів); VtTelemetryStorage цього не рахує (і в поточному
+// osd_config.json жоден елемент RATE_HZ не використовує) — лишається в
+// enum на майбутнє, але fetch_channel_value() для нього завжди поверне
+// "немає даних".
+enum class OsdChannelMeta : uint8_t {
+    NONE = 0,     // звичайне значення каналу
+    RATE_HZ = 1,  // наразі НЕ підтримується (див. коментар вище)
+    AGE_S = 2,    // час з моменту останнього апдейту, сек
+};
+
+// Один case в ENUM_SWITCH: "якщо value <OP> threshold — показати label".
+// Кейси перевіряються по порядку зверху вниз (як switch/case), перший
+// збіг перемагає; якщо жоден не збігся — "провал вниз" до
+// OsdElementConfig::enum_default.
+struct OsdEnumCase {
+    OsdCompareOp op = OsdCompareOp::EQ;
+    float threshold = 0.f;
+    std::string label; // текст АБО "<icon_name>"
+};
+
+// Один елемент з JSON-конфігу layout ("elements": {...}).
+struct OsdElementConfig {
+    std::string key;              // ключ з JSON (напр. "battery_display")
+    float l = 0.f, t = 0.f;       // нормалізовані 0..1, top-left origin
+    int size_index = 0;           // 0..4 -> 5 розмірів (XS/SMALL/MID/BIG/XL)
+    OsdElementType type = OsdElementType::LABEL;
+    std::string label;            // текст АБО "<icon_name>" (LABEL/VALUE/ENUM_SWITCH — префікс)
+
+    // Сирий числовий id каналу (VT_telemetry_index_e з vt_telemetry_index.h,
+    // 0..89 з прошивки, 200+ — локальні VRX-канали). -1 = немає динамічного
+    // значення, лише LABEL. Раніше тут був хеш dotted-імені — тепер
+    // редактор сам показує ім'я поруч із номером (масив імен), тому канал
+    // у конфізі й коді — просто число, без проміжного шару.
+    int data_channel = -1;
+
+    std::string units;            // суфікс, що додається після значення каналу (VALUE)
+    OsdChannelMeta channel_meta = OsdChannelMeta::NONE; // "META" в JSON: ""/"RATE_HZ"/"AGE_S"
+
+    // Кількість знаків після коми для VALUE-виводу числа ("DECIMALS" в
+    // JSON, за замовчуванням 0 — більшість каналів це просто цілі
+    // величини). BAR/HORIZON/ENUM_SWITCH це поле не використовують —
+    // вони або малюють картинку, або порівнюють сире значення з
+    // порогами, а не форматують його в текст.
+    int decimals = 0;
+
+    // ФОРМАТ ЗНАЧЕННЯ ("FORMAT" в JSON). Порожньо — звичайне число з
+    // decimals знаками. "MM:SS" — значення трактується як СЕКУНДИ й
+    // виводиться як хвилини:секунди.
+    //
+    // Додано у VRX-GL: канал FLIGHT_TIME(19) віддає сирі секунди, а
+    // переводив їх у MM:SS старий OsdTelemetryService, якого в цьому
+    // тракті немає. Робити це винятком по номеру каналу в коді було б
+    // гірше: наступний такий канал знову потребував би правки коду.
+    std::string value_format;
+
+    // --- ENUM_SWITCH ---
+    std::vector<OsdEnumCase> cases; // перевіряються по порядку
+    std::string enum_default;       // текст АБО "<icon_name>", якщо жоден CASE не збігся
+
+    // --- BAR --- дві ОКРЕМІ картинки (не з атласу): фон (порожній бар) і
+    // заповнення. Обидві розтягуються (без збереження пропорцій) під
+    // bar_w x bar_h. Заповнення малюється поверх фону, обрізане зліва
+    // направо за фракцією значення — дозволяє довільний кастомний стиль
+    // бару (не просто суцільний колір).
+    float bar_min = 0.f, bar_max = 1.f;   // діапазон значення каналу
+    float bar_w = 0.15f, bar_h = 0.02f;   // розмір бару, частка ширини/висоти екрана
+    std::string bar_empty_image;          // фон (завжди повністю)
+    std::string bar_fill_image;           // заповнення (обрізається за фракцією)
+
+    // --- HORIZON ---
+    // Новий двошаровий режим: BASE_IMAGE (статичний фон) +
+    // POINTER_IMAGE (обертовий шар). Для зворотної сумісності поле
+    // IMAGE лишається як fallback (одна картинка на обидва шари).
+    // Геометрія горизонту фіксована в рендері: 100% висоти екрана,
+    // центр екрана. Тобто для HORIZON змінюються лише файли картинок.
+    std::string horizon_base_image;    // BASE_IMAGE
+    std::string horizon_pointer_image; // POINTER_IMAGE
+    std::string image_path;            // legacy IMAGE fallback
+};
