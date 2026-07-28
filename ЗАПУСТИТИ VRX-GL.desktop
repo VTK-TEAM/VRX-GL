@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=ЗАПУСТИТИ VRX-GL
+Comment=Приймальна станція FPV-лінка
+Exec=bash -c "cd \\"\\$(dirname \\"\\$1\\")\\" && exec ./scripts/run.sh" _ %k
+Terminal=true
+Icon=video-display
+Categories=AudioVideo;Player;
