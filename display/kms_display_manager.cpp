@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <cerrno>
 #include <cstdio>
+#include <cmath>
 #include <cstring>
 #include <ctime>
 
@@ -429,26 +430,36 @@ bool KmsDisplayManager::open() {
     if (!chosen) chosen = &conn->modes[0];   // PREFERRED не позначений — беремо перший
     d.mode = *chosen;
 
-    // --- genlock: підганяємо клок під частоту джерела ---
-    if (d.cfg.genlock_hz > 1.0 && d.mode.htotal && d.mode.vtotal) {
-        const double before =
-            (double)d.mode.clock * 1000.0 / (d.mode.htotal * d.mode.vtotal);
-        const double want_khz =
-            d.cfg.genlock_hz * d.mode.htotal * d.mode.vtotal / 1000.0;
-        const uint32_t new_clock = (uint32_t)(want_khz + 0.5);
+    // --- опускаємо частоту розгортки, не чіпаючи піксельний клок ---
+    //
+    // Рядкова частота (clock/htotal) лишається незмінною — саме до неї
+    // підлаштовується приймач сигналу. Росте лише кількість рядків у
+    // кадрі, тобто задній порт. Деталі й причина — у Config.
+    if (d.cfg.target_refresh_hz > 1.0 && d.mode.htotal && d.mode.vtotal) {
+        const uint16_t was = d.mode.vtotal;
+        const double line_hz = double(d.mode.clock) * 1000.0 / d.mode.htotal;
+        const double before = line_hz / was;
+        const long want = std::lround(line_hz / d.cfg.target_refresh_hz);
+        const long limit = std::lround(d.mode.vtotal * (1.0 + d.cfg.vtotal_max_growth));
 
-        // Захист від дурних значень: більше ніж на 5% клок не рухаємо,
-        // інакше можна вийти за межі того, що приймає панель.
-        if (new_clock > d.mode.clock * 95 / 100 && new_clock < d.mode.clock * 105 / 100) {
+        if (want <= d.mode.vtotal) {
+            // Підняти частоту так не можна: рядки лише додаються.
             std::fprintf(stderr,
-                "[kms] genlock: клок %u -> %u кГц, частота %.3f -> %.3f Гц\n",
-                d.mode.clock, new_clock, before, d.cfg.genlock_hz);
-            d.mode.clock = new_clock;
-            d.mode.vrefresh = (uint32_t)(d.cfg.genlock_hz + 0.5);
+                "[kms] %.3f Гц не нижче за поточні %.3f — режим лишаю як є\n",
+                d.cfg.target_refresh_hz, before);
+        } else if (want > limit) {
+            std::fprintf(stderr,
+                "[kms] %.3f Гц вимагає vtotal %ld проти %u — надто далеко, лишаю як є\n",
+                d.cfg.target_refresh_hz, want, was);
         } else {
+            d.mode.vtotal = (uint16_t)want;
+            const double after = line_hz / d.mode.vtotal;
+            d.mode.vrefresh = (uint32_t)(after + 0.5);
             std::fprintf(stderr,
-                "[kms] genlock: %.3f Гц вимагає клока %u кГц — надто далеко від %u, пропускаю\n",
-                d.cfg.genlock_hz, new_clock, d.mode.clock);
+                "[kms] vtotal %u -> %ld (+%ld рядків), частота %.3f -> %.3f Гц"
+                " | рядкова %.3f кГц і клок %u кГц незмінні\n",
+                was, want, want - was, before, after,
+                line_hz / 1000.0, d.mode.clock);
         }
     }
 

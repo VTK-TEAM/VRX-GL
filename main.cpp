@@ -33,6 +33,7 @@
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 #include <thread>
 
 namespace {
@@ -81,12 +82,35 @@ int main(int argc, char** argv) {
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);
 
+    // Петлю можна вимкнути. Потрібно не для польоту, а для замірів: поки
+    // вона працює, вона перезаписує підстроювання камери двічі на
+    // секунду, і будь-яке значення, виставлене ззовні, живе пів секунди.
+    // Без цього прапорця не можна ні зміряти власну частоту камери, ні
+    // перевірити, що підстроювання взагалі діє.
+    bool phase_loop = true;
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == "--no-phase") phase_loop = false;
+    }
+
     stop_desktop_if_running();
 
-    // Підганяємо розгортку під частоту камери — без цього фаза приходу
-    // кадру пливе, і раз на ~4.7 с кадр неминуче дублюється або гине.
+    // Опускаємо розгортку до 59 Гц — рядками гасіння, не клоком.
+    //
+    // Це не підстроювання під камеру, а вибір РОБОЧОЇ ТОЧКИ. Матриця
+    // вміє рухатись лише вниз від своєї апаратної стелі 60 Гц, тож
+    // рівновага петлі мусить лежати нижче неї. На 59 запас виходить ~1
+    // Гц угору й 2 вниз незалежно від того, який монітор підключили;
+    // на стоковій панелі 59.789 його лишалось би 210 мГц, і будь-який
+    // рівно 60-герцовий монітор зробив би захоплення неможливим.
+    //
+    // Задається один раз при відкритті, до появи картинки — блимання
+    // немає, бо це і є первинний modeset.
+    // VRX_REFRESH перекриває ціль на час діагностики: 0 = лишити рідну
+    // частоту панелі. Що нижча ціль, то більший зсув доводиться тримати
+    // камері, а разом із ним і ризик, що вона почне дублювати кадри.
     vrx::display::KmsDisplayManager::Config disp_cfg;
-    disp_cfg.genlock_hz = 60.0;
+    disp_cfg.target_refresh_hz = 59.0;
+    if (const char* e = std::getenv("VRX_REFRESH")) disp_cfg.target_refresh_hz = std::atof(e);
     vrx::display::KmsDisplayManager display(disp_cfg);
     if (!display.open()) {
         std::fprintf(stderr, "[main] дисплей не відкрився\n");
@@ -145,12 +169,18 @@ int main(int argc, char** argv) {
     std::printf("Джерел зареєстровано: %d\n", renderer.source_count());
 
     // Фазове автопідстроювання. Веде ЧАСТОТУ камери так, щоб прихід
-    // кадру стояв у центрі вікна прийому: тоді ні мережевий джитер, ні
-    // розбіжність кварців не здатні перекинути кадр через точку опиту.
+    // кадру стояв трохи раніше за опит рендерера — настільки раніше,
+    // наскільки дістає виміряний джитер, і не більше. Обидві величини
+    // рахуються на ходу, тому тут немає жодної цифри. Єдиний актуатор у
+    // тракті: режим екрана не чіпаємо взагалі.
     vrx::control::PhaseController::Config ph_cfg;
     ph_cfg.camera.host = "192.168.1.10";
     vrx::control::PhaseController phase(display, renderer, main_src, ph_cfg);
-    phase.start();
+    if (phase_loop) {
+        phase.start();
+    } else {
+        std::printf("Петля фази ВИМКНЕНА (--no-phase): камеру не чіпаємо.\n");
+    }
 
     std::printf("Працюю. Ctrl+C для виходу.\n");
 
@@ -175,7 +205,9 @@ int main(int argc, char** argv) {
 
         std::printf("  %5.1f с | показано %llu (%.1f/с) | GPU %.2f мс"
                     " | h265 %dx%d: нових %llu, повтор %llu, дроп %llu"
-                    " | ЗАТРИМКА %.1f мс | ФАЗА %.1f мс (дрейф %+.2f мс/с) | опит %.1f | екран %.3f Гц\n"
+                    " | ЗАТРИМКА %.1f мс | ФАЗА %.1f мс (дрейф %+.2f мс/с) | опит %.1f\n"
+                    "          ЧАСТОТИ: камера %.4f | екран %.4f | різниця %+.0f мГц"
+                    " -> дрейф має бути %+.2f мс/с\n"
                     "          інтервали: вхід %.1f/%.1f/%.1f -> вихід %.1f/%.1f/%.1f"
                     " | ДЕКОД %.1f/%.1f/%.1f мс\n",
                     sec, (unsigned long long)ds.presented, ds.presented / sec,
@@ -184,7 +216,12 @@ int main(int argc, char** argv) {
                     (unsigned long long)ms.taken, (unsigned long long)ms.reused,
                     (unsigned long long)ms.dropped,
                     rs.latency_avg_ms, rs.phase_ms, rs.phase_drift_ms_per_s,
-                    rs.poll_offset_ms, ds.measured_hz,
+                    rs.poll_offset_ms,
+                    ms.produced_hz, ds.measured_hz,
+                    (ms.produced_hz - ds.measured_hz) * 1000.0,
+                    ds.measured_hz > 0
+                        ? -(ms.produced_hz - ds.measured_hz) * (1000.0 / ds.measured_hz)
+                        : 0.0,
                     in_mn, in_avg, in_mx,
                     ms.interval_min_ms, ms.interval_avg_ms, ms.interval_max_ms,
                     dc_mn, dc_avg, dc_mx);
@@ -192,12 +229,29 @@ int main(int argc, char** argv) {
         auto ps = phase.stats();
         if (ps.engaged) {
             std::printf("          ФАПЧ: фаза %.2f -> ціль %.2f (похибка %+.2f мс)"
+                        " | опит %.2f − запас %.2f (розкид %.2f) | затримка %.1f мс"
                         " | камера %+d мГц | екран %.4f Гц | %s%s\n",
-                        ps.phase_ms, ps.target_ms, ps.error_ms, ps.trim_mhz,
-                        ps.display_hz, ps.locked ? "ЗАХОПЛЕНО" : "ведення",
+                        ps.phase_ms, ps.target_ms, ps.error_ms,
+                        ps.poll_ms, ps.guard_ms, ps.jitter_ms, ps.latency_ms,
+                        ps.trim_mhz, ps.display_hz,
+                        ps.locked ? "ЗАХОПЛЕНО" : "ведення",
                         ps.failed ? " | ЗАПИСИ ПАДАЮТЬ" : "");
         } else {
             std::printf("          ФАПЧ: не веде (%s)\n", ps.holding);
+        }
+
+        // Крок ЗЙОМКИ між показаними кадрами — те, що визначає плавність
+        // руху. Лічильники повторів мовчать, поки ми беремо по кадру на
+        // розгортку, навіть якщо зняті вони були врозбіг.
+        const uint64_t st_all = rs.step_ok + rs.step_repeat + rs.step_short + rs.step_gap;
+        if (st_all > 0) {
+            std::printf("          КРОК ЗЙОМКИ: норма %.2f%% | повтор %llu | коротко %llu"
+                        " | пропуск %llu | розмах %.1f..%.1f мс\n",
+                        100.0 * rs.step_ok / st_all,
+                        (unsigned long long)rs.step_repeat,
+                        (unsigned long long)rs.step_short,
+                        (unsigned long long)rs.step_gap,
+                        rs.step_min_ms, rs.step_max_ms);
         }
         std::fflush(stdout);
     }

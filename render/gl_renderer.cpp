@@ -11,7 +11,9 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <cerrno>
+#include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 
@@ -95,6 +97,7 @@ struct GlRenderer::Impl {
     // produced_ns кадру, який щойно віддали на показ. Наступне
     // підтвердження flip'а стосується саме його — звідси й затримка.
     std::atomic<int64_t> inflight_produced_ns{0};
+    int64_t prev_pres_produced = 0;   // лише з потоку подій DRM
 
     // Адаптивний зсув опиту від початку періоду, мс.
     //
@@ -113,12 +116,63 @@ struct GlRenderer::Impl {
     double poll_offset_ms = 8.0;
     int64_t last_shown_produced_ns = 0;
 
-    // Замір фази приходу кадру відносно сітки розгортки.
-    double phase_ms = 0;
-    double phase_prev = -1;
+    // ЗАМІР ФАЗИ. Фаза — величина КУТОВА: 0.1 мс і 16.6 мс сусіди, а не
+    // протилежності. Усереднювати її звичайним фільтром не можна, і це
+    // не педантизм — на цьому вимір уже один раз збрехав.
+    //
+    // Було: ЕМА з α=0.02 по різниці "по найкоротшій дузі". Поки фаза
+    // стоїть, воно працює. Але фаза ПОВЗЕ, і швидкість, яку такий фільтр
+    // здатний відстежити, обмежена: за крок він може підтягнутися щонайб.
+    // на α·півперіоду, тобто ~10 мс/с. При більшому дрейфі відставання
+    // переростає півперіоду, різниця по колу перекидає знак, і фільтр
+    // їде НАЗАД. На виході — рівна правдоподібна цифра (у нас −3.6 мс/с),
+    // яка не міняється ні від чого. Контролер на такому вході сліпий.
+    //
+    // Стало: кругове середнє на вікні. Складаємо одиничні вектори кута
+    // кожного кадру й беремо аргумент суми — операція, для якої обгортка
+    // не існує в принципі. Довжина тієї ж суми дає розкид безкоштовно:
+    // вектори збігаються -> |сума| ≈ n, розкид нуль; розкидані по колу ->
+    // |сума| -> 0.
+    double acc_sin = 0, acc_cos = 0;
+    uint32_t acc_n = 0;
+    int64_t acc_start_ns = 0;
+
+    // Вікно усереднення. Компроміс: довше — точніше середнє, але фаза
+    // встигає проповзти всередині вікна й роздути оцінку розкиду.
+    // 250 мс = ~15 кадрів, і при дрейфі 6 мс/с розмиття 1.5 мс.
+    static constexpr int64_t kPhaseWindowNs = 250000000LL;
+
+    double phase_ms = 0;          // опубліковане середнє за останнє вікно
+    double phase_jitter_ms = 0;   // кругове σ того ж вікна
+    bool phase_valid = false;
+    double phase_prev = -1;       // попереднє середнє, для розгортки
     int64_t phase_prev_ns = 0;
     double phase_drift = 0;
+
+    // ДРЕЙФ — нахил розгорнутої фази на вікні, а не різниця двох сусідніх
+    // середніх. Різниця через 250 мс ділить похибку середнього (~0.4 мс)
+    // на надто короткий базис і дає ±2.3 мс/с шуму; частотна ланка
+    // перетворює це на випадкове блукання тримінгу, яке потім доводиться
+    // виправляти фазовій ланці. Регресія на 2 с зменшує шум на порядок.
+    //
+    // Фаза тут уже РОЗГОРНУТА (unwrapped): кожне нове середнє додається
+    // до попереднього через різницю по найкоротшій дузі, тож усередині
+    // кільця обгортки немає й нахил рахується звичайним МНК.
+    static constexpr int kDriftPoints = 8;      // 8 x 250 мс = 2 с
+    double un_phase[kDriftPoints] = {};
+    double un_time[kDriftPoints] = {};
+    int un_n = 0, un_head = 0;
+    double un_acc = 0;                          // накопичена розгорнута фаза
     int64_t phase_last_produced = 0;   // щоб не міряти той самий кадр двічі
+
+    // Сирі вікна фази в stderr — вмикається VRX_PHASE_DEBUG=1. Потрібне
+    // саме тому, що зведені числа тут уже один раз збрехали, і без
+    // сирого ряду відрізнити "вимір поганий" від "об'єкт такий" не можна.
+    bool phase_debug = getenv("VRX_PHASE_DEBUG") != nullptr;
+    // Скільки сирих зразків вивести. Обмежено навмисно: цей дамп потрібен
+    // для розбору, а не для роботи, і 400 кадрів (7 с) вистачає, щоб
+    // порахувати нахил фази з похибкою краще за 0.05 мс/с.
+    int dbg_left = 400;
 
     mutable std::mutex stats_mtx;
     RenderStats st{};
@@ -370,37 +424,102 @@ struct GlRenderer::Impl {
             if (last_v > 0) {
                 int64_t rel = (newest_produced - last_v) % period_ns;
                 if (rel < 0) rel += period_ns;
-                const double ms = rel / 1e6;
+                const double period_ms = period_ns / 1e6;
+                const double th = 2.0 * M_PI * (rel / (double)period_ns);
 
-                // Згладжуємо по колу: перехід через межу періоду не має
-                // виглядати як стрибок на 16 мс.
-                if (phase_prev < 0) {
-                    phase_ms = ms;
-                } else {
-                    double d = ms - phase_ms;
-                    if (d > period_ns / 2e6) d -= period_ns / 1e6;
-                    if (d < -period_ns / 2e6) d += period_ns / 1e6;
-                    phase_ms += d * 0.02;
-                    if (phase_ms < 0) phase_ms += period_ns / 1e6;
-                    if (phase_ms > period_ns / 1e6) phase_ms -= period_ns / 1e6;
-
-                    // Швидкість дрейфу — саме її має прибрати genlock.
-                    if (phase_prev_ns > 0) {
-                        const double dt_s = (newest_produced - phase_prev_ns) / 1e9;
-                        if (dt_s > 0.5) {
-                            double dd = phase_ms - phase_prev;
-                            if (dd > period_ns / 2e6) dd -= period_ns / 1e6;
-                            if (dd < -period_ns / 2e6) dd += period_ns / 1e6;
-                            phase_drift = phase_drift * 0.8 + (dd / dt_s) * 0.2;
-                            phase_prev = phase_ms;
-                            phase_prev_ns = newest_produced;
-                        }
-                    } else {
-                        phase_prev = phase_ms;
-                        phase_prev_ns = newest_produced;
-                    }
+                if (phase_debug && dbg_left > 0) {
+                    dbg_left--;
+                    std::fprintf(stderr, "RAW %.6f %.6f %.3f\n",
+                                 newest_produced / 1e9, last_v / 1e9, rel / 1e6);
                 }
-                if (phase_prev < 0) { phase_prev = phase_ms; phase_prev_ns = newest_produced; }
+
+                acc_sin += std::sin(th);
+                acc_cos += std::cos(th);
+                acc_n++;
+                if (acc_start_ns == 0) acc_start_ns = newest_produced;
+
+                // Вікно закрилося — публікуємо середнє й розкид.
+                // Мінімум кадрів окремо від часу: на 30 к/с їх удвічі
+                // менше, а на кількох штуках кругове σ ще безглузде.
+                if (newest_produced - acc_start_ns >= kPhaseWindowNs && acc_n >= 8) {
+                    const double n = (double)acc_n;
+                    double mean = std::atan2(acc_sin / n, acc_cos / n);
+                    if (mean < 0.0) mean += 2.0 * M_PI;
+                    const double mean_ms = mean * period_ms / (2.0 * M_PI);
+
+                    // Довжина середнього вектора: 1 — усі кадри в одну
+                    // точку, 0 — рівномірно по колу. Стандартна кругова
+                    // сигма: sqrt(-2 ln R), у радіанах.
+                    const double R = std::hypot(acc_sin, acc_cos) / n;
+                    const double sig_rad = R > 1e-6 ? std::sqrt(-2.0 * std::log(R < 1.0 ? R : 1.0))
+                                                    : 2.0 * M_PI;
+                    double sig_ms = sig_rad * period_ms / (2.0 * M_PI);
+                    if (sig_ms > period_ms * 0.25) sig_ms = period_ms * 0.25;
+
+                    // Дрейф — по двох сусідніх середніх. Тепер це можна:
+                    // середні йдуть через 250 мс, і навіть 30 мс/с дає
+                    // між ними 7.5 мс, тобто менше півперіоду. Обгортка
+                    // однозначна.
+                    // Розгортаємо: до накопиченої фази додаємо крок по
+                    // найкоротшій дузі. Кроки йдуть через 250 мс, тож
+                    // навіть 30 мс/с дають менше півперіоду — однозначно.
+                    if (phase_prev >= 0) {
+                        double dd = mean_ms - phase_prev;
+                        if (dd >  period_ms * 0.5) dd -= period_ms;
+                        if (dd < -period_ms * 0.5) dd += period_ms;
+                        un_acc += dd;
+                    }
+                    phase_prev = mean_ms;
+                    phase_prev_ns = newest_produced;
+
+                    un_phase[un_head] = un_acc;
+                    un_time[un_head] = newest_produced / 1e9;
+                    un_head = (un_head + 1) % kDriftPoints;
+                    if (un_n < kDriftPoints) un_n++;
+
+                    double drift = phase_drift;
+                    if (un_n >= 4) {
+                        double sx = 0, sy = 0;
+                        for (int k = 0; k < un_n; ++k) { sx += un_time[k]; sy += un_phase[k]; }
+                        const double mx = sx / un_n, my = sy / un_n;
+                        double num = 0, den = 0;
+                        for (int k = 0; k < un_n; ++k) {
+                            const double dx = un_time[k] - mx;
+                            num += dx * (un_phase[k] - my);
+                            den += dx * dx;
+                        }
+                        if (den > 1e-9) drift = num / den;
+                    }
+
+                    if (phase_debug) {
+                        std::fprintf(stderr, "PH %.3f %.3f %u %.3f %.3f\n",
+                                     newest_produced / 1e9, mean_ms, acc_n, sig_ms, drift);
+                    }
+
+                    {
+                        std::lock_guard<std::mutex> lk(stats_mtx);
+                        phase_ms = mean_ms;
+                        // Розкид згладжуємо, а середнє — ні. Різниця не
+                        // формальна: середнє кутове, і фільтрувати його
+                        // звичайним ЕМА не можна; розкид же — звичайна
+                        // додатна величина.
+                        //
+                        // Згладжувати ТРЕБА: по 15 кадрах вікна оцінка σ
+                        // сама має похибку ~18%, а один викид роздуває її
+                        // вдвічі. Запас 2σ цей скач подвоює, ціль повзе
+                        // за ним на ±1.6 мс, і петля ганяється за власним
+                        // шумом замість тримати фазу. Стала ~2.5 с.
+                        phase_jitter_ms = phase_valid
+                                        ? phase_jitter_ms * 0.9 + sig_ms * 0.1
+                                        : sig_ms;
+                        phase_drift = drift;
+                        phase_valid = true;
+                    }
+
+                    acc_sin = acc_cos = 0.0;
+                    acc_n = 0;
+                    acc_start_ns = 0;
+                }
             }
         }
 
@@ -629,12 +748,39 @@ bool GlRenderer::init(display::DisplayManager& display, Config cfg) {
         d.last_present_ns.store(t, std::memory_order_relaxed);
 
         const int64_t produced = d.inflight_produced_ns.load(std::memory_order_relaxed);
-        if (produced > 0 && t > produced) {
-            const double ms = (t - produced) / 1e6;
+        if (produced > 0) {
             std::lock_guard<std::mutex> lk(d.stats_mtx);
-            d.st.latency_avg_ms = d.st.latency_avg_ms == 0.0
-                                      ? ms : d.st.latency_avg_ms * 0.95 + ms * 0.05;
-            if (ms > d.st.latency_max_ms) d.st.latency_max_ms = ms;
+
+            if (t > produced) {
+                const double ms = (t - produced) / 1e6;
+                d.st.latency_avg_ms = d.st.latency_avg_ms == 0.0
+                                          ? ms : d.st.latency_avg_ms * 0.95 + ms * 0.05;
+                if (ms > d.st.latency_max_ms) d.st.latency_max_ms = ms;
+            }
+
+            // КРОК ЗЙОМКИ між сусідніми показаними кадрами.
+            //
+            // Лічильники повторів і пропусків міряють НАШУ роботу з
+            // чергою і мовчать, поки ми чесно беремо по кадру на
+            // розгортку. Але рух на екрані задає не це, а те, з яким
+            // інтервалом ці кадри були ЗНЯТІ. Показ рівномірний по
+            // сітці розгортки; якщо крок зйомки при цьому стрибає
+            // (17, 33, 17, 0...), рух смикається, і жоден наявний
+            // лічильник цього не побачить.
+            if (d.prev_pres_produced > 0 && d.period_ns > 0) {
+                const double step = (produced - d.prev_pres_produced) / 1e6;
+                const double p = d.period_ns / 1e6;
+                if (step <= 0.0)          d.st.step_repeat++;
+                else if (step < p * 0.5)  d.st.step_short++;
+                else if (step < p * 1.5)  d.st.step_ok++;
+                else                      d.st.step_gap++;
+                if (step > 0.0) {
+                    if (d.st.step_min_ms == 0.0 || step < d.st.step_min_ms)
+                        d.st.step_min_ms = step;
+                    if (step > d.st.step_max_ms) d.st.step_max_ms = step;
+                }
+            }
+            d.prev_pres_produced = produced;
         }
         d.wake();
     });
@@ -699,6 +845,9 @@ RenderStats GlRenderer::stats() const {
     s.poll_offset_ms = impl_->poll_offset_ms;
     s.phase_ms = impl_->phase_ms;
     s.phase_drift_ms_per_s = impl_->phase_drift;
+    // 0 = вікно ще не закрилося. Контролер на цьому бере максимальний
+    // запас, а не мінімальний.
+    s.phase_jitter_ms = impl_->phase_valid ? impl_->phase_jitter_ms : 0.0;
     return s;
 }
 

@@ -56,7 +56,14 @@ struct PhaseController::Impl {
     PhaseStats st{};
 
     // Стан регулятора.
-    double integral = 0.0;         // мс·с
+    double freq_mhz = 0.0;         // частотна ланка, мГц
+
+    // Історія фазового доданка: вимір дрейфу відображає минуле, тож
+    // віднімати з нього треба той зсув, що діяв тоді ж. 2 такти = 1 с,
+    // рівно половина вікна регресії.
+    static constexpr int kPhaseTermLag = 2;
+    double phase_term_hist[kPhaseTermLag] = {};
+    int hist_head = 0;
     int applied_mhz = 0;           // що, за нашими даними, стоїть на камері
     int64_t last_send_ns = 0;
     uint64_t last_taken = 0;
@@ -89,7 +96,10 @@ struct PhaseController::Impl {
         return ok;
     }
 
-    void tick(double dt_s) {
+    // Крок часу більше не потрібен: частотна ланка інтегрує НЕВ'ЯЗКУ
+    // ЧАСТОТИ часткою за крок, а не помилку за секунду, тож нерівний
+    // темп петлі на неї не впливає.
+    void tick() {
         const auto ds = display.stats();
         const auto rs = renderer.stats();
         const auto ss = source->stats();
@@ -108,28 +118,60 @@ struct PhaseController::Impl {
 
         const double period_ms = 1000.0 / ds.measured_hz;
 
+        // Ціль = точка опиту мінус односторонній запас. Обрив пили один
+        // (кадр, що не встиг до опиту, чекає цілий період), тож відходимо
+        // від нього рівно настільки, наскільки дістає джитер, — далі
+        // відходити означає платити затримкою просто так.
+        //
+        // Поки розкид ще не виміряний (коротка вибірка після старту),
+        // беремо МАКСИМАЛЬНИЙ запас: помилитися в бік зайвої затримки
+        // дешевше, ніж у бік втрачених кадрів.
+        double guard = rs.phase_jitter_ms > 0.0
+                     ? cfg.guard_sigmas * rs.phase_jitter_ms
+                     : cfg.guard_max_ms;
+        guard = clamp(guard, cfg.guard_min_ms, cfg.guard_max_ms);
+
         double target = cfg.target_phase_ms;
-        if (target < 0.0) target = rs.poll_offset_ms - period_ms * 0.5;
+        if (target < 0.0) target = rs.poll_offset_ms - guard;
         target = wrap_positive(target, period_ms);
 
         const double err = wrap_signed(rs.phase_ms - target, period_ms);
 
-        integral += err * dt_s;
+        // --- ланка ЧАСТОТИ ---
+        //
+        // Дрейф фази — це різниця частот, виміряна навпростець і без
+        // обгортки. Переводимо в мГц і гасимо інтегратором. Знак: дрейф
+        // від'ємний (кадри приходять дедалі раніше) означає, що камера
+        // швидша, тож команда має піти вниз.
+        const double mismatch_mhz = -rs.phase_drift_ms_per_s * 1000.0 / period_ms;
 
-        // Антивіндап: інтегральна частина сама по собі не має права
-        // з'їсти весь діапазон камери, інакше після довгої відсутності
-        // сигналу петля виходитиме з насичення хвилинами.
-        if (cfg.ki_mhz_per_ms_s > 0.0) {
-            const double lim = cfg.trim_limit_mhz / cfg.ki_mhz_per_ms_s;
-            integral = clamp(integral, -lim, lim);
-        }
+        // ВІДНІМАЄМО ВЛАСНИЙ ВНЕСОК. Фазова ланка рухає фазу єдиним
+        // доступним способом — навмисно розстроюючи частоту. У виміряній
+        // нев'язці цей зсув присутній, і якщо його не відняти, частотна
+        // ланка старанно прибиратиме те, що фазова щойно ввела: дві ланки
+        // борються, фаза не доходить до цілі, петля гойдається.
+        //
+        // Беремо зсув НЕ поточний, а той, що діяв ~1 с тому: вимір дрейфу
+        // рахується регресією на вікні 2 с, тобто відображає минуле.
+        const double own = phase_term_hist[hist_head];
+        phase_term_hist[hist_head] = cfg.kp_mhz_per_ms * err;
+        hist_head = (hist_head + 1) % kPhaseTermLag;
 
-        // Знак. Помилка додатна (фаза попереду цілі) -> треба, щоб фаза
-        // спадала -> камера має піти ШВИДШЕ -> підстроювання додатне.
-        // Збігається з дрейф = −підстроювання/частота.
-        const double raw = cfg.kp_mhz_per_ms * err + cfg.ki_mhz_per_ms_s * integral;
+        freq_mhz -= cfg.kf_per_step * (mismatch_mhz - own * cfg.actuator_gain)
+                    / cfg.actuator_gain;
+
+        // Антивіндап: частотна ланка сама по собі не має права впертися
+        // в рейку, інакше після довгої відсутності сигналу петля
+        // виходитиме з насичення хвилинами.
+        freq_mhz = clamp(freq_mhz, -double(cfg.trim_limit_mhz), double(cfg.trim_max_mhz));
+
+        // --- ланка ФАЗИ ---
+        //
+        // Помилка додатна (фаза попереду цілі) -> треба, щоб фаза спадала
+        // -> камера має піти ШВИДШЕ -> команда додатна.
+        const double raw = freq_mhz + cfg.kp_mhz_per_ms * err;
         const int want = (int)std::lround(clamp(raw, -double(cfg.trim_limit_mhz),
-                                                double(cfg.trim_limit_mhz)));
+                                                double(cfg.trim_max_mhz)));
 
         const bool due = (now_ns() - last_send_ns) > int64_t(cfg.heartbeat_ms) * 1000000LL;
         if (std::abs(want - applied_mhz) >= cfg.min_step_mhz || due) {
@@ -148,6 +190,10 @@ struct PhaseController::Impl {
             st.phase_ms = rs.phase_ms;
             st.target_ms = target;
             st.error_ms = err;
+            st.poll_ms = rs.poll_offset_ms;
+            st.jitter_ms = rs.phase_jitter_ms;
+            st.guard_ms = guard;
+            st.latency_ms = period_ms - rs.phase_ms;
             st.locked = lock_run >= 3;
         }
     }
@@ -161,7 +207,6 @@ struct PhaseController::Impl {
         applied_mhz = 0;
 
         const int64_t t_start = now_ns();
-        int64_t prev = now_ns();
 
         while (running.load(std::memory_order_relaxed)) {
             {
@@ -171,18 +216,11 @@ struct PhaseController::Impl {
             }
             if (!running.load(std::memory_order_relaxed)) break;
 
-            const int64_t now = now_ns();
-            const double dt_s = (now - prev) / 1e9;
-            prev = now;
-
-            if (now - t_start < int64_t(cfg.warmup_ms) * 1000000LL) {
+            if (now_ns() - t_start < int64_t(cfg.warmup_ms) * 1000000LL) {
                 hold("розігрів");
                 continue;
             }
-            // Запит до камери блокує, а на поганому лінку ще й довго.
-            // Тому крок часу міряється — інтеграл лишається правильним
-            // навіть коли петля йшла нерівно.
-            tick(dt_s);
+            tick();
         }
 
         // Лишати камеру підстроєною після нашого виходу нема сенсу:

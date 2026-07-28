@@ -78,6 +78,19 @@ struct H265Source::Impl {
     double iv_min = 0, iv_max = 0, iv_sum = 0;
     uint64_t iv_n = 0;
 
+    // ФАКТИЧНА частота кадрів камери. Рахується так само, як частота
+    // розгортки в дисплеї: лічильник кадрів на довгому вікні, а не
+    // усереднення сусідніх інтервалів. Причина та сама — інтервали
+    // приходу гуляють на ±5 мс через мережу, і будь-яке усереднення на
+    // коротких вікнах дає похибку більшу за сам ефект, який ми ловимо
+    // (сотні мілігерц).
+    //
+    // Це ОПОРНИЙ вимір для петлі: різниця цієї частоти й частоти
+    // розгортки і є те, що треба звести до нуля.
+    int64_t rate_anchor_ns = 0;
+    uint64_t rate_anchor_n = 0;
+    double produced_hz = 0;
+
     uint64_t q_sum = 0, q_n = 0;
     int q_max = 0;
 
@@ -201,6 +214,26 @@ struct H265Source::Impl {
             struct timespec ts;
             clock_gettime(CLOCK_MONOTONIC, &ts);
             frame->produced_ns = ts.tv_sec * 1000000000LL + ts.tv_nsec;
+
+            // Частота по лічильнику на вікні 1..30 с. Джитер приходу
+            // (±5 мс) ділиться на довжину вікна: за 10 с це вже краще
+            // за 2 мГц, тобто тонше за крок підстроювання камери.
+            const int64_t now = frame->produced_ns;
+            const uint64_t seq = st.produced;          // ще не інкрементований
+            if (rate_anchor_ns == 0) {
+                rate_anchor_ns = now;
+                rate_anchor_n = seq;
+            } else {
+                const int64_t span = now - rate_anchor_ns;
+                const uint64_t dn = seq - rate_anchor_n;
+                if (span > 1000000000LL && dn > 0) {
+                    produced_hz = double(dn) * 1e9 / double(span);
+                    if (span > 30000000000LL) {
+                        rate_anchor_ns = now;
+                        rate_anchor_n = seq;
+                    }
+                }
+            }
         }
 
         {
@@ -466,6 +499,7 @@ SourceStats H265Source::stats() const {
     s.interval_avg_ms = impl_->iv_n ? impl_->iv_sum / impl_->iv_n : 0.0;
     s.queue_avg = impl_->q_n ? double(impl_->q_sum) / impl_->q_n : 0.0;
     s.queue_max = impl_->q_max;
+    s.produced_hz = impl_->produced_hz;
     return s;
 }
 

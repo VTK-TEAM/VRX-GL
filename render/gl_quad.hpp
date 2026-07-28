@@ -13,6 +13,9 @@
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
 
+#include <sys/stat.h>
+
+#include <cstdint>
 #include <cstdio>
 #include <map>
 #include <vector>
@@ -109,17 +112,39 @@ public:
     // джерело крутить сталий пул, тож кеш заповнюється на перших кадрах
     // і застигає.
     GLuint get(const display::Frame& f) {
-        auto it = cache_.find(f.fd[0]);
+        // КЛЮЧ — ІНОДА dmabuf, А НЕ НОМЕР ДЕСКРИПТОРА.
+        //
+        // Номер перевикористовується. Коли GstSample звільняється,
+        // GStreamer закриває дескриптор, і ядро згодом видає той самий
+        // номер ІНШОМУ буферу. По номеру ми знаходили б старий запис, а
+        // звірка розміру й формату його пропускала б — у сталому потоці
+        // вони незмінні. EGLImage при цьому тримає власне посилання на
+        // СТАРИЙ буфер, тож на екран іде кадр із минулого.
+        //
+        // По лічильниках усе бездоганно: свіжий кадр із черги ми взяли,
+        // просто намалювали не його пікселі. Оком — рух назад на кадр і
+        // одразу вперед.
+        //
+        // Інода в dmabuf-файловій системі унікальна для буфера й живе
+        // рівно стільки, скільки він сам, тобто це і є його тотожність.
+        // Ціна — один fstat на кадр.
+        const uint64_t key = buffer_id(f.fd[0]);
+
+        auto it = cache_.find(key);
         if (it != cache_.end()) {
-            // ЗВІРКА ОБОВ'ЯЗКОВА. При зміні роздільності джерело звільняє
-            // старий пул і виділяє новий, а ядро цілком може видати новим
-            // буферам ТІ САМІ номери дескрипторів. Без звірки ми віддали б
-            // стару текстуру на новий буфер — застигла картинка або сміття,
-            // і жодного повідомлення в лозі.
+            // Звірка лишається другим рубежем: зміну роздільності вона
+            // зловить навіть якщо тотожність раптом підведе.
             if (same(it->second, f)) return it->second.tex;
             drop(it);
         }
-        return create_entry(f);
+
+        // Пул джерела скінченний, тож і набір інод. Рости він може лише
+        // коли джерело перевиділяє пул — це робить електронна
+        // стабілізація, ріжучи роздільність на ходу. Старі записи після
+        // цього нікому не потрібні, а тримають пам'ять через EGLImage.
+        if (cache_.size() >= kMaxEntries) clear();
+
+        return create_entry(f, key);
     }
 
     void clear() {
@@ -148,12 +173,21 @@ private:
         e = Entry{};
     }
 
-    void drop(std::map<int, Entry>::iterator it) {
+    void drop(std::map<uint64_t, Entry>::iterator it) {
         release(it->second);
         cache_.erase(it);
     }
 
-    GLuint create_entry(const display::Frame& f) {
+    // Тотожність буфера за інодою dmabuf. Якщо fstat раптом не вдався,
+    // відкочуємось на номер дескриптора зі старшим бітом — гірше, ніж
+    // інода, але принаймні не змішується з просторм інод.
+    static uint64_t buffer_id(int fd) {
+        struct stat st;
+        if (fd >= 0 && ::fstat(fd, &st) == 0) return (uint64_t)st.st_ino;
+        return (uint64_t)1 << 63 | (uint64_t)(uint32_t)fd;
+    }
+
+    GLuint create_entry(const display::Frame& f, uint64_t key) {
         std::vector<EGLint> a = {
             EGL_WIDTH,  f.width,
             EGL_HEIGHT, f.height,
@@ -191,7 +225,7 @@ private:
         e.fourcc = f.fourcc; e.stride = f.stride[0];
 
         GLuint tex = e.tex;
-        cache_[f.fd[0]] = e;
+        cache_[key] = e;
         return tex;
     }
 
@@ -199,7 +233,8 @@ private:
     PFNEGLCREATEIMAGEKHRPROC create_ = nullptr;
     PFNEGLDESTROYIMAGEKHRPROC destroy_ = nullptr;
     PFNGLEGLIMAGETARGETTEXTURE2DOESPROC bind_ = nullptr;
-    std::map<int, Entry> cache_;
+    static constexpr size_t kMaxEntries = 32;
+    std::map<uint64_t, Entry> cache_;
 };
 
 // ---------------------------------------------------------------------
