@@ -384,9 +384,25 @@ struct GlRenderer::Impl {
         };
         std::vector<Item> items;
         items.reserve(snap.size());
+
+        // ФАЗУ І ЗАТРИМКУ МІРЯЄМО ЛИШЕ ПО ПЕРШОМУ ДЖЕРЕЛУ.
+        //
+        // Синхронізуватись можна рівно з одним передавачем: розгортка
+        // одна, а кожна камера має власний кварц. Другий канал живе як
+        // виходить — його фаза відносно нашого показу нікому не
+        // підпорядкована.
+        //
+        // Раніше тут стояв МАКСИМУМ produced_ns по всіх джерелах. З
+        // однією камерою це збігалося з "по першому", тож і працювало.
+        // З двома максимум стрибав би між ними: у кожної своя фаза, і
+        // петля вела б то одну камеру, то другу.
         int64_t newest_produced = 0;
 
+        bool primary = true;
         for (auto& src : snap) {
+            const bool is_primary = primary;
+            primary = false;
+
             source::SourceFrame f;
             // Джерела немає або сигналу немає — не малюємо нічого.
             // Програма одна, а дрони різні: заглушка припускала б знання
@@ -398,7 +414,7 @@ struct GlRenderer::Impl {
             const float a = f.aspect();
             if (a <= 0.0f) continue;
 
-            if (f.produced_ns > newest_produced) newest_produced = f.produced_ns;
+            if (is_primary) newest_produced = f.produced_ns;
             items.push_back({layout::fit_source(f.where, a, screen_aspect), f});
         }
         if (items.empty()) return;

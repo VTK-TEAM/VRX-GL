@@ -26,7 +26,6 @@
 #include "display/kms_display_manager.hpp"
 #include "render/gl_renderer.hpp"
 #include "source/h265_source.hpp"
-#include "source/test_source.hpp"
 
 #include <gst/gst.h>
 
@@ -153,9 +152,17 @@ int main(int argc, char** argv) {
     h265_cfg.udp_port = 5600;
     auto main_src = std::make_shared<vrx::source::H265Source>("h265", h265_cfg);
 
-    // Другим поки лишається тестове джерело: другого декодера ще немає,
-    // а перевіряти розкладку на чомусь треба.
-    auto pip_src = std::make_shared<vrx::source::TestSource>("pip", 640, 480);
+    // ДРУГИЙ КАНАЛ. Окремий порт, окремий декодер, окремий запис.
+    //
+    // На синхронізацію НЕ впливає: розгортка одна, а кожна камера має
+    // власний кварц, тож підстроюватись можна рівно під одну. Фаза
+    // міряється по першому джерелу, другий живе як виходить.
+    //
+    // Ціна, про яку варто пам'ятати: на RK3588 апаратний декодер один на
+    // всіх, і другий mppvideodec ділить із першим той самий mpp_service.
+    vrx::source::H265Source::Config pip_cfg;
+    pip_cfg.udp_port = 5602;
+    auto pip_src = std::make_shared<vrx::source::H265Source>("pip", pip_cfg);
 
     {
         vrx::layout::Placement p;          // на весь екран
@@ -203,6 +210,16 @@ int main(int argc, char** argv) {
     rec_cfg.payload_type = h265_cfg.payload_type;
     vrx::record::Recorder recorder(rec_cfg, storage);
     recorder.start();
+
+    // Кожен канал пишеться СВОЇМ рекордером у свій файл: окремий потік,
+    // окремий пайплайн, окремий udpsrc. Один канал може зникнути, а
+    // другий продовжить писати, не помітивши.
+    vrx::record::Recorder::Config rec2_cfg;
+    rec2_cfg.name = "pip";
+    rec2_cfg.udp_port = pip_cfg.udp_port;
+    rec2_cfg.payload_type = pip_cfg.payload_type;
+    vrx::record::Recorder recorder2(rec2_cfg, storage);
+    recorder2.start();
 
     std::printf("Працюю. Ctrl+C для виходу.\n");
 
@@ -276,6 +293,13 @@ int main(int argc, char** argv) {
                         rs.step_min_ms, rs.step_max_ms);
         }
         {
+            auto ps2 = pip_src->stats();
+            std::printf("          КАНАЛ 2 (порт %d): %dx%d | нових %llu, повтор %llu, дроп %llu\n",
+                        pip_cfg.udp_port, pip_src->frame_width(), pip_src->frame_height(),
+                        (unsigned long long)ps2.taken, (unsigned long long)ps2.reused,
+                        (unsigned long long)ps2.dropped);
+        }
+        {
             auto rc = recorder.stats();
             auto dv = storage.state();
             if (rc.active) {
@@ -289,11 +313,16 @@ int main(int argc, char** argv) {
                 std::printf("          ЗАПИС: не йде (%s)\n",
                             dv.usable() ? "чекаю сигнал" : "носія немає");
             }
+            auto rc2 = recorder2.stats();
+            if (rc2.active) {
+                std::printf("          ЗАПИС 2: %.1f МБ | файлів %u\n", rc2.bytes / 1e6, rc2.files);
+            }
         }
         std::fflush(stdout);
     }
 
     recorder.stop();
+    recorder2.stop();
     storage.stop();
     phase.stop();
     renderer.stop();
