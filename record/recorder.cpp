@@ -2,8 +2,14 @@
 
 #include <gst/gst.h>
 
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
 #include <chrono>
 #include <cstdio>
+#include <cerrno>
+#include <cstring>
 #include <mutex>
 #include <thread>
 
@@ -44,7 +50,59 @@ struct Recorder::Impl {
     uint32_t drive_generation = 0;
     int64_t last_sync_ms = 0;
 
+    // ЛЕГКА ПРОБА СИГНАЛУ: власний сокет на тому ж порту, без GStreamer.
+    //
+    // Навіщо. Без неї єдиний спосіб дізнатися, чи є сигнал, — підняти
+    // пайплайн, а він одразу створює файл. При вставленій флешці й
+    // вимкненій камері виходив цикл "відкрив -> 3 с без кадрів ->
+    // закрив": заміряно, 10 файлів по 336 байтів за 40 секунд, самі
+    // заголовки. За політ це тисячі сміттєвих файлів у корені запису.
+    //
+    // Сокет тут коштує нічого: борт шле бродкастом, ядро віддає копію
+    // датаграми кожному сокету на порту, і зайвий слухач нікому не
+    // заважає. Дані не розбираємо — питання лише "чи летить".
+    int probe_fd = -1;
+    int64_t last_packet_ms = 0;
+
     Impl(Config c, Storage& s) : cfg(std::move(c)), storage(s) {}
+
+    bool open_probe() {
+        probe_fd = ::socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+        if (probe_fd < 0) return false;
+
+        int one = 1;
+        ::setsockopt(probe_fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+        ::setsockopt(probe_fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one));
+
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_ANY);
+        addr.sin_port = htons((uint16_t)cfg.udp_port);
+        if (::bind(probe_fd, (sockaddr*)&addr, sizeof(addr)) != 0) {
+            std::fprintf(stderr, "[запис %s] проба сигналу не стала на порт %d: %s\n",
+                         cfg.name.c_str(), cfg.udp_port, std::strerror(errno));
+            ::close(probe_fd);
+            probe_fd = -1;
+            return false;
+        }
+        return true;
+    }
+
+    // Вичитує все, що накопичилось, і оновлює час останнього пакета.
+    // Вичитувати ОБОВ'ЯЗКОВО до кінця: недочитаний сокет переповнюється,
+    // і ядро починає викидати датаграми — свої, не чужі, але шкода все
+    // одно зайва.
+    void poll_probe() {
+        if (probe_fd < 0) return;
+        char buf[2048];
+        bool got = false;
+        while (::recv(probe_fd, buf, sizeof(buf), 0) > 0) got = true;
+        if (got) last_packet_ms = now_ms();
+    }
+
+    bool signal_present() const {
+        return last_packet_ms > 0 && (now_ms() - last_packet_ms) < cfg.stream_lost_ms;
+    }
 
     // Проба на виході ПАРСЕРА, тобто ДО муксера.
     //
@@ -197,6 +255,18 @@ struct Recorder::Impl {
         pipeline = nullptr;
 
         const uint64_t wrote = file_bytes.load(std::memory_order_relaxed);
+
+        // Кадрів так і не було — лишився самий заголовок муксера.
+        // Такий файл нікому не потрібен, а на флешці він живий сміттям.
+        if (!seen_keyframe.load(std::memory_order_acquire) || wrote == 0) {
+            std::string path;
+            {
+                std::lock_guard<std::mutex> lk(mtx);
+                path = st.file;
+            }
+            if (!path.empty()) ::unlink(path.c_str());
+        }
+
         {
             std::lock_guard<std::mutex> lk(mtx);
             st.active = false;
@@ -213,13 +283,18 @@ struct Recorder::Impl {
     }
 
     void loop() {
+        open_probe();
+
         while (running.load(std::memory_order_relaxed)) {
+            poll_probe();
+
             const DriveState drive = storage.state();
             const int64_t now = now_ms();
 
-            const bool alive =
-                pipeline && (now - last_buffer_ms.load(std::memory_order_relaxed))
-                            < cfg.stream_lost_ms;
+            // Живість беремо з проби, а не з кадрів у пайплайні: проба
+            // працює й тоді, коли пайплайну немає, і саме тому файл
+            // створюється лише під реальний сигнал.
+            const bool alive = signal_present();
 
             {
                 std::lock_guard<std::mutex> lk(mtx);
@@ -256,7 +331,8 @@ struct Recorder::Impl {
                 }
             }
 
-            if (!pipeline && drive.usable()) {
+            // Файл створюємо ЛИШЕ коли є і носій, і сигнал.
+            if (!pipeline && drive.usable() && alive) {
                 drive_generation = drive.generation;
                 if (open_file()) last_sync_ms = now;
             }
@@ -265,6 +341,10 @@ struct Recorder::Impl {
         }
 
         if (pipeline) close_file(true);
+        if (probe_fd >= 0) {
+            ::close(probe_fd);
+            probe_fd = -1;
+        }
     }
 };
 

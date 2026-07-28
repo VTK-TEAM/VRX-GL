@@ -280,10 +280,11 @@ int main(int argc, char** argv) {
             auto dv = storage.state();
             if (rc.active) {
                 std::printf("          ЗАПИС: %.1f МБ | файлів %u (ротацій %u, рестартів %u)"
-                            " | носій вільно %.1f ГБ%s\n",
+                            " | носій вільно %.1f ГБ | syncfs %lld/%lld мс%s\n",
                             rc.bytes / 1e6, rc.files, rc.rotations, rc.restarts,
                             dv.free_bytes / 1e9,
-                            storage.sync_in_progress() ? " | СКИДАЮ КЕШІ" : "");
+                            (long long)dv.last_sync_ms, (long long)dv.max_sync_ms,
+                            storage.sync_in_progress() ? " | СКИДАЮ" : "");
             } else {
                 std::printf("          ЗАПИС: не йде (%s)\n",
                             dv.usable() ? "чекаю сигнал" : "носія немає");

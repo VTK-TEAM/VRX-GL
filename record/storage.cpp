@@ -244,6 +244,7 @@ void Storage::sync_loop() {
         if (root.empty()) continue;
 
         sync_busy_.store(true, std::memory_order_release);
+        const int64_t t0 = now_ns();
         // syncfs, а не sync: скидаємо ЛИШЕ файлову систему носія.
         // Загальний sync() зачепив би й системний диск, а це на
         // навантаженій платі десятки мілісекунд у найкращому разі.
@@ -251,6 +252,12 @@ void Storage::sync_loop() {
         if (fd >= 0) {
             ::syncfs(fd);
             ::close(fd);
+        }
+        const int64_t took = (now_ns() - t0) / 1000000;
+        {
+            std::lock_guard<std::mutex> lk(state_mtx_);
+            state_.last_sync_ms = took;
+            if (took > state_.max_sync_ms) state_.max_sync_ms = took;
         }
         sync_busy_.store(false, std::memory_order_release);
     }
