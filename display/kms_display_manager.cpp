@@ -7,6 +7,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/socket.h>
+#include <dirent.h>
 #include <linux/netlink.h>
 #include <unistd.h>
 #include <cerrno>
@@ -16,6 +17,7 @@
 #include <ctime>
 
 #include <atomic>
+#include <chrono>
 #include <map>
 #include <mutex>
 #include <thread>
@@ -127,6 +129,62 @@ bool drain_uevents(int fd) {
     return drm;
 }
 
+// Примусово скидає кеш EDID у драйвері.
+//
+// НАВІЩО. Драйвер HDMI цього ядра тримає прочитаний EDID у себе й
+// оновлює його лише на СПРАВЖНЬОМУ переході коннектора в disconnected.
+// Повторний зонд — хоч drmModeGetConnector, хоч "echo detect" — віддає
+// кеш. Отже після заміни монітора, якщо HPD не встиг просісти (заміна
+// на ходу, або поки програма не працювала), ми отримаємо список режимів
+// ПОПЕРЕДНЬОГО монітора й піднімемо його режим на новому.
+//
+// Заміряно на залізі: DELL SE2216H (рідні 1920x1080) читався як
+// Philips 196VL (1366x768) і працював у 1366x768.
+//
+// Ліки — прогнати коннектор через примусовий disconnected: запис "off"
+// у sysfs-атрибут status, потім "detect" повертає звичайне визначення й
+// зонд уже читає EDID із дроту. Атрибут стандартний для DRM, не
+// вендорний.
+void force_edid_refresh(const std::string& card_path) {
+    const std::string card = card_path.substr(card_path.find_last_of('/') + 1);
+    const std::string base = "/sys/class/drm/";
+
+    DIR* dir = ::opendir(base.c_str());
+    if (!dir) return;
+
+    while (dirent* e = ::readdir(dir)) {
+        const std::string name = e->d_name;
+        // Цікавлять лише коннектори цієї карти: "card0-HDMI-A-1".
+        if (name.rfind(card + "-", 0) != 0) continue;
+
+        const std::string path = base + name + "/status";
+        // Чіпаємо лише те, що зараз під'єднане: писати в порожні
+        // коннектори немає сенсу, а зайві uevent-и коштують.
+        {
+            FILE* f = ::fopen(path.c_str(), "r");
+            if (!f) continue;
+            char buf[32] = {};
+            size_t n = ::fread(buf, 1, sizeof(buf) - 1, f);
+            ::fclose(f);
+            if (n == 0 || std::strncmp(buf, "connected", 9) != 0) continue;
+        }
+
+        auto write_status = [&path](const char* v) {
+            FILE* f = ::fopen(path.c_str(), "w");
+            if (!f) return false;
+            ::fputs(v, f);
+            ::fclose(f);
+            return true;
+        };
+
+        if (!write_status("off")) continue;      // немає прав — просто живемо з кешем
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        write_status("detect");
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    }
+    ::closedir(dir);
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------
@@ -185,6 +243,7 @@ struct KmsDisplayManager::Impl : public Layer {
     int udev_fd = -1;
     std::atomic<uint32_t> generation_{0};
     std::atomic<bool> has_output{false};
+    std::atomic<bool> refreshing{false};
 
     bool configure_output();
 
@@ -454,6 +513,7 @@ struct KmsDisplayManager::Impl : public Layer {
     // тож стан з'ясовуємо самі й діємо лише на РЕАЛЬНУ зміну: uevent-и
     // сиплються й на власні modeset-и, і зациклитись тут дуже легко.
     void handle_hotplug() {
+        if (refreshing.load(std::memory_order_acquire)) return;
         const bool have = has_output.load(std::memory_order_acquire);
 
         if (have) {
@@ -547,6 +607,14 @@ bool KmsDisplayManager::Impl::configure_output() {
     // CRTC і плейна майже напевно інші, а пошук нижче спирається на те,
     // що вони обнулені.
     d.teardown_output();
+
+    // Кеш EDID у драйвері скидаємо ДО зонда, інакше піднімемо режим
+    // попереднього монітора. Прапорець тримає handle_hotplug осторонь:
+    // ці записи самі породжують uevent-и, і без нього ми б нескінченно
+    // переналаштовувались на власні ж події.
+    d.refreshing.store(true, std::memory_order_release);
+    force_edid_refresh(d.cfg.card);
+    d.refreshing.store(false, std::memory_order_release);
 
     drmModeRes* res = drmModeGetResources(d.fd);
     if (!res) {
