@@ -154,7 +154,7 @@ struct Recorder::Impl {
                 "udpsrc port=%d "
                 "! jpegparse name=parse "
                 "! queue name=buf max-size-time=%llu max-size-bytes=0 max-size-buffers=0 "
-                "! matroskamux name=mux "
+                "! matroskamux name=mux streamable=true "
                 "! filesink name=sink location=\"%s\" sync=false async=false",
                 cfg.udp_port, (unsigned long long)cfg.queue_ms * 1000000ULL, path.c_str());
         } else {
@@ -166,7 +166,7 @@ struct Recorder::Impl {
             "! rtph265depay "
             "! h265parse name=parse config-interval=-1 "
             "! queue name=buf max-size-time=%llu max-size-bytes=0 max-size-buffers=0 "
-            "! matroskamux name=mux "
+            "! matroskamux name=mux streamable=true "
             "! filesink name=sink location=\"%s\" sync=false async=false",
             cfg.udp_port, cfg.payload_type, cfg.jitter_ms,
             (unsigned long long)cfg.queue_ms * 1000000ULL, path.c_str());
@@ -220,8 +220,23 @@ struct Recorder::Impl {
         return true;
     }
 
-    // graceful — дочекатися дозапису. Без нього файл лишиться без
-    // індексу муксера, і програвач побачить обрубок.
+    // ЧОМУ МУКСЕР У РЕЖИМІ streamable.
+    //
+    // За замовчуванням matroskamux при завершенні ПОВЕРТАЄТЬСЯ НАЗАД по
+    // файлу й дописує тривалість та таблицю переходів. Поки запис
+    // завершується штатно, це добре. Але цей запис за задумом можуть
+    // обірвати будь-якої миті — висмикнути флешку, зняти живлення — і
+    // тоді дописувати нікуди: файл лишається без службових структур,
+    // тобто битий. Перевірено на залізі: після висмикування носія
+    // 417 МБ і 267 МБ не читалися.
+    //
+    // streamable=true пише так, щоб повертатися не треба було взагалі.
+    // Ціна — немає таблиці переходів навіть при штатному закритті, тож
+    // перемотка йде скануванням. Це дешево порівняно з утратою всього
+    // файлу, а для запису польоту перемотка й не головне.
+
+    // graceful — дочекатися дозапису. Без нього муксер не встигне
+    // випхати чергу, і хвіст запису просто не потрапить у файл.
     void close_file(bool graceful) {
         if (!pipeline) return;
 
