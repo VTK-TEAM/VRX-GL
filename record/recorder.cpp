@@ -48,6 +48,7 @@ struct Recorder::Impl {
     std::atomic<bool> seen_keyframe{false};
 
     uint32_t drive_generation = 0;
+    int64_t last_sync_ms = 0;
 
     // ЛЕГКА ПРОБА СИГНАЛУ: власний сокет на тому ж порту, без GStreamer.
     //
@@ -153,10 +154,12 @@ struct Recorder::Impl {
             std::snprintf(desc, sizeof(desc),
                 "udpsrc port=%d "
                 "! jpegparse name=parse "
-                "! queue name=buf max-size-time=%llu max-size-bytes=0 max-size-buffers=0 "
+                "! queue name=buf leaky=downstream max-size-time=%llu "
+                "max-size-bytes=%d max-size-buffers=%d "
                 "! matroskamux name=mux streamable=true "
                 "! filesink name=sink location=\"%s\" sync=false async=false",
-                cfg.udp_port, (unsigned long long)cfg.queue_ms * 1000000ULL, path.c_str());
+                cfg.udp_port, (unsigned long long)cfg.queue_ms * 1000000ULL,
+                cfg.queue_bytes, cfg.queue_buffers, path.c_str());
         } else {
         std::snprintf(desc, sizeof(desc),
             "udpsrc port=%d "
@@ -165,11 +168,13 @@ struct Recorder::Impl {
             "! rtpjitterbuffer latency=%d drop-on-latency=false "
             "! rtph265depay "
             "! h265parse name=parse config-interval=-1 "
-            "! queue name=buf max-size-time=%llu max-size-bytes=0 max-size-buffers=0 "
+            "! queue name=buf leaky=downstream max-size-time=%llu "
+                "max-size-bytes=%d max-size-buffers=%d "
             "! matroskamux name=mux streamable=true "
             "! filesink name=sink location=\"%s\" sync=false async=false",
             cfg.udp_port, cfg.payload_type, cfg.jitter_ms,
-            (unsigned long long)cfg.queue_ms * 1000000ULL, path.c_str());
+            (unsigned long long)cfg.queue_ms * 1000000ULL,
+            cfg.queue_bytes, cfg.queue_buffers, path.c_str());
         }
 
         GError* err = nullptr;
@@ -352,12 +357,19 @@ struct Recorder::Impl {
                     std::lock_guard<std::mutex> lk(mtx);
                     st.rotations++;
                 }
+                // Скидання кешів на носій. Саме воно обмежує втрату при
+                // висмикуванні: без нього незаписане накопичується в
+                // ядрі, і заміряно, що це понад 20 секунд відео.
+                else if (now - last_sync_ms >= cfg.sync_interval_ms) {
+                    last_sync_ms = now;
+                    storage.request_sync();
+                }
             }
 
             // Файл створюємо ЛИШЕ коли є і носій, і сигнал.
             if (!pipeline && drive.usable() && alive) {
                 drive_generation = drive.generation;
-                open_file();
+                if (open_file()) last_sync_ms = now;
             }
 
             std::this_thread::sleep_for(std::chrono::milliseconds(250));
