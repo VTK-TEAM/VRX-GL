@@ -21,6 +21,8 @@
 // власний темп. Тут лише ініціалізація, запуск і зупинка.
 
 #include "control/phase_controller.hpp"
+#include "record/recorder.hpp"
+#include "record/storage.hpp"
 #include "display/kms_display_manager.hpp"
 #include "render/gl_renderer.hpp"
 #include "source/h265_source.hpp"
@@ -189,6 +191,19 @@ int main(int argc, char** argv) {
         std::printf("Петля фази ВИМКНЕНА (--no-phase): камеру не чіпаємо.\n");
     }
 
+    // Запис. Носій веде окремий клас у власних потоках, рекордер —
+    // ще один потік зі своїм пайплайном. Спільного з показом немає
+    // нічого, тож зрив носія до картинки не дістає.
+    vrx::record::Storage storage{vrx::record::Storage::Config{}};
+    storage.start();
+
+    vrx::record::Recorder::Config rec_cfg;
+    rec_cfg.name = "main";
+    rec_cfg.udp_port = h265_cfg.udp_port;
+    rec_cfg.payload_type = h265_cfg.payload_type;
+    vrx::record::Recorder recorder(rec_cfg, storage);
+    recorder.start();
+
     std::printf("Працюю. Ctrl+C для виходу.\n");
 
     auto t0 = std::chrono::steady_clock::now();
@@ -260,9 +275,25 @@ int main(int argc, char** argv) {
                         (unsigned long long)rs.step_gap,
                         rs.step_min_ms, rs.step_max_ms);
         }
+        {
+            auto rc = recorder.stats();
+            auto dv = storage.state();
+            if (rc.active) {
+                std::printf("          ЗАПИС: %.1f МБ | файлів %u (ротацій %u, рестартів %u)"
+                            " | носій вільно %.1f ГБ%s\n",
+                            rc.bytes / 1e6, rc.files, rc.rotations, rc.restarts,
+                            dv.free_bytes / 1e9,
+                            storage.sync_in_progress() ? " | СКИДАЮ КЕШІ" : "");
+            } else {
+                std::printf("          ЗАПИС: не йде (%s)\n",
+                            dv.usable() ? "чекаю сигнал" : "носія немає");
+            }
+        }
         std::fflush(stdout);
     }
 
+    recorder.stop();
+    storage.stop();
     phase.stop();
     renderer.stop();
     main_src->stop();

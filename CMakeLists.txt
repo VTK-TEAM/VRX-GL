@@ -37,6 +37,8 @@ add_executable(vrx_gl
     render/gl_renderer.cpp
     control/camera_api.cpp
     control/phase_controller.cpp
+    record/storage.cpp
+    record/recorder.cpp
 )
 
 target_include_directories(vrx_gl PRIVATE
