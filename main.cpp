@@ -276,7 +276,7 @@ int main(int argc, char** argv) {
                         ps.poll_ms, ps.guard_ms, ps.jitter_ms, ps.latency_ms,
                         ps.trim_mhz, ps.display_hz,
                         ps.locked ? "ЗАХОПЛЕНО" : "ведення",
-                        ps.failed ? " | ЗАПИСИ ПАДАЮТЬ" : "");
+                        ps.last_write_failed ? " | КАМЕРА НЕ ВІДПОВІДАЄ" : "");
         } else {
             std::printf("          ФАПЧ: не веде (%s)\n", ps.holding);
         }

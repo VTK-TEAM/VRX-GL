@@ -58,7 +58,8 @@ struct PhaseStats {
 
     int trim_mhz = 0;          // що зараз стоїть на камері
     uint64_t sent = 0;         // скільки разів записали
-    uint64_t failed = 0;       // скільки записів не пройшло
+    uint64_t failed = 0;       // скільки записів не пройшло ЗА ВЕСЬ ЧАС
+    bool last_write_failed = false;  // чи впав ОСТАННІЙ — саме це тривожно
 };
 
 class PhaseController {

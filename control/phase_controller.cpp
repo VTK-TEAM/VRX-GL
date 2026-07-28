@@ -90,6 +90,10 @@ struct PhaseController::Impl {
             std::lock_guard<std::mutex> lk(st_mtx);
             st.sent = camera.requests();
             st.failed = camera.failures();
+            // Накопичувальний лічильник пам'ятає й ті невдачі, що були,
+            // поки камера ще не вмикалась. Тривожним є лише те, що не
+            // проходить ЗАРАЗ.
+            st.last_write_failed = !ok;
             if (ok) st.trim_mhz = mhz;
         }
         if (ok) applied_mhz = mhz;

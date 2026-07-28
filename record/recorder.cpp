@@ -48,7 +48,6 @@ struct Recorder::Impl {
     std::atomic<bool> seen_keyframe{false};
 
     uint32_t drive_generation = 0;
-    int64_t last_sync_ms = 0;
 
     // ЛЕГКА ПРОБА СИГНАЛУ: власний сокет на тому ж порту, без GStreamer.
     //
@@ -338,16 +337,12 @@ struct Recorder::Impl {
                     std::lock_guard<std::mutex> lk(mtx);
                     st.rotations++;
                 }
-                else if (now - last_sync_ms >= cfg.sync_interval_ms) {
-                    last_sync_ms = now;
-                    storage.request_sync();
-                }
             }
 
             // Файл створюємо ЛИШЕ коли є і носій, і сигнал.
             if (!pipeline && drive.usable() && alive) {
                 drive_generation = drive.generation;
-                if (open_file()) last_sync_ms = now;
+                open_file();
             }
 
             std::this_thread::sleep_for(std::chrono::milliseconds(250));
