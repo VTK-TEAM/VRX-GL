@@ -23,6 +23,7 @@
 #include "control/phase_controller.hpp"
 #include "record/recorder.hpp"
 #include "record/storage.hpp"
+#include "diag/link_monitor.hpp"
 #include "display/kms_display_manager.hpp"
 #include "render/gl_renderer.hpp"
 #include "source/h265_source.hpp"
@@ -223,6 +224,16 @@ int main(int argc, char** argv) {
     vrx::record::Recorder recorder2(rec2_cfg, storage);
     recorder2.start();
 
+    // Спостерігач лінка. Розрізняє два випадки, які по кадрах виглядають
+    // однаково: пакети загубились у дорозі чи камера нічого не слала.
+    // Відповідь дають номери послідовності RTP, тож лише для першого
+    // каналу — другий іде сирим JPEG, номерів там немає.
+    vrx::diag::LinkMonitor::Config lm_cfg;
+    lm_cfg.udp_port = h265_cfg.udp_port;
+    lm_cfg.log_path = "/tmp/vrx_link.log";
+    vrx::diag::LinkMonitor link(lm_cfg);
+    link.start();
+
     std::printf("Працюю. Ctrl+C для виходу.\n");
 
     auto t0 = std::chrono::steady_clock::now();
@@ -320,9 +331,20 @@ int main(int argc, char** argv) {
                 std::printf("          ЗАПИС 2: %.1f МБ | файлів %u\n", rc2.bytes / 1e6, rc2.files);
             }
         }
+        {
+            auto ls = link.stats();
+            if (ls.packets > 0) {
+                std::printf("          ЛІНК: %llu пакетів, втрачено %llu (%.3f%%)"
+                            " | пауз %u: лінк %u / борт %u | найдовша %lld мс\n",
+                            (unsigned long long)ls.packets, (unsigned long long)ls.lost,
+                            ls.loss_percent, ls.gaps, ls.gaps_with_loss, ls.gaps_clean,
+                            (long long)ls.worst_gap_ms);
+            }
+        }
         std::fflush(stdout);
     }
 
+    link.stop();
     recorder.stop();
     recorder2.stop();
     storage.stop();

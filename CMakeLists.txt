@@ -37,6 +37,7 @@ add_executable(vrx_gl
     render/gl_renderer.cpp
     control/camera_api.cpp
     control/phase_controller.cpp
+    diag/link_monitor.cpp
     record/storage.cpp
     record/recorder.cpp
 )
