@@ -1,4 +1,4 @@
-#include "h265_source.hpp"
+#include "video_source.hpp"
 
 #include <gst/gst.h>
 #include <gst/app/gstappsink.h>
@@ -38,7 +38,7 @@ uint32_t drm_fourcc_of(GstVideoFormat f) {
 
 // ---------------------------------------------------------------------
 
-struct H265Source::Impl {
+struct VideoSource::Impl {
     Impl(std::string n, Config c) : name(std::move(n)), cfg(c) {}
 
     std::string name;
@@ -274,6 +274,22 @@ struct H265Source::Impl {
     // --- пайплайн ---
 
     std::string describe(bool explicit_byte_stream) const {
+        if (cfg.codec == VideoSource::Codec::MJPEG) {
+            // Без caps на udpsrc узагалі: обгортки немає, описувати
+            // нічого. jpegparse (а не identity) обов'язковий — він
+            // розбирає межі кадрів по SOI/EOI і виставляє коректні
+            // image/jpeg, без яких далі нічого не негоціюється.
+            //
+            // mppjpegdec, а не jpegdec: софтверний віддає звичайну
+            // системну пам'ять, а не dmabuf, і кожен кадр мовчки гинув
+            // би на імпорті в текстуру.
+            return "udpsrc port=" + std::to_string(cfg.udp_port) +
+                   " ! jpegparse"
+                   " ! mppjpegdec name=dec"
+                   " ! appsink name=sink emit-signals=false sync=false"
+                   " max-buffers=1 drop=true";
+        }
+
         std::string s =
             "udpsrc port=" + std::to_string(cfg.udp_port) +
             " caps=\"application/x-rtp,media=video,clock-rate=90000,"
@@ -297,7 +313,10 @@ struct H265Source::Impl {
     }
 
     bool build() {
-        for (int variant = 0; variant < 2; ++variant) {
+        // Запасний варіант із явним byte-stream має сенс лише для H.265:
+        // у MJPEG негоціювати нічого.
+        const int variants = (cfg.codec == VideoSource::Codec::MJPEG) ? 1 : 2;
+        for (int variant = 0; variant < variants; ++variant) {
             const std::string desc = describe(variant == 1);
             GError* err = nullptr;
             GstElement* p = gst_parse_launch(desc.c_str(), &err);
@@ -405,14 +424,14 @@ struct H265Source::Impl {
 
 // ---------------------------------------------------------------------
 
-H265Source::H265Source(std::string name, Config cfg)
+VideoSource::VideoSource(std::string name, Config cfg)
     : impl_(std::make_unique<Impl>(std::move(name), cfg)) {}
 
-H265Source::~H265Source() { stop(); }
+VideoSource::~VideoSource() { stop(); }
 
-const char* H265Source::name() const { return impl_->name.c_str(); }
+const char* VideoSource::name() const { return impl_->name.c_str(); }
 
-bool H265Source::start() {
+bool VideoSource::start() {
     Impl& d = *impl_;
     if (d.running.load()) return true;
     if (!d.build()) return false;
@@ -421,13 +440,13 @@ bool H265Source::start() {
     return true;
 }
 
-void H265Source::stop() {
+void VideoSource::stop() {
     Impl& d = *impl_;
     if (d.running.exchange(false) && d.watchdog.joinable()) d.watchdog.join();
     d.teardown();
 }
 
-bool H265Source::acquire(SourceFrame& out) {
+bool VideoSource::acquire(SourceFrame& out) {
     Impl& d = *impl_;
 
     // Єдина причина відповісти "показувати нічого": кадрів немає вже
@@ -481,17 +500,17 @@ bool H265Source::acquire(SourceFrame& out) {
     return true;
 }
 
-layout::Placement H265Source::placement() const {
+layout::Placement VideoSource::placement() const {
     std::lock_guard<std::mutex> lk(impl_->mtx);
     return impl_->place;
 }
 
-void H265Source::set_placement(const layout::Placement& p) {
+void VideoSource::set_placement(const layout::Placement& p) {
     std::lock_guard<std::mutex> lk(impl_->mtx);
     impl_->place = p;
 }
 
-SourceStats H265Source::stats() const {
+SourceStats VideoSource::stats() const {
     std::lock_guard<std::mutex> lk(impl_->mtx);
     SourceStats s = impl_->st;
     s.interval_min_ms = impl_->iv_min;
@@ -503,22 +522,22 @@ SourceStats H265Source::stats() const {
     return s;
 }
 
-void H265Source::input_intervals(double* mn, double* avg, double* mx) const {
+void VideoSource::input_intervals(double* mn, double* avg, double* mx) const {
     std::lock_guard<std::mutex> lk(impl_->in_mtx);
     *mn = impl_->in_min;
     *avg = impl_->in_n ? impl_->in_sum / impl_->in_n : 0.0;
     *mx = impl_->in_max;
 }
 
-void H265Source::decode_latency(double* mn, double* avg, double* mx) const {
+void VideoSource::decode_latency(double* mn, double* avg, double* mx) const {
     std::lock_guard<std::mutex> lk(impl_->in_mtx);
     *mn = impl_->dec_min;
     *avg = impl_->dec_n ? impl_->dec_sum / impl_->dec_n : 0.0;
     *mx = impl_->dec_max;
 }
 
-bool H265Source::has_signal() const { return impl_->signal_ok(); }
-int H265Source::frame_width() const { return impl_->fw.load(std::memory_order_relaxed); }
-int H265Source::frame_height() const { return impl_->fh.load(std::memory_order_relaxed); }
+bool VideoSource::has_signal() const { return impl_->signal_ok(); }
+int VideoSource::frame_width() const { return impl_->fw.load(std::memory_order_relaxed); }
+int VideoSource::frame_height() const { return impl_->fh.load(std::memory_order_relaxed); }
 
 } // namespace vrx::source

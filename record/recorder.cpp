@@ -147,6 +147,18 @@ struct Recorder::Impl {
         if (path.empty()) return false;
 
         char desc[1024];
+        if (cfg.codec == Recorder::Codec::MJPEG) {
+            // Без jitterbuffer: RTP немає, переставляти нічого. jpegparse
+            // потрібен не лише для меж кадрів — без коректних image/jpeg
+            // на буферах muxer мовчки не запише жодного кадру.
+            std::snprintf(desc, sizeof(desc),
+                "udpsrc port=%d "
+                "! jpegparse name=parse "
+                "! queue name=buf max-size-time=%llu max-size-bytes=0 max-size-buffers=0 "
+                "! matroskamux name=mux "
+                "! filesink name=sink location=\"%s\" sync=false async=false",
+                cfg.udp_port, (unsigned long long)cfg.queue_ms * 1000000ULL, path.c_str());
+        } else {
         std::snprintf(desc, sizeof(desc),
             "udpsrc port=%d "
             "caps=\"application/x-rtp,media=video,clock-rate=90000,"
@@ -159,6 +171,7 @@ struct Recorder::Impl {
             "! filesink name=sink location=\"%s\" sync=false async=false",
             cfg.udp_port, cfg.payload_type, cfg.jitter_ms,
             (unsigned long long)cfg.queue_ms * 1000000ULL, path.c_str());
+        }
 
         GError* err = nullptr;
         pipeline = gst_parse_launch(desc, &err);

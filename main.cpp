@@ -25,7 +25,7 @@
 #include "record/storage.hpp"
 #include "display/kms_display_manager.hpp"
 #include "render/gl_renderer.hpp"
-#include "source/h265_source.hpp"
+#include "source/video_source.hpp"
 
 #include <gst/gst.h>
 
@@ -148,9 +148,9 @@ int main(int argc, char** argv) {
     // ТИМЧАСОВО: два тестові джерела замість декодерів. Перевіряють
     // реєстрацію, вписування за пропорцією, якір і порядок за z. Коли
     // з'явиться декод, тут просто зміняться класи джерел.
-    vrx::source::H265Source::Config h265_cfg;
+    vrx::source::VideoSource::Config h265_cfg;
     h265_cfg.udp_port = 5600;
-    auto main_src = std::make_shared<vrx::source::H265Source>("h265", h265_cfg);
+    auto main_src = std::make_shared<vrx::source::VideoSource>("h265", h265_cfg);
 
     // ДРУГИЙ КАНАЛ. Окремий порт, окремий декодер, окремий запис.
     //
@@ -160,9 +160,10 @@ int main(int argc, char** argv) {
     //
     // Ціна, про яку варто пам'ятати: на RK3588 апаратний декодер один на
     // всіх, і другий mppvideodec ділить із першим той самий mpp_service.
-    vrx::source::H265Source::Config pip_cfg;
-    pip_cfg.udp_port = 5602;
-    auto pip_src = std::make_shared<vrx::source::H265Source>("pip", pip_cfg);
+    vrx::source::VideoSource::Config pip_cfg;
+    pip_cfg.codec = vrx::source::VideoSource::Codec::MJPEG;
+    pip_cfg.udp_port = 5001;
+    auto pip_src = std::make_shared<vrx::source::VideoSource>("pip", pip_cfg);
 
     {
         vrx::layout::Placement p;          // на весь екран
@@ -216,6 +217,7 @@ int main(int argc, char** argv) {
     // другий продовжить писати, не помітивши.
     vrx::record::Recorder::Config rec2_cfg;
     rec2_cfg.name = "pip";
+    rec2_cfg.codec = vrx::record::Recorder::Codec::MJPEG;
     rec2_cfg.udp_port = pip_cfg.udp_port;
     rec2_cfg.payload_type = pip_cfg.payload_type;
     vrx::record::Recorder recorder2(rec2_cfg, storage);

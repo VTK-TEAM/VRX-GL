@@ -46,10 +46,16 @@ struct RecordStats {
 
 class Recorder {
 public:
+    // Кодек і транспорт. MJPEG приходить СИРИМ JPEG по UDP, без RTP:
+    // ні caps, ні depay, ні буфера пересортування там не буває — нема
+    // ні номерів послідовності, ні чого переставляти.
+    enum class Codec { H265, MJPEG };
+
     struct Config {
         // Ім'я потоку — потрапляє в назву файлу.
         std::string name = "main";
 
+        Codec codec = Codec::H265;
         int udp_port = 5600;
         int payload_type = 97;
 

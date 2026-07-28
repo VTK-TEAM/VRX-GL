@@ -24,9 +24,19 @@
 
 namespace vrx::source {
 
-class H265Source final : public FrameSource {
+class VideoSource final : public FrameSource {
 public:
+        // Кодек і транспорт другого каналу відрізняються від першого, і не
+    // трохи: MJPEG приходить СИРИМ JPEG по UDP, без RTP-обгортки. Тож
+    // ні caps, ні depay там не потрібні, а межі кадрів шукає jpegparse
+    // по маркерах SOI/EOI.
+    enum class Codec {
+        H265,     // RTP + rtph265depay + h265parse + mppvideodec
+        MJPEG,    // сирий JPEG по UDP + jpegparse + mppjpegdec
+    };
+
     struct Config {
+        Codec codec = Codec::H265;
         int udp_port = 5600;
         int payload_type = 97;
 
@@ -63,8 +73,8 @@ public:
         int target_queue = 0;
     };
 
-    H265Source(std::string name, Config cfg);
-    ~H265Source() override;
+    VideoSource(std::string name, Config cfg);
+    ~VideoSource() override;
 
     const char* name() const override;
 
