@@ -181,4 +181,5 @@ constexpr uint8_t VT_TLM_LOCAL_RECORDING_STATE = 200; // 0=немає носія
 constexpr uint8_t VT_TLM_LOCAL_LINE_LOSS       = 201; // SFP_TX_DBM_POINT - SFP_RX_DBM_STATION, дБ
 constexpr uint8_t VT_TLM_LOCAL_H265_FPS        = 202; // реально отриманий/декодований fps h265-потоку
 constexpr uint8_t VT_TLM_LOCAL_MJPEG_FPS       = 203; // реально отриманий/декодований fps mjpeg-потоку
+constexpr uint8_t VT_TLM_LOCAL_DISPLAY_FPS     = 205; // реальна частота показів на екрані (підтверджені flip'и за секунду) — на відміну від 204 не залежить від того, чи був кадр новим
 constexpr uint8_t VT_TLM_LOCAL_H265_SHOWN_FPS  = 204; // реально ПОКАЗАНИЙ на екрані fps h265 (VideoSource::total_presented_frames()) — відрізняється від LOCAL_H265_FPS, якщо декодовані кадри губляться саме на показі (KmsDisplay), а не на прийомі/декодуванні

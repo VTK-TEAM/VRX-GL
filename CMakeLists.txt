@@ -41,6 +41,8 @@ add_executable(vrx_gl
     record/storage.cpp
     record/recorder.cpp
     osd/osd.cpp
+    osd/subtitle_writer.cpp
+    osd/local_channels.cpp
     osd/stb_image_impl.cpp
     osd/telemetry/vt_telemetry_listener.cpp
 )

@@ -93,6 +93,10 @@ public:
 
     OsdStats stats() const;
 
+    // Сховище каналів. Наповнює приймач OSD, читає ще й писар субтитрів
+    // — другого приймача піднімати не треба, а телеметрія та сама.
+    VtTelemetryStorage& storage();
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

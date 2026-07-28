@@ -68,6 +68,7 @@ inline const char* vt_telemetry_channel_name(int id) {
         case VT_TLM_LOCAL_H265_FPS: return "LOCAL_H265_FPS";
         case VT_TLM_LOCAL_MJPEG_FPS: return "LOCAL_MJPEG_FPS";
         case VT_TLM_LOCAL_H265_SHOWN_FPS: return "LOCAL_H265_SHOWN_FPS";
+        case VT_TLM_LOCAL_DISPLAY_FPS: return "LOCAL_DISPLAY_FPS";
 
         case VT_TLM_RC_CH1: return "RC_CH1";
         case VT_TLM_RC_CH2: return "RC_CH2";

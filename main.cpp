@@ -26,6 +26,8 @@
 #include "diag/link_monitor.hpp"
 #include "display/kms_display_manager.hpp"
 #include "osd/osd.hpp"
+#include "osd/local_channels.hpp"
+#include "osd/subtitle_writer.hpp"
 #include "render/gl_renderer.hpp"
 #include "source/h265_source.hpp"
 #include "source/mjpeg_source.hpp"
@@ -37,6 +39,7 @@
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
 #include <string>
 #include <thread>
 
@@ -228,6 +231,41 @@ int main(int argc, char** argv) {
     vrx::record::Recorder recorder(rec_cfg, storage);
     recorder.start();
 
+    // Субтитри поруч із записаним відео: та сама телеметрія й той самий
+    // osd_config.json, тож у плеєрі показання стоять там же, де стояли
+    // на екрані. Власний потік — усе, що чіпає знімний носій, живе
+    // окремо від показу.
+    //
+    // Синхронізується з рекордером ОСНОВНОГО каналу: новий файл запису
+    // тягне новий .ass, зупинка запису їх закриває.
+    std::unique_ptr<vrx::osd::SubtitleWriter> subs;
+    std::unique_ptr<vrx::osd::LocalChannels> local_ch;
+    if (osd) {
+        vrx::osd::SubtitleWriter::Config sub_cfg;
+        // PlayRes має відповідати ЗАПИСАНОМУ відео, а не екрана: плеєр
+        // масштабує субтитри під кадр. Розмір беремо в джерела, якщо
+        // воно вже знає; до першого кадру лишається типовий 1080p.
+        if (main_src->frame_width() > 0 && main_src->frame_height() > 0) {
+            sub_cfg.video_w = main_src->frame_width();
+            sub_cfg.video_h = main_src->frame_height();
+        }
+        // Локальні канали: те, що станція знає про себе — стан запису,
+        // втрати в лінії, реальна частота обох потоків, скільки з них
+        // дійшло до екрана і з якою частотою показує сам екран. Власний
+        // потік: він опитує підсистеми, а не вони його штовхають.
+        local_ch = std::make_unique<vrx::osd::LocalChannels>(
+            vrx::osd::LocalChannels::Config{});
+        local_ch->start(osd->storage(), display, recorder, storage, main_src, pip_src);
+
+        subs = std::make_unique<vrx::osd::SubtitleWriter>(sub_cfg);
+        if (subs->init()) {
+            subs->start(recorder, storage, osd->storage());
+        } else {
+            std::fprintf(stderr, "[main] субтитри не піднялись, запис іде без них\n");
+            subs.reset();
+        }
+    }
+
     // Кожен канал пишеться СВОЇМ рекордером у свій файл: окремий потік,
     // окремий пайплайн, окремий udpsrc. Один канал може зникнути, а
     // другий продовжить писати, не помітивши.
@@ -369,6 +407,8 @@ int main(int argc, char** argv) {
     }
 
     link.stop();
+    if (subs) subs->stop();
+    if (local_ch) local_ch->stop();
     if (osd) osd->stop();
     recorder.stop();
     recorder2.stop();

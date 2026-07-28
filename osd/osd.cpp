@@ -635,6 +635,8 @@ bool Osd::acquire(render::DrawList& out) {
     return true;
 }
 
+VtTelemetryStorage& Osd::storage() { return impl_->storage; }
+
 OsdStats Osd::stats() const {
     std::lock_guard<std::mutex> lk(impl_->st_mtx);
     return impl_->st;
