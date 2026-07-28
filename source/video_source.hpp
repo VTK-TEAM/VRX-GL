@@ -19,24 +19,17 @@
 
 #include "frame_source.hpp"
 
+#include <string>
+#include <vector>
+
 #include <memory>
 #include <string>
 
 namespace vrx::source {
 
-class VideoSource final : public FrameSource {
+class VideoSource : public FrameSource {
 public:
-        // Кодек і транспорт другого каналу відрізняються від першого, і не
-    // трохи: MJPEG приходить СИРИМ JPEG по UDP, без RTP-обгортки. Тож
-    // ні caps, ні depay там не потрібні, а межі кадрів шукає jpegparse
-    // по маркерах SOI/EOI.
-    enum class Codec {
-        H265,     // RTP + rtph265depay + h265parse + mppvideodec
-        MJPEG,    // сирий JPEG по UDP + jpegparse + mppjpegdec
-    };
-
     struct Config {
-        Codec codec = Codec::H265;
         int udp_port = 5600;
         int payload_type = 97;
 
@@ -101,6 +94,34 @@ public:
     void decode_latency(double* min_ms, double* avg_ms, double* max_ms) const;
     int frame_width() const;
     int frame_height() const;
+
+protected:
+    // ---------------------------------------------------------------
+    // ГАЧКИ ДЛЯ НАЩАДКІВ: усе, чим канали різняться, і нічого більше.
+    //
+    // Решта — черга, звільнення буферів, замір інтервалів, детекція
+    // сигналу, витягання dmabuf — однакова для будь-якого кодека й
+    // живе тут, у базі.
+    // ---------------------------------------------------------------
+
+    // Caps для udpsrc. ПОРОЖНЬО = без фільтра взагалі: так треба, коли
+    // потік іде без RTP-обгортки й описувати нічого.
+    virtual std::string caps() const = 0;
+
+    // Ланка від udpsrc до входу декодера: depay, parse тощо.
+    virtual std::string parse_chain() const = 0;
+
+    // Сам декодер. Має віддавати dmabuf, інакше кадри мовчки гинуть на
+    // імпорті в текстуру.
+    virtual std::string decoder() const = 0;
+
+    // Варіанти ланки МІЖ парсером і декодером, у порядку спроб. Потрібні
+    // там, де негоціація може не скластися сама; один порожній рядок
+    // означає "єдиний варіант, нічого не вставляємо".
+    virtual std::vector<std::string> decode_variants() const { return {std::string()}; }
+
+    // Налаштування — нащадкам потрібен хіба що номер payload.
+    const Config& config() const;
 
 private:
     struct Impl;

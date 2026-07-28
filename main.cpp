@@ -25,7 +25,8 @@
 #include "record/storage.hpp"
 #include "display/kms_display_manager.hpp"
 #include "render/gl_renderer.hpp"
-#include "source/video_source.hpp"
+#include "source/h265_source.hpp"
+#include "source/mjpeg_source.hpp"
 
 #include <gst/gst.h>
 
@@ -150,7 +151,7 @@ int main(int argc, char** argv) {
     // з'явиться декод, тут просто зміняться класи джерел.
     vrx::source::VideoSource::Config h265_cfg;
     h265_cfg.udp_port = 5600;
-    auto main_src = std::make_shared<vrx::source::VideoSource>("h265", h265_cfg);
+    auto main_src = std::make_shared<vrx::source::H265Source>("h265", h265_cfg);
 
     // ДРУГИЙ КАНАЛ. Окремий порт, окремий декодер, окремий запис.
     //
@@ -161,9 +162,8 @@ int main(int argc, char** argv) {
     // Ціна, про яку варто пам'ятати: на RK3588 апаратний декодер один на
     // всіх, і другий mppvideodec ділить із першим той самий mpp_service.
     vrx::source::VideoSource::Config pip_cfg;
-    pip_cfg.codec = vrx::source::VideoSource::Codec::MJPEG;
     pip_cfg.udp_port = 5001;
-    auto pip_src = std::make_shared<vrx::source::VideoSource>("pip", pip_cfg);
+    auto pip_src = std::make_shared<vrx::source::MjpegSource>("pip", pip_cfg);
 
     {
         vrx::layout::Placement p;          // на весь екран

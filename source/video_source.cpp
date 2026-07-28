@@ -39,6 +39,12 @@ uint32_t drm_fourcc_of(GstVideoFormat f) {
 // ---------------------------------------------------------------------
 
 struct VideoSource::Impl {
+    // Зворотне посилання на власника — щоб питати в нащадка, з чого
+    // складати пайплайн. Викликається лише зі start(), тобто після
+    // повної побудови об'єкта: віртуальні виклики з конструктора не
+    // дійшли б до нащадка.
+    VideoSource* owner = nullptr;
+
     Impl(std::string n, Config c) : name(std::move(n)), cfg(c) {}
 
     std::string name;
@@ -273,56 +279,35 @@ struct VideoSource::Impl {
 
     // --- пайплайн ---
 
-    std::string describe(bool explicit_byte_stream) const {
-        if (cfg.codec == VideoSource::Codec::MJPEG) {
-            // Без caps на udpsrc узагалі: обгортки немає, описувати
-            // нічого. jpegparse (а не identity) обов'язковий — він
-            // розбирає межі кадрів по SOI/EOI і виставляє коректні
-            // image/jpeg, без яких далі нічого не негоціюється.
-            //
-            // mppjpegdec, а не jpegdec: софтверний віддає звичайну
-            // системну пам'ять, а не dmabuf, і кожен кадр мовчки гинув
-            // би на імпорті в текстуру.
-            return "udpsrc port=" + std::to_string(cfg.udp_port) +
-                   " ! jpegparse"
-                   " ! mppjpegdec name=dec"
-                   " ! appsink name=sink emit-signals=false sync=false"
-                   " max-buffers=1 drop=true";
-        }
+    // Збирає опис із гачків нащадка. Сама база про кодеки не знає нічого.
+    std::string describe(const std::string& variant) const {
+        std::string s = "udpsrc port=" + std::to_string(cfg.udp_port);
 
-        std::string s =
-            "udpsrc port=" + std::to_string(cfg.udp_port) +
-            " caps=\"application/x-rtp,media=video,clock-rate=90000,"
-            "encoding-name=H265,payload=" + std::to_string(cfg.payload_type) + "\""
-            " ! rtph265depay ! h265parse config-interval=1";
+        const std::string c = owner->caps();
+        if (!c.empty()) s += " caps=\"" + c + "\"";
 
-        // Другий варіант: явно форсуємо byte-stream. Потрібен лише якщо
-        // на конкретному стеку негоціація з mppvideodec не склалася сама.
-        if (explicit_byte_stream) {
-            s += " ! video/x-h265,stream-format=byte-stream,alignment=au";
-        }
+        s += " ! " + owner->parse_chain();
+        if (!variant.empty()) s += " ! " + variant;
 
         // Без черги перед appsink. Вона стояла з max-size-buffers=1,
         // тобто була постійно повна й постійно текла, а appsink із
         // max-buffers=1 drop=true і так лишає лише найсвіжіший кадр.
         // Два послідовні відкидання там, де досить одного, лише додавали
         // нерівномірності.
-        s += " ! mppvideodec name=dec"
+        s += " ! " + owner->decoder() + " name=dec"
              " ! appsink name=sink emit-signals=false sync=false max-buffers=1 drop=true";
         return s;
     }
 
     bool build() {
-        // Запасний варіант із явним byte-stream має сенс лише для H.265:
-        // у MJPEG негоціювати нічого.
-        const int variants = (cfg.codec == VideoSource::Codec::MJPEG) ? 1 : 2;
-        for (int variant = 0; variant < variants; ++variant) {
-            const std::string desc = describe(variant == 1);
+        const std::vector<std::string> variants = owner->decode_variants();
+        for (size_t variant = 0; variant < variants.size(); ++variant) {
+            const std::string desc = describe(variants[variant]);
             GError* err = nullptr;
             GstElement* p = gst_parse_launch(desc.c_str(), &err);
             if (!p || err) {
                 std::fprintf(stderr, "[%s] пайплайн[%d] не зібрався: %s\n",
-                             name.c_str(), variant + 1, err ? err->message : "?");
+                             name.c_str(), (int)(variant + 1), err ? err->message : "?");
                 if (err) g_error_free(err);
                 if (p) gst_object_unref(p);
                 continue;
@@ -337,7 +322,7 @@ struct VideoSource::Impl {
 
             if (gst_element_set_state(p, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
                 std::fprintf(stderr, "[%s] пайплайн[%d] не пішов у PLAYING\n",
-                             name.c_str(), variant + 1);
+                             name.c_str(), (int)(variant + 1));
                 gst_element_set_state(p, GST_STATE_NULL);
                 gst_object_unref(sink);
                 gst_object_unref(p);
@@ -359,7 +344,7 @@ struct VideoSource::Impl {
             appsink = sink;
             bus = gst_element_get_bus(p);
             std::fprintf(stderr, "[%s] порт %d, пайплайн[%d] піднято\n",
-                         name.c_str(), cfg.udp_port, variant + 1);
+                         name.c_str(), cfg.udp_port, (int)(variant + 1));
             return true;
         }
         return false;
@@ -425,11 +410,15 @@ struct VideoSource::Impl {
 // ---------------------------------------------------------------------
 
 VideoSource::VideoSource(std::string name, Config cfg)
-    : impl_(std::make_unique<Impl>(std::move(name), cfg)) {}
+    : impl_(std::make_unique<Impl>(std::move(name), cfg)) {
+    impl_->owner = this;
+}
 
 VideoSource::~VideoSource() { stop(); }
 
 const char* VideoSource::name() const { return impl_->name.c_str(); }
+
+const VideoSource::Config& VideoSource::config() const { return impl_->cfg; }
 
 bool VideoSource::start() {
     Impl& d = *impl_;
