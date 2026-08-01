@@ -248,6 +248,41 @@ inline void PathMeter::report(const char* path) const {
 
     std::fclose(f);
     std::fprintf(stderr, "[вимір] звіт: %s\n", path);
+
+    // СИРІ РЯДИ поруч зі зведенням.
+    //
+    // Зведення відповідає на "скільки", але не на "як це виглядало в
+    // часі". Питання накшталт "фаза справді блукає чи це петля ганяється
+    // за шумом виміру" по перцентилях не вирішуються в принципі: там уже
+    // немає ні порядку подій, ні того, на якому вікні їх усереднили.
+    //
+    // Тому поруч лягають самі мітки, у наносекундах монотонного
+    // годинника. Далі з ними можна робити що завгодно — рахувати фазу
+    // покадрово, дивитись спектр, розкладати на повільне й швидке.
+    {
+        std::string base(path);
+        {
+            std::string p = base + ".flips.csv";
+            if (std::FILE* g = std::fopen(p.c_str(), "w")) {
+                std::fprintf(g, "vblank_ns\n");
+                for (int64_t t : flips_) std::fprintf(g, "%lld\n", (long long)t);
+                std::fclose(g);
+                std::fprintf(stderr, "[вимір] розгортки: %s\n", p.c_str());
+            }
+        }
+        for (const Channel& c : ch_) {
+            std::string p = base + "." + c.name + ".csv";
+            if (std::FILE* g = std::fopen(p.c_str(), "w")) {
+                std::fprintf(g, "in_ns,out_ns,shown_ns\n");
+                for (const Rec& r : c.recs) {
+                    std::fprintf(g, "%lld,%lld,%lld\n", (long long)r.in_ns,
+                                 (long long)r.out_ns, (long long)r.shown_ns);
+                }
+                std::fclose(g);
+                std::fprintf(stderr, "[вимір] канал %s: %s\n", c.name.c_str(), p.c_str());
+            }
+        }
+    }
 }
 
 } // namespace vrx::diag
