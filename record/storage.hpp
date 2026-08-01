@@ -20,13 +20,18 @@
 // Потоків два, і теж не для краси: syncfs() на повільному USB під
 // навантаженням триває секунди, і якби він жив у потоці опитування, то
 // підвішував би виявлення носія рівно тоді, коли воно найпотрібніше.
+//
+// ЧОМУ СТАН ЖИВЕ В shared_ptr. Потік опитування може висіти в D-стані на
+// мертвій флешці, і join() на ньому не повернувся б ніколи — тому при
+// зупинці ми його ВІДВ'ЯЗУЄМО. Але тоді він переживає сам об'єкт: прокинеться
+// через десять секунд, коли Storage уже знищено, і полізе в звільнену
+// пам'ять. Раніше це трималось на тому, що процес зазвичай встигав вийти
+// першим. Тепер обидва потоки тримають стан за shared_ptr, і останній, хто
+// вийде, той його й звільнить.
 
-#include <atomic>
-#include <condition_variable>
 #include <cstdint>
-#include <mutex>
+#include <memory>
 #include <string>
-#include <thread>
 #include <vector>
 
 namespace vrx::record {
@@ -106,41 +111,11 @@ public:
 
     // Чи йде зараз syncfs. Для діагностики: якщо він висить хвилинами,
     // носій уже мертвий.
-    bool sync_in_progress() const { return sync_busy_.load(std::memory_order_acquire); }
+    bool sync_in_progress() const;
 
 private:
-    void probe_loop();
-    void sync_loop();
-
-    // Одна ітерація пошуку. Все блокуюче — тут.
-    void probe_once();
-
-    // Пробує змонтувати незмонтовані знімні розділи.
-    void mount_removable();
-
-    bool is_external(const std::string& path) const;
-
-    Config cfg_;
-
-    mutable std::mutex state_mtx_;
-    DriveState state_;
-    int64_t last_probe_ok_ns_ = 0;
-
-    // st_dev кореня. Рахується один раз: усе, що на тому самому
-    // пристрої, — не знімний носій, а сама система.
-    uint64_t root_dev_ = 0;
-
-    std::atomic<bool> running_{false};
-    std::thread probe_thread_;
-
-    std::thread sync_thread_;
-    std::mutex sync_mtx_;
-    std::condition_variable sync_cv_;
-    bool sync_requested_ = false;
-    std::atomic<bool> sync_busy_{false};
-
-    // Придушення спаму: попередній надрукований стан.
-    std::string last_log_;
+    struct Impl;
+    std::shared_ptr<Impl> impl_;
 };
 
 } // namespace vrx::record

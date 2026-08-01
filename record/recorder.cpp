@@ -50,6 +50,21 @@ struct Recorder::Impl {
     uint32_t drive_generation = 0;
     int64_t last_sync_ms = 0;
 
+    // Коли пайплайн зібрано. Фора новому пайплайну відлічується саме
+    // звідси, а не від останнього перезбирання: на старті останнього ще
+    // не було, лічильник дорівнював би нулю, і сторож зніс би пайплайн,
+    // який щойно піднявся.
+    int64_t built_at_ms = 0;
+
+    // Прогресивна пауза. Рахує САМЕ СТАЛІ збої: пайплайн, що прожив
+    // довше за kHealthyMs і віддав байти, обнуляє лічильник, байдуже,
+    // чим саме він потім закінчився.
+    int fail_streak = 0;
+    int64_t next_open_ms = 0;
+    static constexpr int64_t kHealthyMs = 5000;
+
+    int64_t last_probe_open_ms = 0;
+
     // ЛЕГКА ПРОБА СИГНАЛУ: власний сокет на тому ж порту, без GStreamer.
     //
     // Навіщо. Без неї єдиний спосіб дізнатися, чи є сигнал, — підняти
@@ -102,6 +117,68 @@ struct Recorder::Impl {
 
     bool signal_present() const {
         return last_packet_ms > 0 && (now_ms() - last_packet_ms) < cfg.stream_lost_ms;
+    }
+
+    // ШИНА GSTREAMER, ЯКУ РАНІШЕ НЕ ЧИТАВ НІХТО.
+    //
+    // Автобус опитувався рівно в одному місці — усередині close_file()
+    // при штатному дозаписі. Тобто поки пайплайн живий, будь-яка помилка
+    // лишалась непоміченою: elemenet падав, запис ставав, а назовні
+    // `active` далі казав "пишу", і байти просто переставали рости.
+    // Вийти з цього можна було тільки через зникнення носія або сигналу.
+    //
+    // Опитування НЕБЛОКУЮЧЕ: власного циклу подій GLib тут немає й не
+    // треба, а такт рекордера і так 250 мс.
+    //
+    // EOS тут теж помилка. Джерело — `udpsrc`, воно не закінчується
+    // саме; EOS означає, що гілка розібралась не з нашої волі.
+    bool bus_failed() {
+        if (!pipeline) return false;
+        GstBus* bus = gst_element_get_bus(pipeline);
+        if (!bus) return false;
+
+        bool failed = false;
+        while (GstMessage* m = gst_bus_pop_filtered(
+                   bus, (GstMessageType)(GST_MESSAGE_ERROR | GST_MESSAGE_EOS))) {
+            if (GST_MESSAGE_TYPE(m) == GST_MESSAGE_ERROR) {
+                GError* e = nullptr;
+                gchar* dbg = nullptr;
+                gst_message_parse_error(m, &e, &dbg);
+                std::fprintf(stderr, "[запис %s] помилка на шині: %s\n",
+                             cfg.name.c_str(), e && e->message ? e->message : "?");
+                if (e) g_error_free(e);
+                if (dbg) g_free(dbg);
+            } else {
+                std::fprintf(stderr, "[запис %s] несподіваний EOS\n", cfg.name.c_str());
+            }
+            failed = true;
+            gst_message_unref(m);
+        }
+        gst_object_unref(bus);
+        return failed;
+    }
+
+    // Дані від борту йдуть, а до парсера не доходить нічого.
+    //
+    // Не плутати з "сигнал зник": там винен борт, і перезбирати нема
+    // чого — udpsrc підхопить потік сам. Тут винен наш бік, і єдиний
+    // спосіб щось змінити — зібрати пайплайн наново.
+    // Пауза відлічується від МОМЕНТУ ЗАКРИТТЯ, а не від спроби: дозапис
+    // сам по собі триває до 10 секунд, і пауза, відрахована наперед,
+    // вичерпалась би ще до того, як пайплайн розібрався.
+    void back_off() {
+        int64_t back = cfg.retry_ms;
+        for (int i = 1; i < fail_streak && back < cfg.retry_max_ms; ++i) back *= 2;
+        if (back > cfg.retry_max_ms) back = cfg.retry_max_ms;
+        next_open_ms = now_ms() + back;
+        std::fprintf(stderr, "[запис %s] %d-й сталий збій поспіль, пауза %lld мс\n",
+                     cfg.name.c_str(), fail_streak, (long long)back);
+    }
+
+    bool stalled(int64_t now) const {
+        if (!pipeline) return false;
+        const int64_t last = last_buffer_ms.load(std::memory_order_relaxed);
+        return (now - last) > cfg.stall_ms && (now - built_at_ms) > cfg.stall_ms;
     }
 
     // Проба на виході ПАРСЕРА, тобто ДО муксера.
@@ -206,6 +283,7 @@ struct Recorder::Impl {
 
         file_bytes.store(0, std::memory_order_relaxed);
         last_buffer_ms.store(now_ms(), std::memory_order_relaxed);
+        built_at_ms = now_ms();
         seen_keyframe.store(!cfg.start_on_keyframe, std::memory_order_release);
 
         if (gst_element_set_state(pipeline, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
@@ -244,6 +322,17 @@ struct Recorder::Impl {
     // випхати чергу, і хвіст запису просто не потрапить у файл.
     void close_file(bool graceful) {
         if (!pipeline) return;
+
+        // Знімаємо "пишу" ДО розбирання, а не після.
+        //
+        // Далі йде дозапис до 10 секунд, а на мертвому носії ще й
+        // set_state(NULL) може впертися в заблокований filesink. Усе це
+        // час, протягом якого назовні не має стояти "запис іде": канал
+        // 200 в OSD показував би пілоту роботу, якої вже немає.
+        {
+            std::lock_guard<std::mutex> lk(mtx);
+            st.active = false;
+        }
 
         if (graceful) {
             // EOS проганяє чергу до кінця й змушує муксер дописати
@@ -299,6 +388,15 @@ struct Recorder::Impl {
             if (!path.empty()) ::unlink(path.c_str());
         }
 
+        // Пайплайн, який пожив і віддав байти, — не сталий збій, чим би
+        // він потім не закінчився. Лічильник міряє саме СТАЛІСТЬ: інакше
+        // ротація файлів або звичайне зникнення сигналу накручували б
+        // паузу так само, як несправність.
+        if (wrote > 0 && built_at_ms > 0 && (now_ms() - built_at_ms) > kHealthyMs) {
+            fail_streak = 0;
+        }
+        built_at_ms = 0;
+
         {
             std::lock_guard<std::mutex> lk(mtx);
             st.active = false;
@@ -315,13 +413,24 @@ struct Recorder::Impl {
     }
 
     void loop() {
-        open_probe();
-
         while (running.load(std::memory_order_relaxed)) {
+            const int64_t now = now_ms();
+
+            // ПОВТОРНА СПРОБА ВІДКРИТИ ПРОБУ.
+            //
+            // Раніше сокет відкривався один раз перед циклом, і якщо
+            // bind не пройшов — signal_present() лишався false назавжди,
+            // тобто файл не створювався б НІКОЛИ, а в лозі був один
+            // рядок. Той самий клас, що й невдалий build() у джерелі:
+            // разова невдача на старті вбивала підсистему до кінця
+            // польоту.
+            if (probe_fd < 0 && now - last_probe_open_ms >= 2000) {
+                last_probe_open_ms = now;
+                open_probe();
+            }
             poll_probe();
 
             const DriveState drive = storage.state();
-            const int64_t now = now_ms();
 
             // Живість беремо з проби, а не з кадрів у пайплайні: проба
             // працює й тоді, коли пайплайну немає, і саме тому файл
@@ -334,13 +443,52 @@ struct Recorder::Impl {
                 st.stream_alive = alive;
             }
 
+            // ЗНІМОК НОСІЯ МОЖЕ БУТИ ЗАСТАРІЛИМ, і це не те саме, що
+            // "носія немає". Потік опитування блокується на мертвій
+            // флешці разом із рештою — і тоді state() чесно віддає
+            // ОСТАННІЙ знімок, у якому все гаразд. Вік знімка рахувався й
+            // документувався від початку, але не читався ніким.
+            const bool stale = drive.age_ms > cfg.drive_stale_ms;
+            const bool drive_ok = drive.usable() && !stale;
+
             if (pipeline) {
-                // Носій зник або його підмінили іншим — далі писати
-                // нікуди. Graceful тут не пробуємо: файлової системи вже
-                // немає, і EOS завис би на весь таймаут.
-                if (!drive.usable() || drive.generation != drive_generation) {
-                    std::fprintf(stderr, "[запис %s] носій зник\n", cfg.name.c_str());
+                // Носій зник, підмінили іншим або знімок протух — далі
+                // писати нікуди. Graceful не пробуємо: файлової системи
+                // вже немає, і EOS завис би на весь таймаут.
+                //
+                // Перевіряється ПЕРШИМ, хоч шина при цьому теж кричить.
+                // Зникнення носія — ПРИЧИНА, а помилка на шині — її
+                // наслідок, і в лозі має стояти причина. Інакше кожне
+                // висмикування флешки рахувалося б як внутрішній збій
+                // пайплайна, і лічильник помилок перестав би означати те,
+                // заради чого заведений.
+                if (!drive.usable() || drive.generation != drive_generation || stale) {
+                    // Три різні події, і в лозі вони мають читатися
+                    // по-різному: "зник" і "перемонтовано" лікуються
+                    // однаково, але означають зовсім різне, а розрізнити
+                    // їх постфактум по одному рядку буде нічим.
+                    const char* why = stale  ? "знімок носія застарів — опит застряг"
+                                    : !drive.usable() ? "носій зник"
+                                    : "носій перемонтовано — файлова система вже інша";
+                    std::fprintf(stderr, "[запис %s] %s\n", cfg.name.c_str(), why);
                     close_file(false);
+                    if (stale) {
+                        fail_streak++;
+                        back_off();
+                        std::lock_guard<std::mutex> lk(mtx);
+                        st.drive_stale++;
+                    }
+                }
+                // Носій на місці, а пайплайн повідомив про помилку —
+                // отже зламались саме ми. Йде ПЕРЕД перевіркою сигналу:
+                // на зламаному пайплайні дозапис через EOS не пройде, і
+                // пробувати його означало б чекати весь таймаут дарма.
+                else if (bus_failed()) {
+                    close_file(false);
+                    fail_streak++;
+                    back_off();
+                    std::lock_guard<std::mutex> lk(mtx);
+                    st.errors++;
                 }
                 // Сигнал пропав — закриваємо файл. При поверненні буде
                 // НОВИЙ файл, а не дозапис у старий: між ними діра, і
@@ -350,6 +498,18 @@ struct Recorder::Impl {
                     close_file(true);
                     std::lock_guard<std::mutex> lk(mtx);
                     st.restarts++;
+                }
+                // Дані йдуть, а кадрів на виході парсера немає — винен
+                // наш бік. Дозапису не пробуємо: пайплайн, який не
+                // віддає кадрів, з великою ймовірністю не віддасть і EOS.
+                else if (stalled(now)) {
+                    std::fprintf(stderr, "[запис %s] сигнал є, а кадрів немає %d с —"
+                                 " перезбираю\n", cfg.name.c_str(), cfg.stall_ms / 1000);
+                    close_file(false);
+                    fail_streak++;
+                    back_off();
+                    std::lock_guard<std::mutex> lk(mtx);
+                    st.stalls++;
                 }
                 // Межа розміру.
                 else if (file_bytes.load(std::memory_order_relaxed) >= cfg.rotate_bytes) {
@@ -367,9 +527,17 @@ struct Recorder::Impl {
             }
 
             // Файл створюємо ЛИШЕ коли є і носій, і сигнал.
-            if (!pipeline && drive.usable() && alive) {
+            if (!pipeline && drive_ok && alive && now_ms() >= next_open_ms) {
                 drive_generation = drive.generation;
-                if (open_file()) last_sync_ms = now;
+                if (open_file()) {
+                    last_sync_ms = now_ms();
+                } else {
+                    // Не зібрався — це теж сталий збій: наступного разу
+                    // причина буде та сама, і крутити спроби чотири рази
+                    // на секунду означало б лише залити лог.
+                    fail_streak++;
+                    back_off();
+                }
             }
 
             std::this_thread::sleep_for(std::chrono::milliseconds(250));

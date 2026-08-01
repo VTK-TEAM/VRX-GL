@@ -369,6 +369,21 @@ int main(int argc, char** argv) {
         }
 
         if (osd) {
+            // Що РЕАЛЬНО лежить у службових каналах. Стан запису на екрані
+            // малює канал 200, і якщо він розходиться з рядком ЗАПИС вище,
+            // винен не рекордер, а те, що між ними.
+            auto ch = [&](uint8_t id) {
+                float v = 0.f; uint32_t age = 0;
+                return osd->storage().get_value(id, &v, &age)
+                     ? std::string(std::to_string(v).substr(0, 6) + "/" +
+                                   std::to_string(age) + "мс")
+                     : std::string("немає");
+            };
+            std::printf("          КАНАЛИ: 200 запис %s | 206 ФАПЧ %s | 207 затримка %s"
+                        " | 208 дроп %s | 209 пізно %s\n",
+                        ch(200).c_str(), ch(206).c_str(), ch(207).c_str(),
+                        ch(208).c_str(), ch(209).c_str());
+
             auto os = osd->stats();
             std::printf("          OSD: квадів %llu | збірок %llu по %.2f мс"
                         " | телеметрія: пакетів %llu, CRC-збоїв %llu\n",
@@ -402,9 +417,10 @@ int main(int argc, char** argv) {
             auto dv = storage.state();
             if (rc.active) {
                 std::printf("          ЗАПИС: %.1f МБ | файлів %u (ротацій %u, рестартів %u)"
-                            " | носій вільно %.1f ГБ | syncfs %lld/%lld мс%s\n",
+                            " | носій вільно %.1f ГБ (знімку %lld мс)"
+                            " | syncfs %lld/%lld мс%s\n",
                             rc.bytes / 1e6, rc.files, rc.rotations, rc.restarts,
-                            dv.free_bytes / 1e9,
+                            dv.free_bytes / 1e9, (long long)dv.age_ms,
                             (long long)dv.last_sync_ms, (long long)dv.max_sync_ms,
                             storage.sync_in_progress() ? " | СКИДАЮ" : "");
             } else {
@@ -414,6 +430,16 @@ int main(int argc, char** argv) {
             auto rc2 = recorder2.stats();
             if (rc2.active) {
                 std::printf("          ЗАПИС 2: %.1f МБ | файлів %u\n", rc2.bytes / 1e6, rc2.files);
+            }
+            // Мовчить, поки все гаразд. Ці три лічильники рахують збої,
+            // які раніше не було видно взагалі: запис ставав, а назовні
+            // лишалось "пишу".
+            if (rc.errors || rc.stalls || rc.drive_stale ||
+                rc2.errors || rc2.stalls || rc2.drive_stale) {
+                std::printf("          ЗБОЇ ЗАПИСУ: шина %u/%u | без кадрів %u/%u"
+                            " | знімок носія протух %u/%u\n",
+                            rc.errors, rc2.errors, rc.stalls, rc2.stalls,
+                            rc.drive_stale, rc2.drive_stale);
             }
         }
         {
