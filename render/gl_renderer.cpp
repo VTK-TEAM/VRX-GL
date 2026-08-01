@@ -1,5 +1,6 @@
 #include "gl_renderer.hpp"
 #include "gl_quad.hpp"
+#include "phase_meter.hpp"
 
 #include <gbm.h>
 #include <EGL/egl.h>
@@ -118,63 +119,10 @@ struct GlRenderer::Impl {
     double poll_offset_ms = 8.0;
     int64_t last_shown_produced_ns = 0;
 
-    // ЗАМІР ФАЗИ. Фаза — величина КУТОВА: 0.1 мс і 16.6 мс сусіди, а не
-    // протилежності. Усереднювати її звичайним фільтром не можна, і це
-    // не педантизм — на цьому вимір уже один раз збрехав.
-    //
-    // Було: ЕМА з α=0.02 по різниці "по найкоротшій дузі". Поки фаза
-    // стоїть, воно працює. Але фаза ПОВЗЕ, і швидкість, яку такий фільтр
-    // здатний відстежити, обмежена: за крок він може підтягнутися щонайб.
-    // на α·півперіоду, тобто ~10 мс/с. При більшому дрейфі відставання
-    // переростає півперіоду, різниця по колу перекидає знак, і фільтр
-    // їде НАЗАД. На виході — рівна правдоподібна цифра (у нас −3.6 мс/с),
-    // яка не міняється ні від чого. Контролер на такому вході сліпий.
-    //
-    // Стало: кругове середнє на вікні. Складаємо одиничні вектори кута
-    // кожного кадру й беремо аргумент суми — операція, для якої обгортка
-    // не існує в принципі. Довжина тієї ж суми дає розкид безкоштовно:
-    // вектори збігаються -> |сума| ≈ n, розкид нуль; розкидані по колу ->
-    // |сума| -> 0.
-    double acc_sin = 0, acc_cos = 0;
-    uint32_t acc_n = 0;
-    int64_t acc_start_ns = 0;
-
-    // Вікно усереднення. Компроміс: довше — точніше середнє, але фаза
-    // встигає проповзти всередині вікна й роздути оцінку розкиду.
-    // 250 мс = ~15 кадрів, і при дрейфі 6 мс/с розмиття 1.5 мс.
-    static constexpr int64_t kPhaseWindowNs = 250000000LL;
-
-    double phase_ms = 0;          // опубліковане середнє за останнє вікно
-    double phase_jitter_ms = 0;   // кругове σ того ж вікна
-    bool phase_valid = false;
-    double phase_prev = -1;       // попереднє середнє, для розгортки
-    int64_t phase_prev_ns = 0;
-    double phase_drift = 0;
-
-    // ДРЕЙФ — нахил розгорнутої фази на вікні, а не різниця двох сусідніх
-    // середніх. Різниця через 250 мс ділить похибку середнього (~0.4 мс)
-    // на надто короткий базис і дає ±2.3 мс/с шуму; частотна ланка
-    // перетворює це на випадкове блукання тримінгу, яке потім доводиться
-    // виправляти фазовій ланці. Регресія на 2 с зменшує шум на порядок.
-    //
-    // Фаза тут уже РОЗГОРНУТА (unwrapped): кожне нове середнє додається
-    // до попереднього через різницю по найкоротшій дузі, тож усередині
-    // кільця обгортки немає й нахил рахується звичайним МНК.
-    static constexpr int kDriftPoints = 8;      // 8 x 250 мс = 2 с
-    double un_phase[kDriftPoints] = {};
-    double un_time[kDriftPoints] = {};
-    int un_n = 0, un_head = 0;
-    double un_acc = 0;                          // накопичена розгорнута фаза
-    int64_t phase_last_produced = 0;   // щоб не міряти той самий кадр двічі
-
-    // Сирі вікна фази в stderr — вмикається VRX_PHASE_DEBUG=1. Потрібне
-    // саме тому, що зведені числа тут уже один раз збрехали, і без
-    // сирого ряду відрізнити "вимір поганий" від "об'єкт такий" не можна.
-    bool phase_debug = getenv("VRX_PHASE_DEBUG") != nullptr;
-    // Скільки сирих зразків вивести. Обмежено навмисно: цей дамп потрібен
-    // для розбору, а не для роботи, і 400 кадрів (7 с) вистачає, щоб
-    // порахувати нахил фази з похибкою краще за 0.05 мс/с.
-    int dbg_left = 400;
+    // Вимір фази — окремим модулем: до малювання він стосунку не має,
+    // а власного стану має на три механізми (кругове середнє, регресія
+    // дрейфу, згладжений розкид).
+    PhaseMeter phase;
 
     // Штучна затримка утримання цілі, лише для перевірки гарячої заміни.
     int test_hold_ms = getenv("VRX_TEST_HOLD_MS") ? atoi(getenv("VRX_TEST_HOLD_MS")) : 0;
@@ -401,49 +349,29 @@ struct GlRenderer::Impl {
         glDisable(GL_SCISSOR_TEST);
     }
 
-    void draw_frame() {
-        if (cfg.colortest) { draw_colortest(); return; }
+    // Що і де малювати цього кадру.
+    struct Item {
+        layout::Placement p;
+        source::SourceFrame f;
+    };
 
-        // Чистимо ЗАВЖДИ. Під кадром, що не покрив увесь екран, інакше
-        // лишиться вміст ПОЗАминулого кадру — буферів два, вони
-        // чергуються. Плюс на тайловому GPU (Mali) очищення на початку
-        // проходу дозволяє не завантажувати попередній вміст у тайлову
-        // пам'ять, тобто виходить швидше, ніж без нього.
-        glClearColor(0.02f, 0.02f, 0.03f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
-
+    // Забирає кадри в усіх джерел і вкладає їх у порядок малювання.
+    //
+    // Повертає false, якщо показувати нема чого. Заглушку в такому разі
+    // не малюємо: програма одна, а дрони різні, і будь-яка заставка
+    // припускала б знання про конкретну конфігурацію, якого в програми
+    // немає.
+    bool collect_items(std::vector<Item>& items, int64_t& primary_produced) {
         std::vector<std::shared_ptr<source::FrameSource>> snap;
         {
             std::lock_guard<std::mutex> lk(src_mtx);
             snap = sources;
         }
-        if (snap.empty()) return;
+        if (snap.empty()) return false;
 
         const float screen_aspect = float(info.width) / float(info.height);
-
-        struct Item {
-            layout::Placement p;
-            source::SourceFrame f;
-        };
-        std::vector<Item> items;
         items.reserve(snap.size());
-
-        // ФАЗУ І ЗАТРИМКУ МІРЯЄМО ЛИШЕ ПО ПЕРШОМУ ДЖЕРЕЛУ.
-        //
-        // Синхронізуватись можна рівно з одним передавачем: розгортка
-        // одна, а кожна камера має власний кварц. Другий канал живе як
-        // виходить — його фаза відносно нашого показу нікому не
-        // підпорядкована.
-        //
-        // Раніше тут стояв МАКСИМУМ produced_ns по всіх джерелах. З
-        // однією камерою це збігалося з "по першому", тож і працювало.
-        // З двома максимум стрибав би між ними: у кожної своя фаза, і
-        // петля вела б то одну камеру, то другу.
-        // Мітка часу кадру ПЕРШОГО джерела — з неї міряється фаза.
-        // Саме першого, а не найсвіжішого серед усіх: у другого каналу
-        // власний кварц, і мішати їх означало б вести камеру за чужою
-        // фазою.
-        int64_t primary_produced = 0;
+        primary_produced = 0;
 
         bool primary = true;
         for (auto& src : snap) {
@@ -451,9 +379,6 @@ struct GlRenderer::Impl {
             primary = false;
 
             source::SourceFrame f;
-            // Джерела немає або сигналу немає — не малюємо нічого.
-            // Програма одна, а дрони різні: заглушка припускала б знання
-            // про конкретну конфігурацію, якого в програми немає.
             if (!src->acquire(f)) continue;
             if (!f.valid() || !f.where.enabled) continue;
             if (f.image.fd[0] < 0) continue;      // кадру як буфера немає
@@ -461,134 +386,31 @@ struct GlRenderer::Impl {
             const float a = f.aspect();
             if (a <= 0.0f) continue;
 
+            // ФАЗУ МІРЯЄМО ЛИШЕ ПО ПЕРШОМУ ДЖЕРЕЛУ.
+            //
+            // Синхронізуватись можна рівно з одним передавачем: розгортка
+            // одна, а кожна камера має власний кварц. Другий канал живе
+            // як виходить — його фаза нікому не підпорядкована.
+            //
+            // Раніше тут стояв МАКСИМУМ produced_ns по всіх джерелах. З
+            // однією камерою це збігалося з "по першому", тож і
+            // працювало. З двома максимум стрибав би між ними, і петля
+            // вела б то одну камеру, то другу.
             if (is_primary) primary_produced = f.produced_ns;
+
             items.push_back({layout::fit_source(f.where, a, screen_aspect), f});
         }
-        if (items.empty()) return;
+        if (items.empty()) return false;
 
         // Порядок за z: менше — далі. Джерел одиниці, тож stable_sort
         // дешевший за будь-яку хитрість і зберігає порядок реєстрації
         // для однакових z.
         std::stable_sort(items.begin(), items.end(),
                          [](const Item& a, const Item& b) { return a.p.z < b.p.z; });
+        return true;
+    }
 
-        // Фаза: скільки минуло від останнього vblank до появи кадру.
-        // Береться за модулем періоду, бо кадр міг прийти й на кілька
-        // періодів раніше (тоді нас цікавить лише його позиція в сітці).
-        //
-        // Рахуємо ЛИШЕ по нових кадрах. Коли нового немає, джерело за
-        // контрактом віддає попередній — з його старою міткою. Пустити
-        // таку мітку у фільтр означало б виміряти той самий прихід
-        // двічі, причому вдруге вже з іншого vblank'а: рівно та частина
-        // вибірки, яка ЗМІЩЕНА в бік цілі, отримала б подвійну вагу.
-        // Для контролера це систематична похибка, а не шум.
-        if (primary_produced > 0 && primary_produced != phase_last_produced && period_ns > 0) {
-            phase_last_produced = primary_produced;
-            const int64_t last_v = last_present_ns.load(std::memory_order_relaxed);
-            if (last_v > 0) {
-                int64_t rel = (primary_produced - last_v) % period_ns;
-                if (rel < 0) rel += period_ns;
-                const double period_ms = period_ns / 1e6;
-                const double th = 2.0 * M_PI * (rel / (double)period_ns);
-
-                if (phase_debug && dbg_left > 0) {
-                    dbg_left--;
-                    std::fprintf(stderr, "RAW %.6f %.6f %.3f\n",
-                                 primary_produced / 1e9, last_v / 1e9, rel / 1e6);
-                }
-
-                acc_sin += std::sin(th);
-                acc_cos += std::cos(th);
-                acc_n++;
-                if (acc_start_ns == 0) acc_start_ns = primary_produced;
-
-                // Вікно закрилося — публікуємо середнє й розкид.
-                // Мінімум кадрів окремо від часу: на 30 к/с їх удвічі
-                // менше, а на кількох штуках кругове σ ще безглузде.
-                if (primary_produced - acc_start_ns >= kPhaseWindowNs && acc_n >= 8) {
-                    const double n = (double)acc_n;
-                    double mean = std::atan2(acc_sin / n, acc_cos / n);
-                    if (mean < 0.0) mean += 2.0 * M_PI;
-                    const double mean_ms = mean * period_ms / (2.0 * M_PI);
-
-                    // Довжина середнього вектора: 1 — усі кадри в одну
-                    // точку, 0 — рівномірно по колу. Стандартна кругова
-                    // сигма: sqrt(-2 ln R), у радіанах.
-                    const double R = std::hypot(acc_sin, acc_cos) / n;
-                    const double sig_rad = R > 1e-6 ? std::sqrt(-2.0 * std::log(R < 1.0 ? R : 1.0))
-                                                    : 2.0 * M_PI;
-                    double sig_ms = sig_rad * period_ms / (2.0 * M_PI);
-                    if (sig_ms > period_ms * 0.25) sig_ms = period_ms * 0.25;
-
-                    // Дрейф — по двох сусідніх середніх. Тепер це можна:
-                    // середні йдуть через 250 мс, і навіть 30 мс/с дає
-                    // між ними 7.5 мс, тобто менше півперіоду. Обгортка
-                    // однозначна.
-                    // Розгортаємо: до накопиченої фази додаємо крок по
-                    // найкоротшій дузі. Кроки йдуть через 250 мс, тож
-                    // навіть 30 мс/с дають менше півперіоду — однозначно.
-                    if (phase_prev >= 0) {
-                        double dd = mean_ms - phase_prev;
-                        if (dd >  period_ms * 0.5) dd -= period_ms;
-                        if (dd < -period_ms * 0.5) dd += period_ms;
-                        un_acc += dd;
-                    }
-                    phase_prev = mean_ms;
-                    phase_prev_ns = primary_produced;
-
-                    un_phase[un_head] = un_acc;
-                    un_time[un_head] = primary_produced / 1e9;
-                    un_head = (un_head + 1) % kDriftPoints;
-                    if (un_n < kDriftPoints) un_n++;
-
-                    double drift = phase_drift;
-                    if (un_n >= 4) {
-                        double sx = 0, sy = 0;
-                        for (int k = 0; k < un_n; ++k) { sx += un_time[k]; sy += un_phase[k]; }
-                        const double mx = sx / un_n, my = sy / un_n;
-                        double num = 0, den = 0;
-                        for (int k = 0; k < un_n; ++k) {
-                            const double dx = un_time[k] - mx;
-                            num += dx * (un_phase[k] - my);
-                            den += dx * dx;
-                        }
-                        if (den > 1e-9) drift = num / den;
-                    }
-
-                    if (phase_debug) {
-                        std::fprintf(stderr, "PH %.3f %.3f %u %.3f %.3f\n",
-                                     primary_produced / 1e9, mean_ms, acc_n, sig_ms, drift);
-                    }
-
-                    {
-                        std::lock_guard<std::mutex> lk(stats_mtx);
-                        phase_ms = mean_ms;
-                        // Розкид згладжуємо, а середнє — ні. Різниця не
-                        // формальна: середнє кутове, і фільтрувати його
-                        // звичайним ЕМА не можна; розкид же — звичайна
-                        // додатна величина.
-                        //
-                        // Згладжувати ТРЕБА: по 15 кадрах вікна оцінка σ
-                        // сама має похибку ~18%, а один викид роздуває її
-                        // вдвічі. Запас 2σ цей скач подвоює, ціль повзе
-                        // за ним на ±1.6 мс, і петля ганяється за власним
-                        // шумом замість тримати фазу. Стала ~2.5 с.
-                        phase_jitter_ms = phase_valid
-                                        ? phase_jitter_ms * 0.9 + sig_ms * 0.1
-                                        : sig_ms;
-                        phase_drift = drift;
-                        phase_valid = true;
-                    }
-
-                    acc_sin = acc_cos = 0.0;
-                    acc_n = 0;
-                    acc_start_ns = 0;
-                }
-            }
-        }
-
-        inflight_produced_ns.store(primary_produced, std::memory_order_relaxed);
-
+    void draw_sources(const std::vector<Item>& items) {
         glUseProgram(prog_ext);
         glActiveTexture(GL_TEXTURE0);
         glUniform1i(glGetUniformLocation(prog_ext, "uTex"), 0);
@@ -605,7 +427,32 @@ struct GlRenderer::Impl {
             draw_textured_quad(vbo, it.p, it.f.image.visible(),
                                it.f.image.width, it.f.image.height);
         }
+    }
 
+    void draw_frame() {
+        if (cfg.colortest) { draw_colortest(); return; }
+
+        // Чистимо ЗАВЖДИ. Під кадром, що не покрив увесь екран, інакше
+        // лишиться вміст ПОЗАминулого кадру — буферів два, вони
+        // чергуються. Плюс на тайловому GPU (Mali) очищення на початку
+        // проходу дозволяє не завантажувати попередній вміст у тайлову
+        // пам'ять, тобто виходить швидше, ніж без нього.
+        glClearColor(0.02f, 0.02f, 0.03f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        std::vector<Item> items;
+        int64_t primary_produced = 0;
+        if (!collect_items(items, primary_produced)) return;
+
+        phase.sample(primary_produced,
+                     last_present_ns.load(std::memory_order_relaxed),
+                     period_ns);
+
+        // Наступне підтвердження flip'а стосуватиметься саме цього кадру —
+        // звідси й наскрізна затримка.
+        inflight_produced_ns.store(primary_produced, std::memory_order_relaxed);
+
+        draw_sources(items);
         draw_overlays();
     }
 
@@ -747,6 +594,55 @@ struct GlRenderer::Impl {
         wake_cv.notify_one();
     }
 
+    // РОЗГОРТКА СТАЛАСЯ. Кличе дисплей зі свого потоку подій.
+    //
+    // Означає дві речі одночасно: попередній буфер звільнився, і ось
+    // точна мітка часу самої розгортки. Обидві потрібні, і обидві
+    // стаються в один момент.
+    //
+    // Раніше це була лямбда на сорок рядків усередині init() — там її не
+    // було видно, хоча вона рахує дві метрики тракту.
+    void on_flip(int64_t t) {
+        last_present_ns.store(t, std::memory_order_relaxed);
+
+        const int64_t produced = inflight_produced_ns.load(std::memory_order_relaxed);
+        if (produced > 0) {
+            std::lock_guard<std::mutex> lk(stats_mtx);
+
+            if (t > produced) {
+                const double ms = (t - produced) / 1e6;
+                st.latency_avg_ms = st.latency_avg_ms == 0.0
+                                          ? ms : st.latency_avg_ms * 0.95 + ms * 0.05;
+                if (ms > st.latency_max_ms) st.latency_max_ms = ms;
+            }
+
+            // КРОК ЗЙОМКИ між сусідніми показаними кадрами.
+            //
+            // Лічильники повторів і пропусків міряють НАШУ роботу з
+            // чергою і мовчать, поки ми чесно беремо по кадру на
+            // розгортку. Але рух на екрані задає не це, а те, з яким
+            // інтервалом ці кадри були ЗНЯТІ. Показ рівномірний по
+            // сітці розгортки; якщо крок зйомки при цьому стрибає
+            // (17, 33, 17, 0...), рух смикається, і жоден наявний
+            // лічильник цього не побачить.
+            if (prev_pres_produced > 0 && period_ns > 0) {
+                const double step = (produced - prev_pres_produced) / 1e6;
+                const double p = period_ns / 1e6;
+                if (step <= 0.0)          st.step_repeat++;
+                else if (step < p * 0.5)  st.step_short++;
+                else if (step < p * 1.5)  st.step_ok++;
+                else                      st.step_gap++;
+                if (step > 0.0) {
+                    if (st.step_min_ms == 0.0 || step < st.step_min_ms)
+                        st.step_min_ms = step;
+                    if (step > st.step_max_ms) st.step_max_ms = step;
+                }
+            }
+            prev_pres_produced = produced;
+        }
+        wake();
+    }
+
     // Чекає на розгортку. Прокидається колбек дисплея — саме тоді
     // звільняється буфер. Таймаут страхує від загубленої події.
     void wait_flip(int ms) {
@@ -861,6 +757,9 @@ struct GlRenderer::Impl {
                     std::fprintf(stderr, "[gl] вивід змінився, перебудовую обгортки\n");
                 }
                 drop_gl_targets();
+                // Попередні виміри стосуються іншого періоду розгортки —
+                // тягнути їх у нову конфігурацію не можна.
+                phase.reset();
                 info = dpy->state();
                 my_generation = target.generation;
                 period_ns = info.frame_time_ns();
@@ -973,46 +872,7 @@ bool GlRenderer::init(display::Display& display, Config cfg) {
 
     // Прокидаємось на підтвердженні показу: саме тоді звільняється буфер.
     // Опитування тут було б і марною роботою, і зайвою затримкою.
-    display.set_flip_callback([&d](int64_t t) {
-        d.last_present_ns.store(t, std::memory_order_relaxed);
-
-        const int64_t produced = d.inflight_produced_ns.load(std::memory_order_relaxed);
-        if (produced > 0) {
-            std::lock_guard<std::mutex> lk(d.stats_mtx);
-
-            if (t > produced) {
-                const double ms = (t - produced) / 1e6;
-                d.st.latency_avg_ms = d.st.latency_avg_ms == 0.0
-                                          ? ms : d.st.latency_avg_ms * 0.95 + ms * 0.05;
-                if (ms > d.st.latency_max_ms) d.st.latency_max_ms = ms;
-            }
-
-            // КРОК ЗЙОМКИ між сусідніми показаними кадрами.
-            //
-            // Лічильники повторів і пропусків міряють НАШУ роботу з
-            // чергою і мовчать, поки ми чесно беремо по кадру на
-            // розгортку. Але рух на екрані задає не це, а те, з яким
-            // інтервалом ці кадри були ЗНЯТІ. Показ рівномірний по
-            // сітці розгортки; якщо крок зйомки при цьому стрибає
-            // (17, 33, 17, 0...), рух смикається, і жоден наявний
-            // лічильник цього не побачить.
-            if (d.prev_pres_produced > 0 && d.period_ns > 0) {
-                const double step = (produced - d.prev_pres_produced) / 1e6;
-                const double p = d.period_ns / 1e6;
-                if (step <= 0.0)          d.st.step_repeat++;
-                else if (step < p * 0.5)  d.st.step_short++;
-                else if (step < p * 1.5)  d.st.step_ok++;
-                else                      d.st.step_gap++;
-                if (step > 0.0) {
-                    if (d.st.step_min_ms == 0.0 || step < d.st.step_min_ms)
-                        d.st.step_min_ms = step;
-                    if (step > d.st.step_max_ms) d.st.step_max_ms = step;
-                }
-            }
-            d.prev_pres_produced = produced;
-        }
-        d.wake();
-    });
+    display.set_flip_callback([&d](int64_t t) { d.on_flip(t); });
 
     std::fprintf(stderr, "[gl] init: %dx%d fourcc=0x%08x, буферів %d\n",
                  d.info.width, d.info.height, d.info.fourcc, d.cfg.buffers);
@@ -1081,11 +941,12 @@ RenderStats GlRenderer::stats() const {
     std::lock_guard<std::mutex> lk(impl_->stats_mtx);
     RenderStats s = impl_->st;
     s.poll_offset_ms = impl_->poll_offset_ms;
-    s.phase_ms = impl_->phase_ms;
-    s.phase_drift_ms_per_s = impl_->phase_drift;
-    // 0 = вікно ще не закрилося. Контролер на цьому бере максимальний
-    // запас, а не мінімальний.
-    s.phase_jitter_ms = impl_->phase_valid ? impl_->phase_jitter_ms : 0.0;
+    const PhaseMeter::Snapshot ph = impl_->phase.read();
+    s.phase_ms = ph.phase_ms;
+    s.phase_drift_ms_per_s = ph.drift_ms_per_s;
+    // 0 = вікно ще не закрилося. Контролер на цьому бере
+    // максимальний запас, а не мінімальний.
+    s.phase_jitter_ms = ph.valid ? ph.jitter_ms : 0.0;
     return s;
 }
 
