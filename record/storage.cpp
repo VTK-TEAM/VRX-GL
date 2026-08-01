@@ -1,5 +1,7 @@
 #include "storage.hpp"
 
+#include "../diag/record_log.hpp"
+
 #include <dirent.h>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -262,6 +264,8 @@ void Storage::Impl::mount_removable() {
 
             std::fprintf(stderr, "[носій] монтую %s%s\n", node.c_str(),
                          mf.streak ? " (повторно)" : "");
+            VRX_RLOG("носій", "монтую %s, спроба %d", node.c_str(), mf.streak + 1);
+            const int64_t mount_t0 = now_ns();
             const std::string cmd = "udisksctl mount -b " + node + " 2>&1";
             if (FILE* pipe = ::popen(cmd.c_str(), "r")) {
                 char line[256];
@@ -274,7 +278,11 @@ void Storage::Impl::mount_removable() {
             // Успіх перевіряємо ФАКТОМ появи в /proc/mounts, а не кодом
             // повернення udisksctl: він і сам по собі не завжди чесний, а
             // через popen до нас доїжджає код оболонки.
-            if (device_mounted(block_mounts(), node)) {
+            const bool mounted_now = device_mounted(block_mounts(), node);
+            VRX_RLOG("носій", "монтування %s: %s за %lld мс", node.c_str(),
+                     mounted_now ? "вдалось" : "НЕ вдалось",
+                     (long long)((now_ns() - mount_t0) / 1000000));
+            if (mounted_now) {
                 mount_fails.erase(node);
             } else {
                 if (mf.streak < 4) mf.streak++;
@@ -290,6 +298,13 @@ void Storage::Impl::mount_removable() {
 }
 
 void Storage::Impl::probe_once() {
+    // ТРИВАЛІСТЬ САМОЇ ПЕРЕВІРКИ — головне число цього логу для розбору
+    // зриву. Усе блокуюче сидить саме тут: opendir, stat, access,
+    // statvfs. Поки вони йдуть, знімок стану застиглий, і рекордер
+    // працює за старими даними. Скільки триває це "поки" — по штатних
+    // лічильниках не видно взагалі.
+    const int64_t probe_t0 = now_ns();
+
     if (cfg.auto_mount) mount_removable();
 
     std::string found;
@@ -365,7 +380,14 @@ void Storage::Impl::probe_once() {
         // наживо: станція перемонтувала носій сама, запис тривав у
         // порожнечу за живим дескриптором, лічильники були чисті.
         const bool changed = (found != state.root) || (found_id != mount_id);
-        if (changed) state.generation++;
+        if (changed) {
+            state.generation++;
+            VRX_RLOG("носій", "ЗМІНА: було \"%s\" #%ld -> стало \"%s\" #%ld,"
+                     " номер носія %u",
+                     state.root.empty() ? "—" : state.root.c_str(), mount_id,
+                     found.empty() ? "—" : found.c_str(), found_id,
+                     state.generation);
+        }
         mount_id = found_id;
 
         state.present = !found.empty();
@@ -390,6 +412,14 @@ void Storage::Impl::probe_once() {
         last_log = buf;
         std::fprintf(stderr, "[носій] %s\n", buf);
     }
+
+    // Пишемо КОЖНУ перевірку, а не лише зміни: рівний ряд по секунді сам
+    // по собі є вимірюванням — за ним видно і паузу, коли потік застряг у
+    // ядрі, і момент, коли він відмер.
+    const int64_t took_ms = (now_ns() - probe_t0) / 1000000;
+    VRX_RLOG("носій", "перевірка %lld мс: %s | вільно %.2f ГБ | брудних %ld КБ",
+             (long long)took_ms, found.empty() ? "НЕМАЄ" : found.c_str(),
+             free_b / 1e9, VRX_RLOG_DIRTY());
 }
 
 void Storage::Impl::probe_loop() {
@@ -430,6 +460,8 @@ void Storage::Impl::sync_loop() {
 
         sync_busy.store(true, std::memory_order_release);
         const int64_t t0 = now_ns();
+        const long dirty_before = VRX_RLOG_DIRTY();
+        VRX_RLOG("скидання", "syncfs почав, брудних %ld КБ", dirty_before);
         // syncfs, а не sync: скидаємо ЛИШЕ файлову систему носія.
         // Загальний sync() зачепив би й системний диск, а це на
         // навантаженій платі десятки мілісекунд у найкращому разі.
@@ -444,6 +476,8 @@ void Storage::Impl::sync_loop() {
             state.last_sync_ms = took;
             if (took > state.max_sync_ms) state.max_sync_ms = took;
         }
+        VRX_RLOG("скидання", "syncfs %lld мс, брудних було %ld -> стало %ld КБ",
+                 (long long)took, dirty_before, VRX_RLOG_DIRTY());
         sync_busy.store(false, std::memory_order_release);
     }
 }

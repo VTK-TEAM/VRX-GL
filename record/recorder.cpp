@@ -1,5 +1,7 @@
 #include "recorder.hpp"
 
+#include "../diag/record_log.hpp"
+
 #include <gst/gst.h>
 
 #include <netinet/in.h>
@@ -64,6 +66,12 @@ struct Recorder::Impl {
     static constexpr int64_t kHealthyMs = 5000;
 
     int64_t last_probe_open_ms = 0;
+
+    // Тільки для детального логу: попередній стан, щоб писати ПЕРЕХОДИ, а
+    // не однакові рядки чотири рази на секунду.
+    bool prev_alive = false;
+    bool prev_drive_ok = false;
+    int64_t last_beat_ms = 0;
 
     // ЛЕГКА ПРОБА СИГНАЛУ: власний сокет на тому ж порту, без GStreamer.
     //
@@ -146,10 +154,18 @@ struct Recorder::Impl {
                 gst_message_parse_error(m, &e, &dbg);
                 std::fprintf(stderr, "[запис %s] помилка на шині: %s\n",
                              cfg.name.c_str(), e && e->message ? e->message : "?");
+                // Повне повідомлення з елементом і налагоджувальним
+                // хвостом — саме воно каже, ХТО з ланцюжка впав, а в
+                // штатний лог такий обсяг не поставиш.
+                VRX_RLOG(cfg.name.c_str(), "ШИНА: помилка від %s: %s | %s",
+                         GST_OBJECT_NAME(GST_MESSAGE_SRC(m)),
+                         e && e->message ? e->message : "?", dbg ? dbg : "—");
                 if (e) g_error_free(e);
                 if (dbg) g_free(dbg);
             } else {
                 std::fprintf(stderr, "[запис %s] несподіваний EOS\n", cfg.name.c_str());
+                VRX_RLOG(cfg.name.c_str(), "ШИНА: несподіваний EOS від %s",
+                         GST_OBJECT_NAME(GST_MESSAGE_SRC(m)));
             }
             failed = true;
             gst_message_unref(m);
@@ -220,8 +236,16 @@ struct Recorder::Impl {
     }
 
     bool open_file() {
+        const int64_t open_t0 = now_ms();
+
+        // make_path МОЖЕ ЗАБЛОКУВАТИСЬ: усередині mkdir на носії, тобто
+        // те саме блокуюче I/O. Скільки саме — видно лише звідси.
         const std::string path = storage.make_path(cfg.name);
-        if (path.empty()) return false;
+        if (path.empty()) {
+            VRX_RLOG(cfg.name.c_str(), "НЕ ВІДКРИВ: шлях не склався (%lld мс)",
+                     (long long)(now_ms() - open_t0));
+            return false;
+        }
 
         char desc[1024];
         if (cfg.codec == Recorder::Codec::MJPEG) {
@@ -288,7 +312,7 @@ struct Recorder::Impl {
 
         if (gst_element_set_state(pipeline, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
             std::fprintf(stderr, "[запис %s] не запустився\n", cfg.name.c_str());
-            close_file(false);
+            close_file(false, "пайплайн не запустився");
             return false;
         }
 
@@ -300,6 +324,8 @@ struct Recorder::Impl {
             st.files++;
         }
         std::fprintf(stderr, "[запис %s] почав: %s\n", cfg.name.c_str(), path.c_str());
+        VRX_RLOG(cfg.name.c_str(), "ВІДКРИВ %s (файл №%u, підняття %lld мс)",
+                 path.c_str(), st.files, (long long)(now_ms() - open_t0));
         return true;
     }
 
@@ -320,8 +346,15 @@ struct Recorder::Impl {
 
     // graceful — дочекатися дозапису. Без нього муксер не встигне
     // випхати чергу, і хвіст запису просто не потрапить у файл.
-    void close_file(bool graceful) {
+    void close_file(bool graceful, const char* why) {
         if (!pipeline) return;
+
+        const int64_t close_t0 = now_ms();
+        VRX_RLOG(cfg.name.c_str(), "ЗАКРИВАЮ %s (%s), дозапис %s, у файлі %.1f МБ,"
+                 " брудних %ld КБ, прожив %lld мс",
+                 st.file.c_str(), why, graceful ? "так" : "НІ",
+                 file_bytes.load(std::memory_order_relaxed) / 1e6, VRX_RLOG_DIRTY(),
+                 (long long)(built_at_ms ? now_ms() - built_at_ms : 0));
 
         // Знімаємо "пишу" ДО розбирання, а не після.
         //
@@ -356,6 +389,8 @@ struct Recorder::Impl {
                              cfg.name.c_str(), cfg.shutdown_flush_ms);
             }
             gst_object_unref(bus);
+            VRX_RLOG(cfg.name.c_str(), "дозапис зайняв %lld мс",
+                     (long long)(now_ms() - close_t0));
         }
 
         if (frame_pad) {
@@ -406,6 +441,10 @@ struct Recorder::Impl {
         }
         std::fprintf(stderr, "[запис %s] закрив, %.1f МБ\n",
                      cfg.name.c_str(), wrote / 1e6);
+        VRX_RLOG(cfg.name.c_str(), "ЗАКРИТО за %lld мс, %.1f МБ, брудних %ld КБ,"
+                 " сталих збоїв поспіль %d",
+                 (long long)(now_ms() - close_t0), wrote / 1e6, VRX_RLOG_DIRTY(),
+                 fail_streak);
 
         // Просимо скинути кеші одразу: файл щойно закрито, і саме зараз
         // втрата була б найприкрішою.
@@ -451,6 +490,37 @@ struct Recorder::Impl {
             const bool stale = drive.age_ms > cfg.drive_stale_ms;
             const bool drive_ok = drive.usable() && !stale;
 
+            // ПЕРЕХОДИ, а не стан: рядок раз на 250 мс перетворив би лог
+            // на кашу, у якій сама подія загубиться.
+            if (alive != prev_alive) {
+                VRX_RLOG(cfg.name.c_str(), "СИГНАЛ %s (останній пакет %lld мс тому)",
+                         alive ? "з'явився" : "ЗНИК",
+                         (long long)(last_packet_ms ? now - last_packet_ms : -1));
+                prev_alive = alive;
+            }
+            if (drive_ok != prev_drive_ok) {
+                VRX_RLOG(cfg.name.c_str(), "НОСІЙ %s: %s, номер %u, знімку %lld мс",
+                         drive_ok ? "придатний" : "НЕпридатний",
+                         drive.root.empty() ? "—" : drive.root.c_str(),
+                         drive.generation, (long long)drive.age_ms);
+                prev_drive_ok = drive_ok;
+            }
+
+            // Биття раз на секунду. Потрібне не для подій, а для ТИШІ:
+            // якщо биття зникло на десять секунд, значить цикл рекордера
+            // сам десь застряг, і без цього ряду цього не побачити ніяк.
+            if (now - last_beat_ms >= 1000) {
+                last_beat_ms = now;
+                VRX_RLOG(cfg.name.c_str(),
+                         "· %.1f МБ | сигнал %d | носій %d знімку %lld мс |"
+                         " кадр %lld мс тому | збоїв %d | брудних %ld КБ",
+                         file_bytes.load(std::memory_order_relaxed) / 1e6,
+                         (int)alive, (int)drive_ok, (long long)drive.age_ms,
+                         (long long)(pipeline
+                             ? now - last_buffer_ms.load(std::memory_order_relaxed) : -1),
+                         fail_streak, VRX_RLOG_DIRTY());
+            }
+
             if (pipeline) {
                 // Носій зник, підмінили іншим або знімок протух — далі
                 // писати нікуди. Graceful не пробуємо: файлової системи
@@ -471,7 +541,7 @@ struct Recorder::Impl {
                                     : !drive.usable() ? "носій зник"
                                     : "носій перемонтовано — файлова система вже інша";
                     std::fprintf(stderr, "[запис %s] %s\n", cfg.name.c_str(), why);
-                    close_file(false);
+                    close_file(false, why);
                     if (stale) {
                         fail_streak++;
                         back_off();
@@ -484,7 +554,7 @@ struct Recorder::Impl {
                 // на зламаному пайплайні дозапис через EOS не пройде, і
                 // пробувати його означало б чекати весь таймаут дарма.
                 else if (bus_failed()) {
-                    close_file(false);
+                    close_file(false, "помилка на шині");
                     fail_streak++;
                     back_off();
                     std::lock_guard<std::mutex> lk(mtx);
@@ -495,7 +565,7 @@ struct Recorder::Impl {
                 // склеювати їх в один — гірше, ніж розділити.
                 else if (!alive) {
                     std::fprintf(stderr, "[запис %s] сигнал зник\n", cfg.name.c_str());
-                    close_file(true);
+                    close_file(true, "сигнал зник");
                     std::lock_guard<std::mutex> lk(mtx);
                     st.restarts++;
                 }
@@ -505,7 +575,7 @@ struct Recorder::Impl {
                 else if (stalled(now)) {
                     std::fprintf(stderr, "[запис %s] сигнал є, а кадрів немає %d с —"
                                  " перезбираю\n", cfg.name.c_str(), cfg.stall_ms / 1000);
-                    close_file(false);
+                    close_file(false, "сигнал є, а кадрів немає");
                     fail_streak++;
                     back_off();
                     std::lock_guard<std::mutex> lk(mtx);
@@ -513,7 +583,7 @@ struct Recorder::Impl {
                 }
                 // Межа розміру.
                 else if (file_bytes.load(std::memory_order_relaxed) >= cfg.rotate_bytes) {
-                    close_file(true);
+                    close_file(true, "ротація за розміром");
                     std::lock_guard<std::mutex> lk(mtx);
                     st.rotations++;
                 }
@@ -543,7 +613,7 @@ struct Recorder::Impl {
             std::this_thread::sleep_for(std::chrono::milliseconds(250));
         }
 
-        if (pipeline) close_file(true);
+        if (pipeline) close_file(true, "зупинка станції");
         if (probe_fd >= 0) {
             ::close(probe_fd);
             probe_fd = -1;
