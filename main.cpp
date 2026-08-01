@@ -20,6 +20,7 @@
 // main НІЧИМ не керує покадрово: кожна підсистема має власний потік і
 // власний темп. Тут лише ініціалізація, запуск і зупинка.
 
+#include "control/layout_control.hpp"
 #include "control/phase_controller.hpp"
 #include "record/recorder.hpp"
 #include "record/storage.hpp"
@@ -28,6 +29,7 @@
 #include "display/display.hpp"
 #include "osd/osd.hpp"
 #include "osd/local_channels.hpp"
+#include "osd/telemetry/vt_telemetry_index.h"
 #include "osd/subtitle_writer.hpp"
 #include "render/gl_renderer.hpp"
 #include "source/h265_source.hpp"
@@ -200,19 +202,25 @@ int main(int argc, char** argv) {
     pip_cfg.udp_port = 5001;
     auto pip_src = std::make_shared<vrx::source::MjpegSource>("pip", pip_cfg);
 
-    {
-        vrx::layout::Placement p;          // на весь екран
-        p.z = 0;
-        main_src->set_placement(p);
-    }
-    {
-        vrx::layout::Placement p;          // у правий верхній кут
-        p.x = 0.02f; p.y = 0.02f; p.w = 0.30f; p.h = 0.30f;
-        p.anchor = vrx::layout::Anchor::TopRight;
-        p.x = 1.0f - 0.30f - 0.02f;
-        p.z = 1;                            // поверх основного
-        pip_src->set_placement(p);
-    }
+    // ТИПОВА РОЗКЛАДКА. Діє, поки керування з телеметрії мовчить, тобто
+    // одразу після ввімкнення й на станції, якій ніхто нічого не шле.
+    //
+    // Координата — це точка, до якої кріпиться ЯКІР САМОЇ КАРТИНКИ, а не
+    // кут прямокутника: центр екрана для основного каналу, правий верхній
+    // кут із відступом — для PiP.
+    vrx::layout::Placement main_default;
+    main_default.x = 0.5f; main_default.y = 0.5f;      // центр екрана
+    main_default.w = 1.0f; main_default.h = 1.0f;      // уся площа
+    main_default.anchor = vrx::layout::Anchor::Center;
+    main_default.z = 0;
+    main_src->set_placement(main_default);
+
+    vrx::layout::Placement pip_default;
+    pip_default.x = 0.98f; pip_default.y = 0.02f;      // правий верх, відступ 2%
+    pip_default.w = 0.30f; pip_default.h = 0.30f;
+    pip_default.anchor = vrx::layout::Anchor::TopRight;
+    pip_default.z = 1;                                  // поверх основного
+    pip_src->set_placement(pip_default);
 
     main_src->start();
     pip_src->start();
@@ -270,6 +278,7 @@ int main(int argc, char** argv) {
     // тягне новий .ass, зупинка запису їх закриває.
     std::unique_ptr<vrx::osd::SubtitleWriter> subs;
     std::unique_ptr<vrx::osd::LocalChannels> local_ch;
+    std::unique_ptr<vrx::control::LayoutControl> layout_ctl;
     if (osd) {
         vrx::osd::SubtitleWriter::Config sub_cfg;
         // PlayRes має відповідати ЗАПИСАНОМУ відео, а не екрана: плеєр
@@ -287,6 +296,32 @@ int main(int argc, char** argv) {
             vrx::osd::LocalChannels::Config{});
         local_ch->start(osd->storage(), display, renderer, phase,
                         recorder, storage, main_src, pip_src);
+
+        // Розкладка з телеметрії. Окремого каналу керування свідомо
+        // немає: телеметрія вже прокладена, вже з CRC і вже перевірена
+        // роботою, а другий канал був би другим місцем, яке ламається.
+        // Типова розкладка вище лишається чинною, поки керування мовчить.
+        layout_ctl = std::make_unique<vrx::control::LayoutControl>(
+            vrx::control::LayoutControl::Config{});
+        {
+            vrx::control::LayoutControl::Bound b;
+            b.source = main_src; b.name = "основний";
+            b.ch_w = VT_TLM_LAYOUT_MAIN_W; b.ch_h = VT_TLM_LAYOUT_MAIN_H;
+            b.ch_x = VT_TLM_LAYOUT_MAIN_X; b.ch_y = VT_TLM_LAYOUT_MAIN_Y;
+            b.ch_anchor = VT_TLM_LAYOUT_MAIN_ANCHOR;
+            b.fallback = main_default;
+            layout_ctl->bind(std::move(b));
+        }
+        {
+            vrx::control::LayoutControl::Bound b;
+            b.source = pip_src; b.name = "PiP";
+            b.ch_w = VT_TLM_LAYOUT_PIP_W; b.ch_h = VT_TLM_LAYOUT_PIP_H;
+            b.ch_x = VT_TLM_LAYOUT_PIP_X; b.ch_y = VT_TLM_LAYOUT_PIP_Y;
+            b.ch_anchor = VT_TLM_LAYOUT_PIP_ANCHOR;
+            b.fallback = pip_default;
+            layout_ctl->bind(std::move(b));
+        }
+        layout_ctl->start(osd->storage());
 
         subs = std::make_unique<vrx::osd::SubtitleWriter>(sub_cfg);
         if (subs->init()) {
