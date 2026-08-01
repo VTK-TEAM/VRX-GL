@@ -439,7 +439,11 @@ struct GlRenderer::Impl {
         // однією камерою це збігалося з "по першому", тож і працювало.
         // З двома максимум стрибав би між ними: у кожної своя фаза, і
         // петля вела б то одну камеру, то другу.
-        int64_t newest_produced = 0;
+        // Мітка часу кадру ПЕРШОГО джерела — з неї міряється фаза.
+        // Саме першого, а не найсвіжішого серед усіх: у другого каналу
+        // власний кварц, і мішати їх означало б вести камеру за чужою
+        // фазою.
+        int64_t primary_produced = 0;
 
         bool primary = true;
         for (auto& src : snap) {
@@ -457,7 +461,7 @@ struct GlRenderer::Impl {
             const float a = f.aspect();
             if (a <= 0.0f) continue;
 
-            if (is_primary) newest_produced = f.produced_ns;
+            if (is_primary) primary_produced = f.produced_ns;
             items.push_back({layout::fit_source(f.where, a, screen_aspect), f});
         }
         if (items.empty()) return;
@@ -478,11 +482,11 @@ struct GlRenderer::Impl {
         // двічі, причому вдруге вже з іншого vblank'а: рівно та частина
         // вибірки, яка ЗМІЩЕНА в бік цілі, отримала б подвійну вагу.
         // Для контролера це систематична похибка, а не шум.
-        if (newest_produced > 0 && newest_produced != phase_last_produced && period_ns > 0) {
-            phase_last_produced = newest_produced;
+        if (primary_produced > 0 && primary_produced != phase_last_produced && period_ns > 0) {
+            phase_last_produced = primary_produced;
             const int64_t last_v = last_present_ns.load(std::memory_order_relaxed);
             if (last_v > 0) {
-                int64_t rel = (newest_produced - last_v) % period_ns;
+                int64_t rel = (primary_produced - last_v) % period_ns;
                 if (rel < 0) rel += period_ns;
                 const double period_ms = period_ns / 1e6;
                 const double th = 2.0 * M_PI * (rel / (double)period_ns);
@@ -490,18 +494,18 @@ struct GlRenderer::Impl {
                 if (phase_debug && dbg_left > 0) {
                     dbg_left--;
                     std::fprintf(stderr, "RAW %.6f %.6f %.3f\n",
-                                 newest_produced / 1e9, last_v / 1e9, rel / 1e6);
+                                 primary_produced / 1e9, last_v / 1e9, rel / 1e6);
                 }
 
                 acc_sin += std::sin(th);
                 acc_cos += std::cos(th);
                 acc_n++;
-                if (acc_start_ns == 0) acc_start_ns = newest_produced;
+                if (acc_start_ns == 0) acc_start_ns = primary_produced;
 
                 // Вікно закрилося — публікуємо середнє й розкид.
                 // Мінімум кадрів окремо від часу: на 30 к/с їх удвічі
                 // менше, а на кількох штуках кругове σ ще безглузде.
-                if (newest_produced - acc_start_ns >= kPhaseWindowNs && acc_n >= 8) {
+                if (primary_produced - acc_start_ns >= kPhaseWindowNs && acc_n >= 8) {
                     const double n = (double)acc_n;
                     double mean = std::atan2(acc_sin / n, acc_cos / n);
                     if (mean < 0.0) mean += 2.0 * M_PI;
@@ -530,10 +534,10 @@ struct GlRenderer::Impl {
                         un_acc += dd;
                     }
                     phase_prev = mean_ms;
-                    phase_prev_ns = newest_produced;
+                    phase_prev_ns = primary_produced;
 
                     un_phase[un_head] = un_acc;
-                    un_time[un_head] = newest_produced / 1e9;
+                    un_time[un_head] = primary_produced / 1e9;
                     un_head = (un_head + 1) % kDriftPoints;
                     if (un_n < kDriftPoints) un_n++;
 
@@ -553,7 +557,7 @@ struct GlRenderer::Impl {
 
                     if (phase_debug) {
                         std::fprintf(stderr, "PH %.3f %.3f %u %.3f %.3f\n",
-                                     newest_produced / 1e9, mean_ms, acc_n, sig_ms, drift);
+                                     primary_produced / 1e9, mean_ms, acc_n, sig_ms, drift);
                     }
 
                     {
@@ -583,7 +587,7 @@ struct GlRenderer::Impl {
             }
         }
 
-        inflight_produced_ns.store(newest_produced, std::memory_order_relaxed);
+        inflight_produced_ns.store(primary_produced, std::memory_order_relaxed);
 
         glUseProgram(prog_ext);
         glActiveTexture(GL_TEXTURE0);
