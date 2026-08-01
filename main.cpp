@@ -24,7 +24,7 @@
 #include "record/recorder.hpp"
 #include "record/storage.hpp"
 #include "diag/link_monitor.hpp"
-#include "display/kms_display_manager.hpp"
+#include "display/display.hpp"
 #include "osd/osd.hpp"
 #include "osd/local_channels.hpp"
 #include "osd/subtitle_writer.hpp"
@@ -115,10 +115,10 @@ int main(int argc, char** argv) {
     // VRX_REFRESH перекриває ціль на час діагностики: 0 = лишити рідну
     // частоту панелі. Що нижча ціль, то більший зсув доводиться тримати
     // камері, а разом із ним і ризик, що вона почне дублювати кадри.
-    vrx::display::KmsDisplayManager::Config disp_cfg;
+    vrx::display::Display::Config disp_cfg;
     disp_cfg.target_refresh_hz = 59.0;
     if (const char* e = std::getenv("VRX_REFRESH")) disp_cfg.target_refresh_hz = std::atof(e);
-    vrx::display::KmsDisplayManager display(disp_cfg);
+    vrx::display::Display display(disp_cfg);
     if (!display.open()) {
         std::fprintf(stderr, "[main] дисплей не відкрився\n");
         return 1;
@@ -127,12 +127,12 @@ int main(int argc, char** argv) {
     // Монітора може ще не бути — це не помилка. Дисплей слухає uevent-и
     // й підніме вивід сам, щойно його під'єднають; рендерер побачить це
     // за номером конфігурації й перестворить буфери під нову геометрію.
-    const vrx::display::LayerInfo& i = display.layer().info();
+    const vrx::display::OutputState i = display.state();
     std::printf("\n=== шар виводу ===\n");
     if (i.generation == 0) {
         std::printf("  монітора немає — чекаю підключення\n\n");
     } else {
-        std::printf("  %s\n", display.description().c_str());
+        std::printf("  %s\n", i.name.c_str());
         std::printf("  розмір     %dx%d\n", i.width, i.height);
         std::printf("  частота    %.3f Гц (бюджет кадру %.3f мс)\n",
                     i.refresh_hz(), i.frame_time_ns() / 1e6);
@@ -330,6 +330,12 @@ int main(int argc, char** argv) {
                     in_mn, in_avg, in_mx,
                     ms.interval_min_ms, ms.interval_avg_ms, ms.interval_max_ms,
                     dc_mn, dc_avg, dc_mx);
+
+        std::printf("          ВИВІД: конфіг #%u %dx%d@%.3f | буферів живих %d,"
+                    " відкладених %d | показано %llu, витіснено %llu\n",
+                    ds.generation, display.state().width, display.state().height,
+                    display.state().refresh_hz(), ds.live_bufs, ds.retired_bufs,
+                    (unsigned long long)ds.presented, (unsigned long long)ds.dropped);
 
         auto ps = phase.stats();
         if (ps.engaged) {

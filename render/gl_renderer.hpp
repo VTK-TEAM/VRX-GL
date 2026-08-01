@@ -16,7 +16,7 @@
 // Рендерер підписується на підтвердження flip'а і прокидається саме на
 // нього — без опитування й без сну "на око".
 
-#include "../display/display_manager.hpp"
+#include "../display/display.hpp"
 #include "../source/frame_source.hpp"
 #include "overlay.hpp"
 
@@ -88,7 +88,7 @@ public:
     GlRenderer& operator=(const GlRenderer&) = delete;
 
     // Готує GBM і EGL, перевіряє наявність потрібних розширень. Розмір і
-    // формат буферів беруться з display.layer().info() — тобто дисплей
+    // формат буферів беруться з display.info() — тобто дисплей
     // має бути вже відкритий.
     //
     // GL-об'єкти тут НЕ створюються: контекст робиться поточним у
@@ -97,8 +97,8 @@ public:
     // Дві перевантаження замість типового аргументу: усередині
     // оголошення класу Config ще неповний, і GCC на "= Config{}"
     // спотикається (те саме в KmsDisplayManager).
-    bool init(display::DisplayManager& display);
-    bool init(display::DisplayManager& display, Config cfg);
+    bool init(display::Display& display);
+    bool init(display::Display& display, Config cfg);
 
     // Запускає робочий потік. З цього моменту картинка йде на екран.
     bool start();

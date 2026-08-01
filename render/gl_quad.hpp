@@ -5,7 +5,7 @@
 // Включати ЛИШЕ з gl_renderer.cpp: тягне за собою EGL і GLES, і нема
 // причини нести їх у решту проєкту.
 
-#include "../display/display_manager.hpp"
+#include "../display/display.hpp"
 #include "../layout/layout.hpp"
 
 #include <EGL/egl.h>

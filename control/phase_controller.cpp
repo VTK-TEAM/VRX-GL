@@ -41,7 +41,7 @@ double clamp(double v, double lo, double hi) {
 } // namespace
 
 struct PhaseController::Impl {
-    display::DisplayManager& display;
+    display::Display& display;
     render::GlRenderer& renderer;
     std::shared_ptr<source::FrameSource> source;
     Config cfg;
@@ -69,7 +69,7 @@ struct PhaseController::Impl {
     uint64_t last_taken = 0;
     int lock_run = 0;
 
-    Impl(display::DisplayManager& d, render::GlRenderer& r,
+    Impl(display::Display& d, render::GlRenderer& r,
          std::shared_ptr<source::FrameSource> s, Config c)
         : display(d), renderer(r), source(std::move(s)), cfg(std::move(c)),
           camera(cfg.camera) {}
@@ -233,7 +233,7 @@ struct PhaseController::Impl {
     }
 };
 
-PhaseController::PhaseController(display::DisplayManager& display,
+PhaseController::PhaseController(display::Display& display,
                                  render::GlRenderer& renderer,
                                  std::shared_ptr<source::FrameSource> source,
                                  Config cfg)

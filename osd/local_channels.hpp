@@ -33,7 +33,7 @@
 
 #include "telemetry/vt_telemetry_storage.h"
 
-#include "../display/display_manager.hpp"
+#include "../display/display.hpp"
 #include "../record/recorder.hpp"
 #include "../record/storage.hpp"
 #include "../source/frame_source.hpp"
@@ -64,7 +64,7 @@ public:
     // Будь-яке джерело може бути nullptr: немає другого каналу — просто
     // не буде каналу 203, а не падіння.
     bool start(VtTelemetryStorage& storage,
-               const display::DisplayManager& display,
+               const display::Display& display,
                const record::Recorder& rec,
                const record::Storage& drive,
                std::shared_ptr<source::FrameSource> h265,

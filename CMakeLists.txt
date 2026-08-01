@@ -32,7 +32,7 @@ pkg_check_modules(GST REQUIRED
 
 add_executable(vrx_gl
     main.cpp
-    display/kms_display_manager.cpp
+    display/display.cpp
     source/video_source.cpp
     render/gl_renderer.cpp
     control/camera_api.cpp

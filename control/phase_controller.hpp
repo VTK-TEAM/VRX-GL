@@ -31,7 +31,7 @@
 
 #include "camera_api.hpp"
 
-#include "../display/display_manager.hpp"
+#include "../display/display.hpp"
 #include "../render/gl_renderer.hpp"
 #include "../source/frame_source.hpp"
 
@@ -208,7 +208,7 @@ public:
         double lock_ms = 0.5;
     };
 
-    PhaseController(display::DisplayManager& display,
+    PhaseController(display::Display& display,
                     render::GlRenderer& renderer,
                     std::shared_ptr<source::FrameSource> source,
                     Config cfg);

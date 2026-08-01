@@ -28,7 +28,7 @@
 // декодера має бути щонайменше 3 — у mppvideodec зазвичай 8+, але це
 // перше, що варто перевірити на новій платі, якщо картинка почне гикати.
 
-#include "../display/display_manager.hpp"
+#include "../display/display.hpp"
 #include "../layout/layout.hpp"
 
 #include <cstdint>

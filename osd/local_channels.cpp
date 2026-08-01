@@ -15,7 +15,7 @@ struct LocalChannels::Impl {
     Config cfg;
 
     VtTelemetryStorage* storage = nullptr;
-    const display::DisplayManager* display = nullptr;
+    const display::Display* display = nullptr;
     const record::Recorder* rec = nullptr;
     const record::Storage* drive = nullptr;
     std::shared_ptr<source::FrameSource> h265;
@@ -157,7 +157,7 @@ LocalChannels::LocalChannels(Config cfg) : impl_(new Impl(std::move(cfg))) {}
 LocalChannels::~LocalChannels() { stop(); }
 
 bool LocalChannels::start(VtTelemetryStorage& storage,
-                          const display::DisplayManager& display,
+                          const display::Display& display,
                           const record::Recorder& rec,
                           const record::Storage& drive,
                           std::shared_ptr<source::FrameSource> h265,

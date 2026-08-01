@@ -1,4 +1,6 @@
-#include "kms_display_manager.hpp"
+#include "display.hpp"
+
+#include <gbm.h>
 
 #include <xf86drm.h>
 #include <xf86drmMode.h>
@@ -14,6 +16,8 @@
 #include <cstdio>
 #include <cmath>
 #include <cstring>
+#include <string>
+#include <cstdlib>
 #include <ctime>
 
 #include <atomic>
@@ -189,13 +193,12 @@ void force_edid_refresh(const std::string& card_path) {
 
 // ---------------------------------------------------------------------
 
-struct KmsDisplayManager::Impl : public Layer {
+struct Display::Impl {
     explicit Impl(Config c) : cfg(std::move(c)) {}
 
     Config cfg;
     int fd = -1;
     bool master_taken = false;
-    std::string desc = "<closed>";
 
     uint32_t connector_id = 0;
     uint32_t crtc_id = 0;
@@ -205,30 +208,59 @@ struct KmsDisplayManager::Impl : public Layer {
 
     PropTable plane_props, crtc_props, conn_props;
 
-    LayerInfo info_{};
+    OutputState state_{};
 
-    // Кеш DRM-фреймбуферів. Рендерер крутить ті самі 2-3 буфери по колу,
-    // тож drmModeAddFB2 робиться лише на перших кадрах. Ключ — дескриптор
-    // dmabuf; це коректно, доки буфери живі, а вони живі весь час роботи
-    // (ними володіє рендерер, ми лише показуємо).
-    struct FbEntry {
-        uint32_t fb_id = 0;
-        int width = 0, height = 0;
-        uint32_t fourcc = 0;
-        uint64_t modifier = 0;
-    };
-    std::map<int, FbEntry> fb_cache;
 
-    struct Slot {
-        Frame frame;
+    // КІЛЬЦЕ ЦІЛЬОВИХ БУФЕРІВ.
+    //
+    // Володіє ними дисплей, і це не питання зручності: вимоги до
+    // сканування (пристрій, формати, вирівнювання) знає він, і він же
+    // єдиний знає, який буфер зараз читає сканер. Раніше буфери виділяв
+    // рендерер — і для цього відкривав ту саму карту ДРУГИМ дескриптором,
+    // робив на ній свій GBM, експортував dmabuf, а дисплей імпортував їх
+    // назад. Уся ця подорож існувала лише тому, що володіння було
+    // розділене навпіл.
+    //
+    // П'ять станів, і кожен означає конкретну заборону:
+    //   Free      нічий, можна віддати рендереру
+    //   Drawing   рендерер малює прямо зараз
+    //   Pending   намальований, чекає своєї черги на коміт
+    //   InFlight  закомічений, чекає підтвердження розгортки
+    //   Current   на екрані, сканер його читає — чіпати не можна
+    enum class Slot { Free, Drawing, Pending, InFlight, Current };
+
+    struct RingBuf {
+        struct gbm_bo* bo = nullptr;
+        int fd = -1;
+        uint32_t stride = 0;
         uint32_t fb_id = 0;
-        bool valid = false;
+        Slot slot = Slot::Free;
     };
-    Slot pending, in_flight, current;
+
+    struct gbm_device* gbm = nullptr;
+    std::vector<RingBuf> ring;
+    int idx_pending = -1, idx_in_flight = -1, idx_current = -1;
+
+    // БУФЕРИ, ЯКІ РОЗІБРАЛИ З-ПІД РЕНДЕРЕРА.
+    //
+    // Монітор можуть висмикнути в будь-яку мить, зокрема посеред проходу
+    // GPU. Знищити буфер у стані Drawing означало б закрити дескриптор і
+    // віддати пам'ять, поки в неї пишуть. Сьогодні це не падає лише тому,
+    // що імпорт dmabuf у EGL тримає власне посилання — тобто інваріант
+    // тримається на поведінці драйвера, а не на нашому коді.
+    //
+    // Тому такі буфери переїжджають сюди й чекають, поки рендерер поверне
+    // їх через present(). Він поверне обов'язково: цикл віддає ціль на
+    // кожній ітерації, а розбіжність generation він побачить уже після.
+    std::vector<RingBuf> retired;
+
+    // Скільки буферів виділено й ще не звільнено. Рівно глибина кільця в
+    // сталому режимі; якщо після замін монітора росте — тече.
+    int live_bufs = 0;
 
     mutable std::mutex mtx;
     PresentStats st{};
-    PresentCallback on_present;
+    
 
     // Анкер вікна, на якому міряється точна частота розгортки.
     int64_t hz_anchor_ns = 0;
@@ -245,6 +277,8 @@ struct KmsDisplayManager::Impl : public Layer {
     std::atomic<bool> has_output{false};
     std::atomic<bool> refreshing{false};
 
+    FlipCallback on_flip_cb;
+
     bool configure_output();
 
     // Знімає поточний вивід, лишаючи карту відкритою. Саме цим
@@ -259,17 +293,15 @@ struct KmsDisplayManager::Impl : public Layer {
             drmModeAtomicFree(req);
         }
         if (fd >= 0) {
-            for (auto& kv : fb_cache) drmModeRmFB(fd, kv.second.fb_id);
             if (mode_blob) drmModeDestroyPropertyBlob(fd, mode_blob);
         }
-        fb_cache.clear();
         mode_blob = 0;
 
         {
             std::lock_guard<std::mutex> lock(mtx);
-            pending = {};
-            in_flight = {};
-            current = {};
+            // Буфери належать конкретному траєкту виводу: після заміни
+            // монітора вони недійсні, навіть якщо роздільність збіглася.
+            destroy_ring();
             // Вимір частоти прив'язаний до конкретного тракту розгортки:
             // після заміни монітора продовжувати старе вікно не можна.
             hz_seq_valid = false;
@@ -281,97 +313,237 @@ struct KmsDisplayManager::Impl : public Layer {
         plane_props = crtc_props = conn_props = PropTable{};
         mode = drmModeModeInfo{};
         modeset_done = false;
-        info_ = LayerInfo{};
-        desc = "<немає виводу>";
+        state_ = OutputState{};
+        state_.name = "немає виводу";
         has_output.store(false, std::memory_order_release);
     }
 
-    // --- Layer ---
-    const LayerInfo& info() const override { return info_; }
+    const OutputState& info() const { return state_; }
 
-    bool submit(const Frame& f) override {
-        if (!has_output.load(std::memory_order_acquire)) return false;
-        if (!f.valid()) {
-            std::fprintf(stderr, "[kms] submit: некоректний кадр\n");
-            return false;
-        }
-        if (f.width != info_.width || f.height != info_.height) {
-            std::fprintf(stderr,
-                "[kms] submit: розмір %dx%d не збігається з шаром %dx%d\n",
-                f.width, f.height, info_.width, info_.height);
-            return false;
-        }
-        uint32_t fb = fb_for(f);
-        if (!fb) return false;
+    // Опис буфера кільця у вигляді звичайного кадру — тим самим типом,
+    // яким описуються кадри джерел, щоб рендерер не мав окремої гілки.
+    Frame frame_of(int i) const {
+        Frame f;
+        f.fourcc = state_.fourcc;
+        f.modifier = state_.modifier;
+        f.width = state_.width;
+        f.height = state_.height;
+        f.n_planes = 1;
+        f.fd[0] = ring[i].fd;
+        f.stride[0] = ring[i].stride;
+        f.offset[0] = 0;
+        return f;
+    }
 
+    bool acquire(Target& out) {
         std::lock_guard<std::mutex> lock(mtx);
-        // Попередній непоказаний кадр витісняється — рахуємо як дроп,
-        // щоб деградацію було видно, а не доводилось про неї здогадуватись.
-        if (pending.valid) st.dropped++;
-        pending.frame = f;
-        pending.fb_id = fb;
-        pending.valid = true;
+        if (!has_output.load(std::memory_order_acquire)) return false;
+
+        for (size_t i = 0; i < ring.size(); ++i) {
+            if (ring[i].slot != Slot::Free) continue;
+            ring[i].slot = Slot::Drawing;
+            out.index = (int)i;
+            out.generation = state_.generation;
+            out.frame = frame_of((int)i);
+            return true;
+        }
+        return false;      // усі зайняті — чекати на розгортку
+    }
+
+    // Намальоване стає pending; віддати залізу спробує try_commit().
+    bool queue(const Target& t) {
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+
+            // ЗВІЛЬНЕННЯ ПЕРШЕ, перевірка наявності виводу після. Порядок
+            // не косметичний: коли монітор висмикнули, has_output вже
+            // false, і рання відмова лишила б буфер із розібраного кільця
+            // висіти до самого close(). А розбіжність generation цей
+            // випадок ловить сама — teardown обнуляє стан.
+            if (t.generation != state_.generation) {
+                // Буфер від попередньої конфігурації виводу. Показувати
+                // його вже нікуди — але саме зараз він нарешті вільний
+                // від GPU, тож це єдиний момент, коли його можна чесно
+                // звільнити.
+                release_retired(t.frame.fd[0]);
+                return false;
+            }
+            if (!has_output.load(std::memory_order_acquire)) return false;
+            if (t.index < 0 || (size_t)t.index >= ring.size()) return false;
+            if (ring[t.index].slot != Slot::Drawing) return false;
+
+            // Попередній непоказаний кадр витісняється — рахуємо як дроп,
+            // щоб деградацію було видно, а не доводилось здогадуватись.
+            if (idx_pending >= 0) {
+                ring[idx_pending].slot = Slot::Free;
+                st.dropped++;
+            }
+            ring[t.index].slot = Slot::Pending;
+            idx_pending = t.index;
+        }
+        try_commit();
         return true;
+    }
+
+    // Віддати залізу наступний кадр, якщо є що і якщо можна.
+    //
+    // Кличеться з ДВОХ місць: із queue() і з on_flip(). На один CRTC може
+    // бути лише ОДИН flip у польоті — другий коміт до підтвердження
+    // першого поверне EBUSY. Тому коли queue() застав зайнято, кадр чекає
+    // в pending, і штовхнути його має саме підтвердження попереднього.
+    // Без цього кадр лишався б у черзі до наступного виклику ззовні.
+    void try_commit() {
+        int idx = -1;
+        bool need_modeset = false;
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            if (idx_in_flight >= 0 || idx_pending < 0) return;
+            idx = idx_pending;
+            idx_pending = -1;
+            ring[idx].slot = Slot::InFlight;
+            idx_in_flight = idx;
+            need_modeset = !modeset_done;
+        }
+
+        // Коміт робиться БЕЗ локу: це ioctl, і тримати на ньому м'ютекс,
+        // який потрібен потоку подій, означало б їх зіштовхнути.
+        if (!commit(idx, need_modeset)) {
+            std::lock_guard<std::mutex> lock(mtx);
+            ring[idx].slot = Slot::Free;
+            idx_in_flight = -1;
+            return;
+        }
+        modeset_done = true;
+    }
+
+    // --- кільце буферів ---
+
+    bool create_ring() {
+        destroy_ring();
+        if (!gbm) return false;
+
+        const int n = cfg.buffers > 0 ? cfg.buffers : 2;
+        ring.resize(n);
+        for (int i = 0; i < n; ++i) {
+            RingBuf& b = ring[i];
+
+            // SCANOUT обов'язковий: без нього буфер намалюється, але
+            // показати його не вийде — у сканування інші вимоги до
+            // вирівнювання й розміщення. RENDERING — щоб у нього могло
+            // писати GL.
+            b.bo = gbm_bo_create(gbm, state_.width, state_.height, state_.fourcc,
+                                 GBM_BO_USE_SCANOUT | GBM_BO_USE_RENDERING);
+            if (!b.bo) {
+                std::fprintf(stderr,
+                    "[дисплей] gbm_bo_create(%dx%d, 0x%08x) провалився\n",
+                    state_.width, state_.height, state_.fourcc);
+                destroy_ring();
+                return false;
+            }
+            b.fd = gbm_bo_get_fd(b.bo);
+            b.stride = gbm_bo_get_stride(b.bo);
+            b.slot = Slot::Free;
+            live_bufs++;
+
+            uint32_t handles[4] = {}, strides[4] = {}, offsets[4] = {};
+            if (drmPrimeFDToHandle(fd, b.fd, &handles[0]) != 0) {
+                std::fprintf(stderr, "[дисплей] drmPrimeFDToHandle: %s\n",
+                             std::strerror(errno));
+                destroy_ring();
+                return false;
+            }
+            strides[0] = b.stride;
+            if (drmModeAddFB2(fd, state_.width, state_.height, state_.fourcc,
+                              handles, strides, offsets, &b.fb_id, 0) != 0) {
+                std::fprintf(stderr, "[дисплей] drmModeAddFB2: %s\n",
+                             std::strerror(errno));
+                destroy_ring();
+                return false;
+            }
+        }
+        idx_pending = idx_in_flight = idx_current = -1;
+        return true;
+    }
+
+    void free_buf(RingBuf& b) {
+        if (b.fb_id && fd >= 0) drmModeRmFB(fd, b.fb_id);
+        if (b.fd >= 0) ::close(b.fd);
+        if (b.bo) { gbm_bo_destroy(b.bo); live_bufs--; }
+        b = RingBuf{};
+    }
+
+    static const char* slot_name(Slot s) {
+        switch (s) {
+            case Slot::Free:     return "Free";
+            case Slot::Drawing:  return "Drawing";
+            case Slot::Pending:  return "Pending";
+            case Slot::InFlight: return "InFlight";
+            case Slot::Current:  return "Current";
+        }
+        return "?";
+    }
+
+    void destroy_ring() {
+        int held = 0;
+        if (!ring.empty()) {
+            std::string st_str;
+            for (const RingBuf& b : ring) { st_str += slot_name(b.slot); st_str += " "; }
+            std::fprintf(stderr, "[дисплей] стан кільця на розбиранні: %s\n", st_str.c_str());
+        }
+        for (RingBuf& b : ring) {
+            if (b.slot == Slot::Drawing) {
+                // У ньому ЗАРАЗ малюють — звільнимо, коли повернуть.
+                retired.push_back(b);
+                held++;
+                continue;
+            }
+            free_buf(b);
+        }
+        if (!ring.empty()) {
+            std::fprintf(stderr,
+                "[дисплей] кільце розібрано: %d звільнено одразу, %d чекає рендерера"
+                " | живих буферів %d\n",
+                (int)ring.size() - held, held, live_bufs);
+        }
+        ring.clear();
+        idx_pending = idx_in_flight = idx_current = -1;
+    }
+
+    // Повернувся буфер від попередньої конфігурації виводу. Ключ —
+    // дескриптор, а не номер у кільці: кільця вже немає.
+    void release_retired(int dmabuf_fd) {
+        for (size_t i = 0; i < retired.size(); ++i) {
+            if (retired[i].fd != dmabuf_fd) continue;
+            free_buf(retired[i]);
+            retired.erase(retired.begin() + (long)i);
+            std::fprintf(stderr,
+                "[дисплей] відкладений буфер fd=%d повернувся й звільнений"
+                " | чекає ще %d | живих %d\n",
+                dmabuf_fd, (int)retired.size(), live_bufs);
+            return;
+        }
+    }
+
+    // Рендерер зупинився й уже нічого не поверне.
+    void free_all_retired() {
+        if (!retired.empty()) {
+            std::fprintf(stderr, "[дисплей] примусово звільняю %d відкладених буферів\n",
+                         (int)retired.size());
+        }
+        for (RingBuf& b : retired) free_buf(b);
+        retired.clear();
     }
 
     // --- внутрішнє ---
 
-    uint32_t fb_for(const Frame& f) {
-        auto it = fb_cache.find(f.fd[0]);
-        if (it != fb_cache.end()) {
-            const FbEntry& e = it->second;
-            if (e.width == f.width && e.height == f.height &&
-                e.fourcc == f.fourcc && e.modifier == f.modifier) {
-                return e.fb_id;
-            }
-            // Той самий fd, але інші параметри — старий fb більше не
-            // описує цей буфер.
-            drmModeRmFB(fd, e.fb_id);
-            fb_cache.erase(it);
-        }
 
-        uint32_t handles[4] = {};
-        uint32_t strides[4] = {};
-        uint32_t offsets[4] = {};
-        uint64_t modifiers[4] = {};
-
-        for (int i = 0; i < f.n_planes; ++i) {
-            if (drmPrimeFDToHandle(fd, f.fd[i] >= 0 ? f.fd[i] : f.fd[0], &handles[i]) != 0) {
-                std::fprintf(stderr, "[kms] drmPrimeFDToHandle(площина %d): %s\n",
-                             i, std::strerror(errno));
-                return 0;
-            }
-            strides[i] = f.stride[i];
-            offsets[i] = f.offset[i];
-            modifiers[i] = f.modifier;
-        }
-
-        uint32_t fb = 0;
-        int ret = drmModeAddFB2WithModifiers(fd, f.width, f.height, f.fourcc,
-                                              handles, strides, offsets, modifiers,
-                                              &fb,
-                                              f.modifier ? DRM_MODE_FB_MODIFIERS : 0);
-        if (ret != 0) {
-            // Не всі драйвери приймають модифікатори; для LINEAR це
-            // еквівалентно і без них.
-            ret = drmModeAddFB2(fd, f.width, f.height, f.fourcc,
-                                handles, strides, offsets, &fb, 0);
-        }
-        if (ret != 0) {
-            std::fprintf(stderr, "[kms] drmModeAddFB2 %dx%d fourcc=0x%08x: %s\n",
-                         f.width, f.height, f.fourcc, std::strerror(errno));
-            return 0;
-        }
-
-        fb_cache[f.fd[0]] = FbEntry{fb, f.width, f.height, f.fourcc, f.modifier};
-        return fb;
-    }
-
-    bool commit(const Slot& s, bool allow_modeset) {
+    bool commit(int idx, bool allow_modeset) {
         drmModeAtomicReq* req = drmModeAtomicAlloc();
         if (!req) return false;
 
-        const Rect vis = s.frame.visible();
+        // Цільовий буфер завжди на весь екран: кроп буває лише в
+        // кадрів від декодера, а ці ми виділяємо самі.
+        const Rect vis{0, 0, state_.width, state_.height};
 
         if (allow_modeset) {
             drmModeAtomicAddProperty(req, crtc_id, crtc_props["MODE_ID"], mode_blob);
@@ -379,14 +551,14 @@ struct KmsDisplayManager::Impl : public Layer {
             drmModeAtomicAddProperty(req, connector_id, conn_props["CRTC_ID"], crtc_id);
         }
 
-        drmModeAtomicAddProperty(req, plane_id, plane_props["FB_ID"], s.fb_id);
+        drmModeAtomicAddProperty(req, plane_id, plane_props["FB_ID"], ring[idx].fb_id);
         drmModeAtomicAddProperty(req, plane_id, plane_props["CRTC_ID"], crtc_id);
 
         // CRTC_* — звичайні пікселі екрана.
         drmModeAtomicAddProperty(req, plane_id, plane_props["CRTC_X"], 0);
         drmModeAtomicAddProperty(req, plane_id, plane_props["CRTC_Y"], 0);
-        drmModeAtomicAddProperty(req, plane_id, plane_props["CRTC_W"], info_.width);
-        drmModeAtomicAddProperty(req, plane_id, plane_props["CRTC_H"], info_.height);
+        drmModeAtomicAddProperty(req, plane_id, plane_props["CRTC_W"], state_.width);
+        drmModeAtomicAddProperty(req, plane_id, plane_props["CRTC_H"], state_.height);
 
         // SRC_* — формат 16.16 з фіксованою комою, тобто <<16. Класична
         // пастка: переплутавши, отримуєш чорний екран без жодної помилки.
@@ -409,7 +581,7 @@ struct KmsDisplayManager::Impl : public Layer {
             // монітор висмикнули. Це не помилка, це гонка з гарячою
             // заміною, і кадр однаково не було куди показувати.
             if (has_output.load(std::memory_order_acquire)) {
-                std::fprintf(stderr, "[kms] atomic commit%s: %s\n",
+                std::fprintf(stderr, "[дисплей] atomic commit%s: %s\n",
                              allow_modeset ? " (modeset)" : "", std::strerror(errno));
             }
             return false;
@@ -420,7 +592,6 @@ struct KmsDisplayManager::Impl : public Layer {
     // Викликається з потоку подій після ПІДТВЕРДЖЕННЯ показу.
     // seq — лічильник розгорток від ядра.
     void on_flip(int64_t when_ns, unsigned seq) {
-        PresentCallback cb;
         {
             std::lock_guard<std::mutex> lock(mtx);
 
@@ -450,15 +621,30 @@ struct KmsDisplayManager::Impl : public Layer {
                 hz_anchor_seq = seq;
                 hz_seq_valid = true;
             }
-            // Кадр, що був на екрані, більше не читається — саме тут
-            // падає його keepalive і буфер повертається рендереру.
-            current = in_flight;
-            in_flight.valid = false;
-            in_flight.frame = Frame{};
+            // Кадр, що був на екрані, більше не читається сканером —
+            // САМЕ ТУТ він звільняється, і саме про цю мить рендереру
+            // треба знати. Не після коміту: після коміту буфер ще
+            // сканується, і малювати в нього означало б рвати картинку.
+            if (idx_current >= 0) ring[idx_current].slot = Slot::Free;
+            idx_current = idx_in_flight;
+            if (idx_current >= 0) ring[idx_current].slot = Slot::Current;
+            idx_in_flight = -1;
 
             st.presented++;
             st.last_present_ns = when_ns;
-            cb = on_present;
+        }
+
+        // Наступний кадр, якщо він уже чекає. Робиться тут, а не в
+        // present(): один CRTC тримає лише один flip у польоті, тож
+        // штовхнути чергу може саме підтвердження попереднього.
+        try_commit();
+
+        // Колбек ОСТАННІМ і поза локом: він будить рендерер, а той одразу
+        // піде питати буфер — стан має бути вже узгоджений.
+        FlipCallback cb;
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            cb = on_flip_cb;
         }
         if (cb) cb(when_ns);
     }
@@ -495,17 +681,61 @@ struct KmsDisplayManager::Impl : public Layer {
                 recheck = drain_uevents(udev_fd);
             }
 
-            // Без сокета — опитуємо самі, раз на пів секунди. Повільніше,
-            // але монітор, увімкнений після старту, все одно підхопиться.
-            if (udev_fd < 0) {
+            // ПЕРЕВІРКА ЗА ТАЙМЕРОМ, а не лише на подію. Дві різні
+            // причини, і обидві реальні:
+            //
+            //   - сокета uevent може не бути взагалі (немає прав) —
+            //     тоді це єдиний спосіб помітити монітор;
+            //   - виводу може не бути, хоч кабель на місці. Наприклад
+            //     зонд конектора не вдався при старті. Події тоді не
+            //     буде НІКОЛИ — кабель ніхто не чіпає, — і станція
+            //     лишилася б без картинки назавжди. Спіймано на
+            //     примусовому розбиранні: вивід не піднявся жодного разу
+            //     за 24 секунди, бо чекати не було на що.
+            {
                 const int64_t t = now_ns();
-                if (t - last_poll_ns > 500000000LL) {
-                    last_poll_ns = t;
-                    recheck = true;
+                const int64_t every = has_output.load(std::memory_order_acquire)
+                                    ? 5000000000LL    // вивід є: рідка страховка
+                                    : 1000000000LL;   // виводу немає: пробуємо частіше
+                if (udev_fd < 0 || !has_output.load(std::memory_order_acquire)) {
+                    if (t - last_poll_ns > every) {
+                        last_poll_ns = t;
+                        recheck = true;
+                    }
                 }
             }
 
             if (recheck) handle_hotplug();
+
+            // ПЕРЕВІРКА ВІДКЛАДЕНОГО ЗВІЛЬНЕННЯ, лише для діагностики:
+            // VRX_TEST_TEARDOWN=<мс> змушує розбирати й піднімати вивід
+            // за таймером.
+            //
+            // Кабелем цей шлях не перевірити: коли монітор висмикують,
+            // спершу зупиняються розгортки, рендерер добиває кадр і стає
+            // чекати — тобто до розбирання він уже нічого не тримає.
+            // А небезпечне вікно існує: буфер у нього в руках ~15 мс із
+            // 17, і uevent може прилетіти саме туди. Таймер б'є в
+            // випадковий момент циклу й влучає в нього майже завжди.
+            if (test_teardown_ms > 0) {
+                const int64_t t = now_ns();
+                if (t - last_test_ns > (int64_t)test_teardown_ms * 1000000LL) {
+                    last_test_ns = t;
+
+                    // ЗАТРИМКИ ТУТ БУТИ НЕ МОЖЕ. Спроба зсунути момент
+                    // розбирання через usleep у цьому потоці зіпсувала
+                    // сам вимір: поки він спить, flip'и не обробляються,
+                    // дедлайн опиту зсувається, і рендерер починає
+                    // малювати одразу після захоплення — буфер проскакує
+                    // Drawing за мілісекунди. 52 розбирання, нуль влучань.
+                    //
+                    // Тримати буфер довше має РЕНДЕРЕР: VRX_TEST_HOLD_MS.
+
+                    std::fprintf(stderr, "[тест] примусове розбирання виводу\n");
+                    teardown_output();
+                    configure_output();
+                }
+            }
         }
     }
 
@@ -525,7 +755,7 @@ struct KmsDisplayManager::Impl : public Layer {
             if (c) drmModeFreeConnector(c);
             if (alive) return;
 
-            std::fprintf(stderr, "[kms] монітор відключено\n");
+            std::fprintf(stderr, "[дисплей] монітор відключено\n");
             teardown_output();
             return;
         }
@@ -533,29 +763,34 @@ struct KmsDisplayManager::Impl : public Layer {
         // Виводу немає — пробуємо підняти. Якщо ще нічого не під'єднано,
         // configure_output() тихо повернеться з невдачею.
         if (configure_output()) {
-            std::fprintf(stderr, "[kms] монітор підключено: %s\n", desc.c_str());
+            std::fprintf(stderr, "[дисплей] монітор підключено: %s\n", state_.name.c_str());
         }
     }
 
     int64_t last_poll_ns = 0;
+
+    // Діагностика: примусове розбирання виводу за таймером.
+    int test_teardown_ms = getenv("VRX_TEST_TEARDOWN")
+                         ? atoi(getenv("VRX_TEST_TEARDOWN")) : 0;
+    int64_t last_test_ns = 0;
 };
 
 // ---------------------------------------------------------------------
 
-KmsDisplayManager::KmsDisplayManager() : KmsDisplayManager(Config{}) {}
+Display::Display() : Display(Config{}) {}
 
-KmsDisplayManager::KmsDisplayManager(Config cfg)
+Display::Display(Config cfg)
     : impl_(std::make_unique<Impl>(std::move(cfg))) {}
 
-KmsDisplayManager::~KmsDisplayManager() { close(); }
+Display::~Display() { close(); }
 
-bool KmsDisplayManager::open() {
+bool Display::open() {
     Impl& d = *impl_;
     if (d.fd >= 0) return true;
 
     d.fd = ::open(d.cfg.card.c_str(), O_RDWR | O_CLOEXEC);
     if (d.fd < 0) {
-        std::fprintf(stderr, "[kms] open(%s): %s\n",
+        std::fprintf(stderr, "[дисплей] open(%s): %s\n",
                      d.cfg.card.c_str(), std::strerror(errno));
         return false;
     }
@@ -563,7 +798,7 @@ bool KmsDisplayManager::open() {
     if (d.cfg.become_master) {
         if (drmSetMaster(d.fd) != 0) {
             std::fprintf(stderr,
-                "[kms] drmSetMaster: %s — DRM master уже зайнятий "
+                "[дисплей] drmSetMaster: %s — DRM master уже зайнятий "
                 "(графічна сесія? інша копія?)\n", std::strerror(errno));
             close();
             return false;
@@ -575,7 +810,18 @@ bool KmsDisplayManager::open() {
     // плейни, лишаючи легасі-АПІ.
     if (drmSetClientCap(d.fd, DRM_CLIENT_CAP_ATOMIC, 1) != 0 ||
         drmSetClientCap(d.fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1) != 0) {
-        std::fprintf(stderr, "[kms] драйвер не підтримує atomic/universal planes\n");
+        std::fprintf(stderr, "[дисплей] драйвер не підтримує atomic/universal planes\n");
+        close();
+        return false;
+    }
+
+    // GBM-пристрій на ТОМУ САМОМУ дескрипторі. Через нього виділяються
+    // цільові буфери, і він же віддається рендереру як нативний хендл
+    // для EGL — щоб на всю програму лишився один пристрій і один
+    // власник, а не два дескриптори однієї карти, як було раніше.
+    d.gbm = gbm_create_device(d.fd);
+    if (!d.gbm) {
+        std::fprintf(stderr, "[дисплей] gbm_create_device провалився\n");
         close();
         return false;
     }
@@ -584,7 +830,7 @@ bool KmsDisplayManager::open() {
     // програма працює, просто без реакції на перепідключення.
     d.udev_fd = open_uevent_socket();
     if (d.udev_fd < 0) {
-        std::fprintf(stderr, "[kms] uevent-сокет не відкрився — гарячої заміни не буде\n");
+        std::fprintf(stderr, "[дисплей] uevent-сокет не відкрився — гарячої заміни не буде\n");
     }
 
     d.running.store(true, std::memory_order_relaxed);
@@ -592,14 +838,14 @@ bool KmsDisplayManager::open() {
 
     // Дисплея може ще не бути: увімкнуть монітор — підхопимо самі.
     if (!d.configure_output()) {
-        std::fprintf(stderr, "[kms] виводу поки немає, чекаю підключення монітора\n");
+        std::fprintf(stderr, "[дисплей] виводу поки немає, чекаю підключення монітора\n");
     }
     return true;
 }
 
 // Підбирає коннектор, режим, CRTC і плейн та робить modeset.
 // Викликається і на старті, і при кожній гарячій заміні монітора.
-bool KmsDisplayManager::Impl::configure_output() {
+bool Display::Impl::configure_output() {
     Impl& d = *this;
     if (d.fd < 0) return false;
 
@@ -618,7 +864,7 @@ bool KmsDisplayManager::Impl::configure_output() {
 
     drmModeRes* res = drmModeGetResources(d.fd);
     if (!res) {
-        std::fprintf(stderr, "[kms] drmModeGetResources: %s\n", std::strerror(errno));
+        std::fprintf(stderr, "[дисплей] drmModeGetResources: %s\n", std::strerror(errno));
         teardown_output();
         return false;
     }
@@ -653,7 +899,7 @@ bool KmsDisplayManager::Impl::configure_output() {
         }
         if (!chosen) {
             std::fprintf(stderr,
-                "[kms] режим %dx%d не знайдено, беру PREFERRED\n",
+                "[дисплей] режим %dx%d не знайдено, беру PREFERRED\n",
                 d.cfg.want_width, d.cfg.want_height);
         }
     }
@@ -683,18 +929,18 @@ bool KmsDisplayManager::Impl::configure_output() {
         if (want <= d.mode.vtotal) {
             // Підняти частоту так не можна: рядки лише додаються.
             std::fprintf(stderr,
-                "[kms] %.3f Гц не нижче за поточні %.3f — режим лишаю як є\n",
+                "[дисплей] %.3f Гц не нижче за поточні %.3f — режим лишаю як є\n",
                 d.cfg.target_refresh_hz, before);
         } else if (want > limit) {
             std::fprintf(stderr,
-                "[kms] %.3f Гц вимагає vtotal %ld проти %u — надто далеко, лишаю як є\n",
+                "[дисплей] %.3f Гц вимагає vtotal %ld проти %u — надто далеко, лишаю як є\n",
                 d.cfg.target_refresh_hz, want, was);
         } else {
             d.mode.vtotal = (uint16_t)want;
             const double after = line_hz / d.mode.vtotal;
             d.mode.vrefresh = (uint32_t)(after + 0.5);
             std::fprintf(stderr,
-                "[kms] vtotal %u -> %ld (+%ld рядків), частота %.3f -> %.3f Гц"
+                "[дисплей] vtotal %u -> %ld (+%ld рядків), частота %.3f -> %.3f Гц"
                 " | рядкова %.3f кГц і клок %u кГц незмінні\n",
                 was, want, want - was, before, after,
                 line_hz / 1000.0, d.mode.clock);
@@ -714,7 +960,7 @@ bool KmsDisplayManager::Impl::configure_output() {
         drmModeFreeEncoder(enc);
     }
     if (!d.crtc_id) {
-        std::fprintf(stderr, "[kms] не знайшовся CRTC для коннектора\n");
+        std::fprintf(stderr, "[дисплей] не знайшовся CRTC для коннектора\n");
         drmModeFreeConnector(conn);
         drmModeFreeResources(res);
         teardown_output();
@@ -752,7 +998,7 @@ bool KmsDisplayManager::Impl::configure_output() {
         drmModeFreePlaneResources(planes);
     }
     if (!d.plane_id) {
-        std::fprintf(stderr, "[kms] не знайшовся primary-плейн на CRTC %u\n", d.crtc_id);
+        std::fprintf(stderr, "[дисплей] не знайшовся primary-плейн на CRTC %u\n", d.crtc_id);
         drmModeFreeConnector(conn);
         drmModeFreeResources(res);
         teardown_output();
@@ -764,7 +1010,7 @@ bool KmsDisplayManager::Impl::configure_output() {
     d.conn_props  = read_props(d.fd, d.connector_id, DRM_MODE_OBJECT_CONNECTOR);
 
     if (drmModeCreatePropertyBlob(d.fd, &d.mode, sizeof(d.mode), &d.mode_blob) != 0) {
-        std::fprintf(stderr, "[kms] drmModeCreatePropertyBlob: %s\n", std::strerror(errno));
+        std::fprintf(stderr, "[дисплей] drmModeCreatePropertyBlob: %s\n", std::strerror(errno));
         drmModeFreeConnector(conn);
         drmModeFreeResources(res);
         teardown_output();
@@ -805,7 +1051,7 @@ bool KmsDisplayManager::Impl::configure_output() {
             int r = drmModeAtomicCommit(d.fd, req, DRM_MODE_ATOMIC_ALLOW_MODESET, nullptr);
             if (r != 0) {
                 std::fprintf(stderr,
-                    "[kms] не вдалося запінити колір (%s) — лишаю як є\n",
+                    "[дисплей] не вдалося запінити колір (%s) — лишаю як є\n",
                     std::strerror(errno));
             }
         }
@@ -813,49 +1059,60 @@ bool KmsDisplayManager::Impl::configure_output() {
     }
 
     // --- метадані шару ---
-    d.info_.width = d.mode.hdisplay;
-    d.info_.height = d.mode.vdisplay;
+    d.state_.width = d.mode.hdisplay;
+    d.state_.height = d.mode.vdisplay;
     // vrefresh у drmModeModeInfo — округлені герци; рахуємо точніше з
     // піксельного клока й повних розмірів, бо саме дробова частина
     // визначає дрейф відносно джерела.
     if (d.mode.htotal && d.mode.vtotal) {
-        d.info_.refresh_mhz =
+        d.state_.refresh_mhz =
             (int)((int64_t)d.mode.clock * 1000000LL / (d.mode.htotal * d.mode.vtotal));
     } else {
-        d.info_.refresh_mhz = d.mode.vrefresh * 1000;
+        d.state_.refresh_mhz = d.mode.vrefresh * 1000;
     }
-    d.info_.supported_formats = formats;
-    d.info_.fourcc = DRM_FORMAT_XRGB8888;
-    d.info_.modifier = DRM_FORMAT_MOD_LINEAR;
-    d.info_.colorspace = ColorSpace::BT709;
-    d.info_.color_range = ColorRange::Full;
-    d.info_.color_format = d.cfg.color_format;
+    d.state_.supported_formats = formats;
+    d.state_.fourcc = DRM_FORMAT_XRGB8888;
+    d.state_.modifier = DRM_FORMAT_MOD_LINEAR;
+    d.state_.colorspace = ColorSpace::BT709;
+    d.state_.color_range = ColorRange::Full;
+    d.state_.color_format = d.cfg.color_format;
 
     char buf[128];
     std::snprintf(buf, sizeof(buf), "%s %dx%d@%.3f",
                   conn->connector_type == DRM_MODE_CONNECTOR_HDMIA ? "HDMI-A" : "conn",
-                  d.info_.width, d.info_.height, d.info_.refresh_hz());
-    d.desc = buf;
+                  d.state_.width, d.state_.height, d.state_.refresh_hz());
+    d.state_.name = buf;
 
     drmModeFreeConnector(conn);
     drmModeFreeResources(res);
 
 
     std::fprintf(stderr,
-        "[kms] %s | crtc=%u plane=%u | %d форматів | колір: %s %d біт | бюджет кадру %.2f мс\n",
-        d.desc.c_str(), d.crtc_id, d.plane_id, (int)formats.size(),
+        "[дисплей] %s | crtc=%u plane=%u | %d форматів | колір: %s %d біт | бюджет кадру %.2f мс\n",
+        d.state_.name.c_str(), d.crtc_id, d.plane_id, (int)formats.size(),
         color_format_name(d.cfg.color_format), d.cfg.color_depth_bits,
-        d.info_.frame_time_ns() / 1e6);
+        d.state_.frame_time_ns() / 1e6);
 
+
+    // Буфери під цю геометрію. Робиться ТУТ, а не при відкритті: до
+    // появи монітора невідомо ні розміру, ні формату.
+    {
+        std::lock_guard<std::mutex> lock(d.mtx);
+        if (!d.create_ring()) {
+            drmModeFreeConnector(conn);
+            drmModeFreeResources(res);
+            return false;
+        }
+    }
 
     // Рендерер стежить саме за цим номером: змінився — значить
     // геометрія виводу інша, і буфери треба перестворити.
-    d.info_.generation = generation_.fetch_add(1, std::memory_order_release) + 1;
+    d.state_.generation = generation_.fetch_add(1, std::memory_order_release) + 1;
     d.has_output.store(true, std::memory_order_release);
     return true;
 }
 
-void KmsDisplayManager::close() {
+void Display::close() {
     Impl& d = *impl_;
 
     if (d.running.exchange(false)) {
@@ -872,8 +1129,6 @@ void KmsDisplayManager::close() {
             drmModeAtomicCommit(d.fd, req, DRM_MODE_ATOMIC_ALLOW_MODESET, nullptr);
             drmModeAtomicFree(req);
         }
-        for (auto& kv : d.fb_cache) drmModeRmFB(d.fd, kv.second.fb_id);
-        d.fb_cache.clear();
 
         if (d.mode_blob) {
             drmModeDestroyPropertyBlob(d.fd, d.mode_blob);
@@ -893,141 +1148,37 @@ void KmsDisplayManager::close() {
         d.fd = -1;
     }
 
-    d.pending = {};
-    d.in_flight = {};
-    d.current = {};
+    d.destroy_ring();
+    d.free_all_retired();
+    if (d.gbm) { gbm_device_destroy(d.gbm); d.gbm = nullptr; }
     d.modeset_done = false;
-    d.info_ = {};
-    d.desc = "<closed>";
+    d.state_ = {};
 }
 
-bool KmsDisplayManager::is_open() const { return impl_->fd >= 0; }
-
-Layer& KmsDisplayManager::layer() { return *impl_; }
-
-bool KmsDisplayManager::present() {
-    Impl& d = *impl_;
-    if (d.fd < 0) return false;
-    if (!d.has_output.load(std::memory_order_acquire)) return false;
-
-    Impl::Slot to_show;
-    {
-        std::lock_guard<std::mutex> lock(d.mtx);
-        // На один CRTC може бути лише ОДИН flip у польоті. Другий commit
-        // до підтвердження першого поверне EBUSY, тож просто лишаємо кадр
-        // у pending — його покажемо після наступного підтвердження. Це не
-        // крайовий випадок, а норма: джерело з розгорткою не синхронні.
-        if (d.in_flight.valid) return false;
-        if (!d.pending.valid) return false;
-
-        to_show = d.pending;
-        d.pending.valid = false;
-        d.pending.frame = Frame{};
-        d.in_flight = to_show;
-    }
-
-    bool need_modeset = !d.modeset_done;
-    if (!d.commit(to_show, need_modeset)) {
-        std::lock_guard<std::mutex> lock(d.mtx);
-        d.in_flight.valid = false;
-        d.in_flight.frame = Frame{};
-        return false;
-    }
-    d.modeset_done = true;
-    return true;
-}
-
-void KmsDisplayManager::set_present_callback(PresentCallback cb) {
+PresentStats Display::stats() const {
     std::lock_guard<std::mutex> lock(impl_->mtx);
-    impl_->on_present = std::move(cb);
+    PresentStats s = impl_->st;
+    s.live_bufs = impl_->live_bufs;
+    s.retired_bufs = (int)impl_->retired.size();
+    s.generation = impl_->state_.generation;
+    return s;
 }
 
-PresentStats KmsDisplayManager::stats() const {
+OutputState Display::state() const {
     std::lock_guard<std::mutex> lock(impl_->mtx);
-    return impl_->st;
+    return impl_->state_;
 }
 
-bool KmsDisplayManager::has_crtc_property(const char* name) const {
-    return impl_->crtc_props.has(name);
+
+bool Display::acquire(Target& out) { return impl_->acquire(out); }
+
+bool Display::present(const Target& t) { return impl_->queue(t); }
+
+void Display::set_flip_callback(FlipCallback cb) {
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    impl_->on_flip_cb = std::move(cb);
 }
 
-bool KmsDisplayManager::set_crtc_property(const char* name, uint64_t value) {
-    Impl& d = *impl_;
-    if (d.fd < 0 || !d.crtc_props.has(name)) return false;
-
-    drmModeAtomicReq* req = drmModeAtomicAlloc();
-    drmModeAtomicAddProperty(req, d.crtc_id, d.crtc_props[name], value);
-    // Свідомо БЕЗ ALLOW_MODESET: якщо драйвер вимагає modeset, ми хочемо
-    // отримати відмову, а не тихе згасання екрана.
-    const int ret = drmModeAtomicCommit(d.fd, req, 0, nullptr);
-    drmModeAtomicFree(req);
-
-    if (ret != 0) {
-        std::fprintf(stderr, "[kms] %s = %llu відхилено: %s\n",
-                     name, (unsigned long long)value, std::strerror(errno));
-        return false;
-    }
-    return true;
-}
-
-uint32_t KmsDisplayManager::pixel_clock() const { return impl_->mode.clock; }
-
-bool KmsDisplayManager::set_pixel_clock(uint32_t khz) {
-    Impl& d = *impl_;
-    if (d.fd < 0 || khz == 0) return false;
-
-    drmModeModeInfo m = d.mode;
-    m.clock = khz;
-
-    uint32_t blob = 0;
-    if (drmModeCreatePropertyBlob(d.fd, &m, sizeof(m), &blob) != 0) {
-        std::fprintf(stderr, "[kms] clock: CreatePropertyBlob: %s\n", std::strerror(errno));
-        return false;
-    }
-
-    // Комітимо новий режим разом із ПОТОЧНИМ станом плейна: інакше
-    // modeset лишив би плейн вимкненим і екран згас би напевно.
-    Impl::Slot cur;
-    {
-        std::lock_guard<std::mutex> lock(d.mtx);
-        cur = d.current.valid ? d.current : d.in_flight;
-    }
-    if (!cur.valid) {
-        drmModeDestroyPropertyBlob(d.fd, blob);
-        return false;
-    }
-
-    drmModeAtomicReq* req = drmModeAtomicAlloc();
-    const Rect vis = cur.frame.visible();
-    drmModeAtomicAddProperty(req, d.crtc_id, d.crtc_props["MODE_ID"], blob);
-    drmModeAtomicAddProperty(req, d.crtc_id, d.crtc_props["ACTIVE"], 1);
-    drmModeAtomicAddProperty(req, d.connector_id, d.conn_props["CRTC_ID"], d.crtc_id);
-    drmModeAtomicAddProperty(req, d.plane_id, d.plane_props["FB_ID"], cur.fb_id);
-    drmModeAtomicAddProperty(req, d.plane_id, d.plane_props["CRTC_ID"], d.crtc_id);
-    drmModeAtomicAddProperty(req, d.plane_id, d.plane_props["CRTC_X"], 0);
-    drmModeAtomicAddProperty(req, d.plane_id, d.plane_props["CRTC_Y"], 0);
-    drmModeAtomicAddProperty(req, d.plane_id, d.plane_props["CRTC_W"], d.info_.width);
-    drmModeAtomicAddProperty(req, d.plane_id, d.plane_props["CRTC_H"], d.info_.height);
-    drmModeAtomicAddProperty(req, d.plane_id, d.plane_props["SRC_X"], (uint64_t)vis.x << 16);
-    drmModeAtomicAddProperty(req, d.plane_id, d.plane_props["SRC_Y"], (uint64_t)vis.y << 16);
-    drmModeAtomicAddProperty(req, d.plane_id, d.plane_props["SRC_W"], (uint64_t)vis.w << 16);
-    drmModeAtomicAddProperty(req, d.plane_id, d.plane_props["SRC_H"], (uint64_t)vis.h << 16);
-
-    const int ret = drmModeAtomicCommit(d.fd, req, DRM_MODE_ATOMIC_ALLOW_MODESET, nullptr);
-    drmModeAtomicFree(req);
-
-    if (ret != 0) {
-        std::fprintf(stderr, "[kms] clock %u кГц відхилено: %s\n", khz, std::strerror(errno));
-        drmModeDestroyPropertyBlob(d.fd, blob);
-        return false;
-    }
-
-    if (d.mode_blob) drmModeDestroyPropertyBlob(d.fd, d.mode_blob);
-    d.mode_blob = blob;
-    d.mode = m;
-    return true;
-}
-
-const std::string& KmsDisplayManager::description() const { return impl_->desc; }
+void* Display::native_handle() const { return impl_->gbm; }
 
 } // namespace vrx::display

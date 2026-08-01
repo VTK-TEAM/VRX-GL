@@ -54,32 +54,33 @@ PFNGLEGLIMAGETARGETTEXTURE2DOESPROC                 glEGLImageTargetTexture2DOES
 
 struct GlRenderer::Impl {
     Config cfg;
-    display::DisplayManager* dpy = nullptr;
-    display::LayerInfo info{};
+    display::Display* dpy = nullptr;
+    display::OutputState info{};
 
-    int drm_fd = -1;
-    struct gbm_device* gbm = nullptr;
+    struct gbm_device* gbm = nullptr;   // належить дисплею, ми лише беремо для EGL
 
     EGLDisplay egl = EGL_NO_DISPLAY;
     EGLContext ctx = EGL_NO_CONTEXT;
     EGLConfig  egl_cfg = nullptr;
     bool have_fence = false;
 
-    // Один буфер кільця: пам'ять + як її бачить GL + як її бачить дисплей.
-    struct Buffer {
-        struct gbm_bo* bo = nullptr;
-        int fd = -1;
-        uint32_t stride = 0;
+    // GL-ОБГОРТКА НАД БУФЕРОМ ДИСПЛЕЯ.
+    //
+    // Самими буферами володіє дисплей — він знає вимоги до сканування і
+    // він же єдиний знає, який із них зараз читає сканер. Але писати в
+    // них має GL, а для цього над тим самим dmabuf потрібні EGLImage і
+    // FBO, які можна створити лише в потоці з поточним контекстом, тобто
+    // тут.
+    //
+    // Це КЕШ, а не джерело правди: заповнюється на перших кадрах і
+    // застигає, ключ — дескриптор dmabuf. Правда про стан буферів
+    // лишається одна, у дисплея.
+    struct GlTarget {
         EGLImageKHR image = EGL_NO_IMAGE_KHR;
         GLuint rb = 0;          // renderbuffer поверх тієї ж пам'яті
         GLuint fbo = 0;
-
-        // Маркер зайнятості: копія лежить у Frame::keepalive, тож поки
-        // дисплей показує кадр, лічильник > 1. Це і є "чи можна малювати".
-        std::shared_ptr<int> busy = std::make_shared<int>(0);
-        bool free_now() const { return busy.use_count() == 1; }
     };
-    std::vector<Buffer> bufs;
+    std::map<int, GlTarget> gl_targets;
 
     std::thread thread;
     std::atomic<bool> running{false};
@@ -174,6 +175,9 @@ struct GlRenderer::Impl {
     // для розбору, а не для роботи, і 400 кадрів (7 с) вистачає, щоб
     // порахувати нахил фази з похибкою краще за 0.05 мс/с.
     int dbg_left = 400;
+
+    // Штучна затримка утримання цілі, лише для перевірки гарячої заміни.
+    int test_hold_ms = getenv("VRX_TEST_HOLD_MS") ? atoi(getenv("VRX_TEST_HOLD_MS")) : 0;
 
     mutable std::mutex stats_mtx;
     RenderStats st{};
@@ -280,86 +284,62 @@ struct GlRenderer::Impl {
 
     // --- буфери (потребують поточного контексту) ---
 
-    bool create_buffers() {
-        bufs.resize(cfg.buffers);
-        for (int i = 0; i < cfg.buffers; ++i) {
-            Buffer& b = bufs[i];
+    // Обгортка для цього буфера: береться з кешу або створюється.
+    GLuint fbo_for(const display::Target& t) {
+        auto it = gl_targets.find(t.frame.fd[0]);
+        if (it != gl_targets.end()) return it->second.fbo;
 
-            // SCANOUT обов'язковий: без нього буфер намалюється, але
-            // показати його не вийде — у нього інші вимоги до
-            // вирівнювання й розміщення.
-            b.bo = gbm_bo_create(gbm, info.width, info.height, info.fourcc,
-                                 GBM_BO_USE_SCANOUT | GBM_BO_USE_RENDERING);
-            if (!b.bo) {
-                std::fprintf(stderr,
-                    "[gl] gbm_bo_create(%dx%d, 0x%08x, SCANOUT|RENDERING) провалився\n",
-                    info.width, info.height, info.fourcc);
-                return false;
-            }
-            b.fd = gbm_bo_get_fd(b.bo);
-            b.stride = gbm_bo_get_stride(b.bo);
+        GlTarget g;
+        EGLint attr[] = {
+            EGL_WIDTH, t.frame.width,
+            EGL_HEIGHT, t.frame.height,
+            EGL_LINUX_DRM_FOURCC_EXT, (EGLint)t.frame.fourcc,
+            EGL_DMA_BUF_PLANE0_FD_EXT, t.frame.fd[0],
+            EGL_DMA_BUF_PLANE0_OFFSET_EXT, 0,
+            EGL_DMA_BUF_PLANE0_PITCH_EXT, (EGLint)t.frame.stride[0],
+            EGL_NONE
+        };
+        g.image = eglCreateImageKHR_(egl, EGL_NO_CONTEXT,
+                                     EGL_LINUX_DMA_BUF_EXT, nullptr, attr);
+        if (g.image == EGL_NO_IMAGE_KHR) {
+            std::fprintf(stderr, "[gl] eglCreateImageKHR для цілі провалився\n");
+            return 0;
+        }
 
-            EGLint attr[] = {
-                EGL_WIDTH, info.width,
-                EGL_HEIGHT, info.height,
-                EGL_LINUX_DRM_FOURCC_EXT, (EGLint)info.fourcc,
-                EGL_DMA_BUF_PLANE0_FD_EXT, b.fd,
-                EGL_DMA_BUF_PLANE0_OFFSET_EXT, 0,
-                EGL_DMA_BUF_PLANE0_PITCH_EXT, (EGLint)b.stride,
-                EGL_NONE
-            };
-            b.image = eglCreateImageKHR_(egl, EGL_NO_CONTEXT,
-                                          EGL_LINUX_DMA_BUF_EXT, nullptr, attr);
-            if (b.image == EGL_NO_IMAGE_KHR) {
-                std::fprintf(stderr, "[gl] eglCreateImageKHR для буфера %d провалився\n", i);
-                return false;
-            }
+        // Renderbuffer поверх ТІЄЇ САМОЇ пам'яті — після цього glClear і
+        // glDraw пишуть прямо в буфер, який покаже дисплей.
+        glGenRenderbuffers(1, &g.rb);
+        glBindRenderbuffer(GL_RENDERBUFFER, g.rb);
+        glEGLImageTargetRenderbufferStorageOES_(GL_RENDERBUFFER, g.image);
 
-            // Renderbuffer поверх ТІЄЇ САМОЇ пам'яті — після цього
-            // glClear/glDraw пишуть прямо в буфер, який покаже дисплей.
-            glGenRenderbuffers(1, &b.rb);
-            glBindRenderbuffer(GL_RENDERBUFFER, b.rb);
-            glEGLImageTargetRenderbufferStorageOES_(GL_RENDERBUFFER, b.image);
+        glGenFramebuffers(1, &g.fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, g.fbo);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                  GL_RENDERBUFFER, g.rb);
+        const GLenum st = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        if (st != GL_FRAMEBUFFER_COMPLETE) {
+            std::fprintf(stderr, "[gl] FBO неповний (0x%04x)\n", st);
+            return 0;
+        }
 
-            glGenFramebuffers(1, &b.fbo);
-            glBindFramebuffer(GL_FRAMEBUFFER, b.fbo);
-            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                                       GL_RENDERBUFFER, b.rb);
-            GLenum s = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-            if (s != GL_FRAMEBUFFER_COMPLETE) {
-                std::fprintf(stderr, "[gl] FBO %d неповний (0x%04x)\n", i, s);
-                return false;
+        gl_targets[t.frame.fd[0]] = g;
+        return g.fbo;
+    }
+
+    // Викидається цілком при зміні конфігурації виводу: буфери під цими
+    // обгортками дисплей уже знищив.
+    void drop_gl_targets() {
+        for (auto& kv : gl_targets) {
+            GlTarget& g = kv.second;
+            if (g.fbo) glDeleteFramebuffers(1, &g.fbo);
+            if (g.rb) glDeleteRenderbuffers(1, &g.rb);
+            if (g.image != EGL_NO_IMAGE_KHR && eglDestroyImageKHR_) {
+                eglDestroyImageKHR_(egl, g.image);
             }
         }
-        return true;
+        gl_targets.clear();
     }
 
-    void destroy_buffers() {
-        for (Buffer& b : bufs) {
-            if (b.fbo) glDeleteFramebuffers(1, &b.fbo);
-            if (b.rb) glDeleteRenderbuffers(1, &b.rb);
-            if (b.image != EGL_NO_IMAGE_KHR && eglDestroyImageKHR_) {
-                eglDestroyImageKHR_(egl, b.image);
-            }
-            if (b.fd >= 0) ::close(b.fd);
-            if (b.bo) gbm_bo_destroy(b.bo);
-        }
-        bufs.clear();
-    }
-
-    display::Frame frame_for(const Buffer& b) const {
-        display::Frame f;
-        f.fourcc = info.fourcc;
-        f.modifier = DRM_FORMAT_MOD_LINEAR;
-        f.width = info.width;
-        f.height = info.height;
-        f.n_planes = 1;
-        f.fd[0] = b.fd;
-        f.stride[0] = b.stride;
-        f.offset[0] = 0;
-        f.keepalive = b.busy;
-        return f;
-    }
 
     // Створюється в робочому потоці: GL-об'єкти потребують поточного
     // контексту.
@@ -731,24 +711,13 @@ struct GlRenderer::Impl {
         wake_cv.notify_one();
     }
 
-    int wait_free_buffer() {
-        for (;;) {
-            for (size_t i = 0; i < bufs.size(); ++i) {
-                if (bufs[i].free_now()) return (int)i;
-            }
-            if (!running.load(std::memory_order_relaxed)) return -1;
-
-            {
-                std::lock_guard<std::mutex> lk(stats_mtx);
-                st.stalls++;
-            }
-            std::unique_lock<std::mutex> lk(wake_mtx);
-            // Таймаут — страховка: якщо підтвердження flip'а раптом не
-            // прийде, цикл не повисне назавжди, а перевірить сам.
-            wake_cv.wait_for(lk, std::chrono::milliseconds(100),
-                             [this] { return woken || !running.load(); });
-            woken = false;
-        }
+    // Чекає на розгортку. Прокидається колбек дисплея — саме тоді
+    // звільняється буфер. Таймаут страхує від загубленої події.
+    void wait_flip(int ms) {
+        std::unique_lock<std::mutex> lk(wake_mtx);
+        wake_cv.wait_for(lk, std::chrono::milliseconds(ms),
+                         [this] { return woken || !running.load(); });
+        woken = false;
     }
 
     // Спить до моменту, коли треба питати кадр.
@@ -837,75 +806,73 @@ struct GlRenderer::Impl {
         uint32_t my_generation = 0;
 
         while (running.load(std::memory_order_relaxed)) {
-            // ГАРЯЧА ЗАМІНА МОНІТОРА. Дисплей піднімає номер конфігурації
-            // щоразу, коли вивід переналаштовано. Порівнювати ширину й
-            // висоту було б недостатньо: новий монітор може мати ту саму
-            // роздільність, але це вже інший тракт, з іншим CRTC і
-            // плейном, і старі фреймбуфери на ньому недійсні.
-            const display::LayerInfo cur = dpy->layer().info();
-            if (cur.generation != my_generation) {
+            // Буфер для цього кадру. Дисплей віддає лише той, який точно
+            // не читається сканером, тож перевіряти щось самому не треба.
+            display::Target target;
+            if (!dpy->acquire(target)) {
+                // Або виводу немає, або всі буфери зайняті. І те, і те
+                // розв'яжеться розгорткою — на неї й чекаємо.
+                wait_flip(100);
+                continue;
+            }
+
+            // ЗАМІНА МОНІТОРА видно по номеру конфігурації в самій цілі.
+            // Порівнювати ширину й висоту було б недостатньо: новий
+            // монітор може мати ту саму роздільність, але це вже інший
+            // тракт, і старі обгортки над буферами недійсні.
+            if (target.generation != my_generation) {
                 if (my_generation != 0) {
-                    std::fprintf(stderr, "[gl] вивід змінився, перестворюю буфери\n");
+                    std::fprintf(stderr, "[gl] вивід змінився, перебудовую обгортки\n");
                 }
-                destroy_buffers();
-                info = cur;
-                my_generation = cur.generation;
+                drop_gl_targets();
+                info = dpy->state();
+                my_generation = target.generation;
+                period_ns = info.frame_time_ns();
+                glViewport(0, 0, info.width, info.height);
 
                 // Оверлеї рахують розміри гліфів у частках кадру, тож
                 // нову геометрію треба сказати їм ТУТ. Інакше після
                 // перепідключення монітора з іншою роздільністю OSD
                 // лишився б із масштабом від попереднього — і це було б
                 // не падіння, а тихо неправильний розмір тексту.
-                if (cur.width > 0 && cur.height > 0) {
+                {
                     std::lock_guard<std::mutex> lk(ovl_mtx);
-                    for (OverlaySlot& s : overlays) {
-                        s.ovl->set_frame_size(cur.width, cur.height);
+                    for (OverlaySlot& sl : overlays) {
+                        sl.ovl->set_frame_size(info.width, info.height);
                     }
                 }
 
-                if (cur.generation == 0 || cur.width <= 0) {
-                    // Виводу зараз немає. Не крутимось намарно: дисплей
-                    // сам підніме номер, коли монітор під'єднають.
-                    period_ns = 0;
-                    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-                    continue;
-                }
-
-                if (!create_buffers()) {
-                    std::fprintf(stderr, "[gl] буфери на %dx%d не створилися\n",
-                                 info.width, info.height);
-                    my_generation = 0;      // спробуємо ще раз на наступній події
-                    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-                    continue;
-                }
-
-                period_ns = info.frame_time_ns();
-                glViewport(0, 0, info.width, info.height);
-
-                std::fprintf(stderr,
-                    "[gl] %d буфер(и) %dx%d, крок %u | період %.2f мс | fence: %s\n",
-                    (int)bufs.size(), info.width, info.height,
-                    bufs.empty() ? 0 : bufs[0].stride, period_ns / 1e6,
-                    have_fence ? "є" : "немає");
+                std::fprintf(stderr, "[gl] %dx%d | період %.2f мс | fence: %s\n",
+                             info.width, info.height, period_ns / 1e6,
+                             have_fence ? "є" : "немає");
             }
 
-            if (bufs.empty()) {
+            const GLuint fbo = fbo_for(target);
+            if (!fbo) {
+                // Обгортка не створилась — віддаємо буфер назад, інакше
+                // він застрягне в Drawing назавжди.
+                dpy->present(target);
                 std::this_thread::sleep_for(std::chrono::milliseconds(200));
                 continue;
             }
 
-            int idx = wait_free_buffer();
-            if (idx < 0) break;
+            // ДІАГНОСТИКА: VRX_TEST_HOLD_MS змушує тримати ціль довше,
+            // ніж триває звичайний кадр. Потрібно, щоб перевірити
+            // відкладене звільнення буферів при розбиранні виводу: у
+            // нормальному темпі стан Drawing надто короткий, щоб у нього
+            // влучити ззовні.
+            if (test_hold_ms > 0) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(test_hold_ms));
+            }
 
             // Спимо до моменту опитування — щоб узяти найсвіжіший кадр,
             // а не найстаріший.
             sleep_until_poll_deadline();
             if (!running.load(std::memory_order_relaxed)) break;
 
-            Buffer& b = bufs[idx];
-            double t0 = now_ms();
+            const double t0 = now_ms();
 
-            glBindFramebuffer(GL_FRAMEBUFFER, b.fbo);
+            glBindFramebuffer(GL_FRAMEBUFFER, fbo);
             draw_frame();
             frame_no++;
 
@@ -914,19 +881,18 @@ struct GlRenderer::Impl {
             // IN_FENCE_FD на цьому ядрі немає, тож чекаємо тут, у своєму
             // потоці — потік показу це не гальмує.
             if (have_fence && eglCreateSyncKHR_) {
-                EGLSyncKHR s = eglCreateSyncKHR_(egl, EGL_SYNC_FENCE_KHR, nullptr);
+                EGLSyncKHR sy = eglCreateSyncKHR_(egl, EGL_SYNC_FENCE_KHR, nullptr);
                 glFlush();
-                eglClientWaitSyncKHR_(egl, s, 0, EGL_FOREVER_KHR);
-                eglDestroySyncKHR_(egl, s);
+                eglClientWaitSyncKHR_(egl, sy, 0, EGL_FOREVER_KHR);
+                eglDestroySyncKHR_(egl, sy);
             } else {
                 glFinish();
             }
 
-            double dt = now_ms() - t0;
+            const double dt = now_ms() - t0;
             avg = avg == 0.0 ? dt : (avg * 0.95 + dt * 0.05);
 
-            if (dpy->layer().submit(frame_for(b))) {
-                dpy->present();
+            if (dpy->present(target)) {
                 std::lock_guard<std::mutex> lk(stats_mtx);
                 st.frames++;
                 st.last_draw_ms = dt;
@@ -934,8 +900,8 @@ struct GlRenderer::Impl {
             }
         }
 
+        drop_gl_targets();
         destroy_gl_objects();
-        destroy_buffers();
         eglMakeCurrent(egl, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
     }
 };
@@ -945,36 +911,33 @@ struct GlRenderer::Impl {
 GlRenderer::GlRenderer() : impl_(std::make_unique<Impl>()) {}
 GlRenderer::~GlRenderer() { stop(); }
 
-bool GlRenderer::init(display::DisplayManager& display) {
+bool GlRenderer::init(display::Display& display) {
     return init(display, Config{});
 }
 
-bool GlRenderer::init(display::DisplayManager& display, Config cfg) {
+bool GlRenderer::init(display::Display& display, Config cfg) {
     Impl& d = *impl_;
-    if (!display.is_open()) {
-        std::fprintf(stderr, "[gl] дисплей не відкритий — нема з чого брати формат\n");
-        return false;
-    }
     d.cfg = std::move(cfg);
     d.dpy = &display;
-    d.info = display.layer().info();
+    d.info = display.state();
 
-    d.drm_fd = ::open(d.cfg.card.c_str(), O_RDWR | O_CLOEXEC);
-    if (d.drm_fd < 0) {
-        std::fprintf(stderr, "[gl] open(%s): %s\n",
-                     d.cfg.card.c_str(), std::strerror(errno));
-        return false;
-    }
-    d.gbm = gbm_create_device(d.drm_fd);
+    // GBM-пристрій БЕРЕТЬСЯ В ДИСПЛЕЯ, а не створюється свій.
+    //
+    // Раніше рендерер відкривав ту саму карту другим дескриптором і
+    // робив на ній власний GBM — лише щоб виділяти буфери, які дисплей
+    // потім імпортував назад через dmabuf. Ця подорож існувала тільки
+    // тому, що володіння буферами було розділене навпіл. Тепер пристрій
+    // один, а EGL просто піднімається поверх нього.
+    d.gbm = (struct gbm_device*)display.native_handle();
     if (!d.gbm) {
-        std::fprintf(stderr, "[gl] gbm_create_device провалився\n");
+        std::fprintf(stderr, "[gl] дисплей не дав GBM-пристрій\n");
         return false;
     }
     if (!d.setup_egl()) return false;
 
     // Прокидаємось на підтвердженні показу: саме тоді звільняється буфер.
     // Опитування тут було б і марною роботою, і зайвою затримкою.
-    display.set_present_callback([&d](int64_t t) {
+    display.set_flip_callback([&d](int64_t t) {
         d.last_present_ns.store(t, std::memory_order_relaxed);
 
         const int64_t produced = d.inflight_produced_ns.load(std::memory_order_relaxed);
@@ -1046,8 +1009,8 @@ void GlRenderer::stop() {
         eglTerminate(d.egl);
         d.egl = EGL_NO_DISPLAY;
     }
-    if (d.gbm) { gbm_device_destroy(d.gbm); d.gbm = nullptr; }
-    if (d.drm_fd >= 0) { ::close(d.drm_fd); d.drm_fd = -1; }
+    // GBM і карту не чіпаємо: ними володіє дисплей.
+    d.gbm = nullptr;
 }
 
 void GlRenderer::add_source(std::shared_ptr<source::FrameSource> src) {
