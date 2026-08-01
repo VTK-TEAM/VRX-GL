@@ -27,15 +27,28 @@
 //     203  MJPEG_FPS         те саме для другого каналу
 //     204  H265_SHOWN_FPS    скільки з них ДІЙШЛО до екрана
 //     205  DISPLAY_FPS       з якою частотою екран показує взагалі
+//     206  PHASE_LOCK        стан ФАПЧ: 0 не веде / 1 веде / 2 захоплено
+//     207  LATENCY_MS        затримка тракту: декодер -> підтверджений показ
+//     208  DROPPED_FPS       кадрів на секунду, що не дійшли до екрана
+//     209  LATE_FPS          кадрів на секунду, що прийшли після опиту
 //
 // Пара 202/204 нарізно не випадкова: якщо перше є, а друге менше —
 // кадри губляться не в лінку й не в декодері, а вже на показі.
+//
+// Четвірка 206..209 — це стан тракту показу, і читати її треба разом.
+// Порізно кожне число бреше: затримка буває маленькою саме тому, що
+// кадри летять повз екран, а нуль пропусків стоїть і при затримці в два
+// періоди. 209 тут ключове й ніде більше не видиме: кадр, що спізнився
+// на опит, не втрачений і не повторений — усі звичні лічильники його
+// показують здоровим, — але поїде на екран на розгортку пізніше.
 
 #include "telemetry/vt_telemetry_storage.h"
 
+#include "../control/phase_controller.hpp"
 #include "../display/display.hpp"
 #include "../record/recorder.hpp"
 #include "../record/storage.hpp"
+#include "../render/gl_renderer.hpp"
 #include "../source/frame_source.hpp"
 
 #include <memory>
@@ -65,6 +78,8 @@ public:
     // не буде каналу 203, а не падіння.
     bool start(VtTelemetryStorage& storage,
                const display::Display& display,
+               const render::GlRenderer& renderer,
+               const control::PhaseController& phase,
                const record::Recorder& rec,
                const record::Storage& drive,
                std::shared_ptr<source::FrameSource> h265,

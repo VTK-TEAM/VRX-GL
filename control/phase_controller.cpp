@@ -38,6 +38,31 @@ double clamp(double v, double lo, double hi) {
     return v < lo ? lo : (v > hi ? hi : v);
 }
 
+// --- сталі критерію захоплення ---
+//
+// Тут числа, а не поля конфігу, бо міняти їх окремо від самого критерію
+// немає сенсу: вони описують не політику, а те, як читається статистика.
+
+// Нижня межа порога. Страховка від виродженої оцінки шуму (коротке вікно,
+// підозріло чистий лінк): поріг, менший за це, означав би, що ми віримо
+// власному вимірникові точніше, ніж він того вартий.
+constexpr double kLockFloorMs = 0.10;
+
+// Верхня межа — частка запасу. Прапорець не має світитися, коли похибка
+// з'їдає помітну частину того, що відділяє нас від обриву пили, навіть
+// якщо вимір настільки грубий, що формально "не розрізняє".
+constexpr double kLockGuardFrac = 0.25;
+
+// У скільки шумів виміру дозволено гуляти похибці. Рівно один шум був би
+// занадто жорстко: розкид сам оцінюється по короткій пам'яті ЕМА й має
+// власну похибку близько 27%.
+constexpr double kLockSpreadK = 1.6;
+
+// Гістерезис: узятий поріг розпускається, поки прапорець уже стоїть.
+// Без нього індикатор тремтить рівно на межі — тобто саме тоді, коли на
+// нього дивляться.
+constexpr double kLockHyst = 1.5;
+
 } // namespace
 
 struct PhaseController::Impl {
@@ -68,7 +93,17 @@ struct PhaseController::Impl {
     int applied_mhz = 0;           // що, за нашими даними, стоїть на камері
     int64_t last_send_ns = 0;
     uint64_t last_taken = 0;
-    int lock_run = 0;
+
+    // Стан ІНДИКАТОРА захоплення. Живе окремо від регулятора й на
+    // керування не впливає ніяк: згладжування в контурі коштувало б
+    // швидкодією, а тут воно потрібне лише щоб відрізнити рух фази від
+    // шуму її виміру.
+    double err_mean = 0;           // ЕМА похибки — зміщення
+    double err_var = 0;            // ЕМА квадрата відхилення від нього
+    bool lock_valid = false;       // фільтри вже засіяні
+    bool locked = false;           // попередній стан — для гістерезису
+    uint64_t ticks = 0, lock_ticks = 0;
+    uint64_t legacy_lock_run = 0, legacy_lock_ticks = 0;
 
     Impl(display::Display& d, render::GlRenderer& r,
          std::shared_ptr<source::FrameSource> s, Config c)
@@ -76,11 +111,18 @@ struct PhaseController::Impl {
           camera(cfg.camera) {}
 
     void hold(const char* why) {
+        // Пауза в ЛАНЦЮЖКУ вимірів, а не просто пропущений такт: після
+        // неї фаза може стояти зовсім не там, де стояла. Тягти через
+        // розрив згладжену похибку означало б показати захоплення, якого
+        // вже немає.
+        lock_valid = false;
+        locked = false;
+        legacy_lock_run = 0;
+
         std::lock_guard<std::mutex> lk(st_mtx);
         st.engaged = false;
         st.locked = false;
         st.holding = why;
-        lock_run = 0;
     }
 
     // Записує значення на камеру. Повертає true, якщо камера підтвердила.
@@ -201,8 +243,52 @@ struct PhaseController::Impl {
             push(want);
         }
 
-        const bool in_lock = std::fabs(err) <= cfg.lock_ms;
-        lock_run = in_lock ? lock_run + 1 : 0;
+        // --- ІНДИКАТОР ЗАХОПЛЕННЯ ---
+        //
+        // Питання, на яке він відповідає: чи відрізняється те, що ми
+        // бачимо, від "фаза стоїть на цілі, а гуляє лише вимір".
+        //
+        // Крок за часом беремо номінальний: справжній гуляє на десятки
+        // мілісекунд через блокуючий запит до камери, і для сталої в 2 с
+        // це нічого не міняє.
+        const double alpha = 1.0 - std::exp(-(cfg.update_ms / 1000.0) / cfg.lock_tau_s);
+
+        if (!lock_valid) {
+            err_mean = err;
+            err_var = 0.0;
+            lock_valid = true;
+        } else {
+            err_mean += alpha * (err - err_mean);
+            const double dev = err - err_mean;
+            err_var += alpha * (dev * dev - err_var);
+        }
+        const double err_spread = std::sqrt(err_var);
+
+        // Шум одиничного виміру фази (σ середнього по вікну). Поки
+        // вимірник його не дає — критерій не працює, і чесніше не
+        // світити прапорцем узагалі, ніж світити навмання.
+        const double noise = rs.phase_noise_ms;
+
+        // Згладжування давить некорельований шум у √(α/(2−α)) разів.
+        // Сусідні такти читають РІЗНІ вікна виміру (такт 500 мс, вікно
+        // 250), тож незалежність тут не припущення, а конструкція.
+        const double smooth_noise = noise * std::sqrt(alpha / (2.0 - alpha));
+        double thr = clamp(cfg.lock_sigmas * smooth_noise,
+                           kLockFloorMs, guard * kLockGuardFrac);
+
+        const double relax = locked ? kLockHyst : 1.0;
+        const bool bias_ok = std::fabs(err_mean) <= thr * relax;
+        const bool spread_ok = err_spread <= kLockSpreadK * noise * relax;
+        locked = (noise > 0.0) && bias_ok && spread_ok;
+
+        ticks++;
+        if (locked) lock_ticks++;
+
+        // СТАРИЙ КРИТЕРІЙ поруч — щоб A/B ліг з одного прогону, а не з
+        // двох різних п'ятихвилинок: петля стохастична, і порівнювати її
+        // саму з собою в різні дні означає міряти погоду.
+        legacy_lock_run = std::fabs(err) <= 0.5 ? legacy_lock_run + 1 : 0;
+        if (legacy_lock_run >= 3) legacy_lock_ticks++;
 
         {
             std::lock_guard<std::mutex> lk(st_mtx);
@@ -217,7 +303,13 @@ struct PhaseController::Impl {
             st.jitter_ms = rs.phase_jitter_ms;
             st.guard_ms = guard;
             st.latency_ms = period_ms - rs.phase_ms;
-            st.locked = lock_run >= 3;
+            st.locked = locked;
+            st.error_smooth_ms = err_mean;
+            st.error_spread_ms = err_spread;
+            st.meas_noise_ms = noise;
+            st.lock_thr_ms = thr;
+            st.ticks = ticks;
+            st.lock_ticks = lock_ticks;
         }
     }
 
@@ -244,6 +336,18 @@ struct PhaseController::Impl {
                 continue;
             }
             tick();
+        }
+
+        // Скільки часу петля справді тримала фазу — число, яке інакше
+        // довелося б вигрібати з логу по слову ЗАХОПЛЕНО.
+        if (ticks > 0) {
+            std::fprintf(stderr,
+                         "[фаза] тактів ведення %llu, у захопленні %llu (%.1f%%)"
+                         " | старий критерій |похибка|<=0.5 три поспіль: %llu (%.1f%%)\n",
+                         (unsigned long long)ticks, (unsigned long long)lock_ticks,
+                         100.0 * lock_ticks / ticks,
+                         (unsigned long long)legacy_lock_ticks,
+                         100.0 * legacy_lock_ticks / ticks);
         }
 
         // Лишати камеру підстроєною після нашого виходу нема сенсу:

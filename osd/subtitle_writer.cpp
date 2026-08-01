@@ -188,7 +188,9 @@ struct SubtitleWriter::Impl {
         // де загубились кадри — у лінку, в декодері чи вже на показі.
         for (uint8_t ch : {VT_TLM_LOCAL_RECORDING_STATE, VT_TLM_LOCAL_LINE_LOSS,
                            VT_TLM_LOCAL_H265_FPS, VT_TLM_LOCAL_MJPEG_FPS,
-                           VT_TLM_LOCAL_H265_SHOWN_FPS, VT_TLM_LOCAL_DISPLAY_FPS}) {
+                           VT_TLM_LOCAL_H265_SHOWN_FPS, VT_TLM_LOCAL_DISPLAY_FPS,
+                           VT_TLM_LOCAL_PHASE_LOCK, VT_TLM_LOCAL_LATENCY_MS,
+                           VT_TLM_LOCAL_DROPPED_FPS, VT_TLM_LOCAL_LATE_FPS}) {
             debug_channels.push_back({vt_telemetry_channel_name(ch), ch});
         }
         std::fprintf(stderr, "[субтитри] дебажних каналів %zu\n", debug_channels.size());

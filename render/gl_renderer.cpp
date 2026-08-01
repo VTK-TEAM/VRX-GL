@@ -102,6 +102,7 @@ struct GlRenderer::Impl {
     // підтвердження flip'а стосується саме його — звідси й затримка.
     std::atomic<int64_t> inflight_produced_ns{0};
     int64_t prev_pres_produced = 0;   // лише з потоку подій DRM
+    int64_t last_late_produced = 0;   // лише з потоку рендерера
 
     // Адаптивний зсув опиту від початку періоду, мс.
     //
@@ -451,6 +452,35 @@ struct GlRenderer::Impl {
         }
     }
 
+    // КАДР, ЩО ЗАПІЗНИВСЯ НА ОПИТ. Не втрачений і не повторений — просто
+    // поїде на екран на розгортку пізніше, ніж міг би.
+    //
+    // Затримка як функція фази — пила з єдиним обривом рівно в точці
+    // опиту: кадр, що встиг, чекає (період − фаза), а кадр, що спізнився
+    // на мікросекунду, чекає ЦІЛИЙ зайвий період. По жодному наявному
+    // лічильнику цього не видно: кадр цілий, черга здорова, крок зйомки в
+    // нормі — усі показання ідеальні, а затримка стрибнула на 17 мс.
+    //
+    // Саме цей перехід і є те, що петля фази тримає під контролем, тож
+    // лічильник — пряма міра її роботи, а не непряма.
+    //
+    // Арифметика по модулю періоду тут не формальність: кадр, знятий у
+    // попередньому періоді ПІСЛЯ його опиту, приходить сюди вже після
+    // наступної розгортки, тобто produced < vblank. Обгортка робить із
+    // цього велику фазу — тобто рівно "спізнився", як і має бути.
+    void count_late(int64_t produced, int64_t vblank) {
+        if (produced <= 0 || vblank <= 0 || period_ns <= 0) return;
+        if (produced == last_late_produced) return;   // той самий кадр
+        last_late_produced = produced;
+
+        int64_t rel = (produced - vblank) % period_ns;
+        if (rel < 0) rel += period_ns;
+
+        std::lock_guard<std::mutex> lk(stats_mtx);
+        st.taken_new++;
+        if (rel / 1e6 > poll_offset_ms) st.late++;
+    }
+
     void draw_frame() {
         if (cfg.colortest) { draw_colortest(); return; }
 
@@ -466,9 +496,9 @@ struct GlRenderer::Impl {
         int64_t primary_produced = 0;
         if (!collect_items(items, primary_produced)) return;
 
-        phase.sample(primary_produced,
-                     last_present_ns.load(std::memory_order_relaxed),
-                     period_ns);
+        const int64_t vbl = last_present_ns.load(std::memory_order_relaxed);
+        phase.sample(primary_produced, vbl, period_ns);
+        count_late(primary_produced, vbl);
 
         // Наступне підтвердження flip'а стосуватиметься саме цього кадру —
         // звідси й наскрізна затримка.
@@ -977,6 +1007,7 @@ RenderStats GlRenderer::stats() const {
     // 0 = вікно ще не закрилося. Контролер на цьому бере
     // максимальний запас, а не мінімальний.
     s.phase_jitter_ms = ph.valid ? ph.jitter_ms : 0.0;
+    s.phase_noise_ms = ph.noise_ms;
     return s;
 }
 

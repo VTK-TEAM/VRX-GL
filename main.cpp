@@ -262,7 +262,8 @@ int main(int argc, char** argv) {
         // потік: він опитує підсистеми, а не вони його штовхають.
         local_ch = std::make_unique<vrx::osd::LocalChannels>(
             vrx::osd::LocalChannels::Config{});
-        local_ch->start(osd->storage(), display, recorder, storage, main_src, pip_src);
+        local_ch->start(osd->storage(), display, renderer, phase,
+                        recorder, storage, main_src, pip_src);
 
         subs = std::make_unique<vrx::osd::SubtitleWriter>(sub_cfg);
         if (subs->init()) {
@@ -354,6 +355,15 @@ int main(int argc, char** argv) {
                         ps.trim_mhz, ps.display_hz,
                         ps.locked ? "ЗАХОПЛЕНО" : "ведення",
                         ps.last_write_failed ? " | КАМЕРА НЕ ВІДПОВІДАЄ" : "");
+            // Три числа, з яких видно, ЧОМУ прапорець стоїть або не
+            // стоїть: зміщення, його розкид і поріг, порахований із шуму
+            // самого виміру фази. Без них "не захоплено" не читається.
+            std::printf("               зміщення %+.2f, розкид %.2f мс проти шуму виміру"
+                        " %.2f | поріг %.2f | у захопленні %llu з %llu тактів (%.0f%%)\n",
+                        ps.error_smooth_ms, ps.error_spread_ms, ps.meas_noise_ms,
+                        ps.lock_thr_ms, (unsigned long long)ps.lock_ticks,
+                        (unsigned long long)ps.ticks,
+                        ps.ticks ? 100.0 * ps.lock_ticks / ps.ticks : 0.0);
         } else {
             std::printf("          ФАПЧ: не веде (%s)\n", ps.holding);
         }
