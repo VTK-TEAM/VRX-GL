@@ -912,6 +912,52 @@ bool Display::Impl::configure_output() {
         }
     }
     if (!chosen) chosen = &conn->modes[0];   // PREFERRED не позначений — беремо перший
+
+    // --- стеля роздільності ---
+    //
+    // Спрацьовує лише коли режим обрано НЕ на пряме прохання: явний
+    // want_* означає, що просили саме це.
+    const bool asked_explicitly = (d.cfg.want_width > 0 && d.cfg.want_height > 0 &&
+                                   chosen->hdisplay == d.cfg.want_width &&
+                                   chosen->vdisplay == d.cfg.want_height);
+    const bool over_cap = d.cfg.max_width > 0 && d.cfg.max_height > 0 &&
+                          (chosen->hdisplay > d.cfg.max_width ||
+                           chosen->vdisplay > d.cfg.max_height);
+    if (over_cap && !asked_explicitly) {
+        // Найбільший режим у межах стелі; за рівної площі — з вищою
+        // частотою. Площа, а не ширина: 1920x1080 має перемагати
+        // 1920x800, хоч вони й однакової ширини.
+        const drmModeModeInfo* best = nullptr;
+        long best_area = -1;
+        int best_hz = -1;
+        for (int i = 0; i < conn->count_modes; ++i) {
+            const drmModeModeInfo& m = conn->modes[i];
+            if (m.hdisplay > d.cfg.max_width || m.vdisplay > d.cfg.max_height) continue;
+            const long area = (long)m.hdisplay * m.vdisplay;
+            const int hz = (int)m.vrefresh;
+            if (area > best_area || (area == best_area && hz > best_hz)) {
+                best = &m;
+                best_area = area;
+                best_hz = hz;
+            }
+        }
+        if (best) {
+            std::fprintf(stderr,
+                "[дисплей] монітор просить %dx%d — це понад стелю %dx%d,"
+                " беру %dx%d@%d (зведення коштує смуги пам'яті, а вона росте з площею)\n",
+                chosen->hdisplay, chosen->vdisplay,
+                d.cfg.max_width, d.cfg.max_height,
+                best->hdisplay, best->vdisplay, best->vrefresh);
+            chosen = best;
+        } else {
+            // Панель узагалі не має режиму в межах стелі. Працюємо на
+            // тому, що є: чорний екран гірший за дорогий.
+            std::fprintf(stderr,
+                "[дисплей] жодного режиму в межах %dx%d, лишаю %dx%d\n",
+                d.cfg.max_width, d.cfg.max_height, chosen->hdisplay, chosen->vdisplay);
+        }
+    }
+
     d.mode = *chosen;
 
     // --- опускаємо частоту розгортки, не чіпаючи піксельний клок ---

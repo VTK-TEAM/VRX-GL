@@ -55,7 +55,10 @@ public:
         addr.sin_port = htons(port_);
 
         if (bind(socket_fd_, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-            std::perror("udp_listener: bind failed");
+            // МОВЧКИ. Викликач сам вирішує, як про це сказати: у
+            // телеметрії, наприклад, спроба повторюється раз на секунду, і
+            // perror звідси залив би лог тринадцятьма однаковими рядками
+            // за перші тринадцять секунд — заміряно.
             close(socket_fd_);
             socket_fd_ = -1;
             return false;

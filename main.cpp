@@ -122,6 +122,29 @@ int main(int argc, char** argv) {
     vrx::display::Display::Config disp_cfg;
     disp_cfg.target_refresh_hz = 59.0;
     if (const char* e = std::getenv("VRX_REFRESH")) disp_cfg.target_refresh_hz = std::atof(e);
+    // VRX_MODE=1920x1080 — узяти конкретний режим замість PREFERRED.
+    // Потрібно не для польоту, а для перевірок, які інакше вимагають
+    // іншого монітора: масштаб OSD, вартість зведення на більшій площі,
+    // поведінка при зміні геометрії. Немає такого режиму — дисплей сам
+    // скаже й візьме PREFERRED.
+    if (const char* e = std::getenv("VRX_MODE")) {
+        int w = 0, h = 0;
+        if (std::sscanf(e, "%dx%d", &w, &h) == 2 && w > 0 && h > 0) {
+            disp_cfg.want_width = w;
+            disp_cfg.want_height = h;
+        }
+    }
+    // VRX_MAX_MODE=1280x720 — посунути СТЕЛЮ роздільності. Типово
+    // 1920x1080: більше коштує смуги пам'яті, а вона тут головна стаття.
+    // Потрібно і для перевірки самої стелі (4K-монітора під рукою нема), і
+    // на випадок слабшої плати, де навіть Full HD виявиться забагато.
+    if (const char* e = std::getenv("VRX_MAX_MODE")) {
+        int w = 0, h = 0;
+        if (std::sscanf(e, "%dx%d", &w, &h) == 2 && w > 0 && h > 0) {
+            disp_cfg.max_width = w;
+            disp_cfg.max_height = h;
+        }
+    }
     vrx::display::Display display(disp_cfg);
     if (!display.open()) {
         std::fprintf(stderr, "[main] дисплей не відкрився\n");
@@ -317,7 +340,7 @@ int main(int argc, char** argv) {
         main_src->decode_latency(&dc_mn, &dc_avg, &dc_mx);
 
         std::printf("  %5.1f с | показано %llu (%.1f/с) | GPU %.2f мс"
-                    " | h265 %dx%d: нових %llu, повтор %llu, дроп %llu"
+                    " | h265 %dx%d: нових %llu, повтор %llu, дроп %llu, НЕ ПРИЙШЛО %llu"
                     " | ЗАТРИМКА %.1f мс | ФАЗА %.1f мс (дрейф %+.2f мс/с) | опит %.1f\n"
                     "          ЧАСТОТИ: камера %.4f | екран %.4f | різниця %+.0f мГц"
                     " -> дрейф має бути %+.2f мс/с\n"
@@ -327,7 +350,7 @@ int main(int argc, char** argv) {
                     rs.avg_draw_ms,
                     main_src->frame_width(), main_src->frame_height(),
                     (unsigned long long)ms.taken, (unsigned long long)ms.reused,
-                    (unsigned long long)ms.dropped,
+                    (unsigned long long)ms.dropped, (unsigned long long)ms.missing,
                     rs.latency_avg_ms, rs.phase_ms, rs.phase_drift_ms_per_s,
                     rs.poll_offset_ms,
                     ms.produced_hz, ds.measured_hz,
@@ -383,6 +406,7 @@ int main(int argc, char** argv) {
                         " | 208 дроп %s | 209 пізно %s\n",
                         ch(200).c_str(), ch(206).c_str(), ch(207).c_str(),
                         ch(208).c_str(), ch(209).c_str());
+            std::printf("               210 не прийшло кадрів: %s\n", ch(210).c_str());
 
             auto os = osd->stats();
             std::printf("          OSD: квадів %llu | збірок %llu по %.2f мс"

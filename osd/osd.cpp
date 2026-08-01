@@ -4,6 +4,7 @@
 #include "stb_image.h"
 #include "telemetry/vt_telemetry_fetch.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -73,6 +74,18 @@ struct Osd::Impl {
     mutable std::mutex st_mtx;
     OsdStats st{};
 
+    // Масштаб гліфів для поточного екрана. Рахується на початку build(),
+    // читається під час неї ж — тобто живе в одному потоці. Нуль на
+    // старті, а не одиниця: інакше на цільовому екрані, де множник рівно
+    // 1.0, перший рядок у лог не надрукувався б, і перевірити масштаб
+    // можна було б лише на нецільовому.
+    float glyph_scale = 0.0f;
+
+    // Стан підйому приймача телеметрії. Тільки потік збирача.
+    bool listener_up = false;
+    int64_t last_listen_try_ms = 0;
+    int listen_fails = 0;
+
     explicit Impl(Config c) : cfg(std::move(c)) {}
 
     // --- завантаження ---
@@ -137,6 +150,14 @@ struct Osd::Impl {
                          cfg.glyph_bin.c_str(), count);
             return false;
         }
+        // Файл упорядкованим не приходить: символи в ньому йдуть за
+        // кодом, а іконки дописані в кінці й порядок ламають. Сортуємо
+        // свою копію — формат файлу для цього чіпати не треба.
+        std::stable_sort(glyphs.begin(), glyphs.end(),
+                         [](const OsdGlyphInfo& a, const OsdGlyphInfo& b) {
+                             return a.unicode_char < b.unicode_char;
+                         });
+
         std::fprintf(stderr, "[osd] гліфів %u\n", count);
         return true;
     }
@@ -239,11 +260,26 @@ struct Osd::Impl {
 
     // --- пошук гліфа ---
 
+    // Гліфи впорядковані за кодом при завантаженні, тож тут двійковий
+    // пошук замість перебору.
+    //
+    // Було лінійно по 1095 записах НА КОЖЕН СИМВОЛ: при ~220 квадах це
+    // близько чверті мільйона порівнянь на збірку, двадцять разів на
+    // секунду. Заміряно 0.2–0.4 мс — сьогодні не болить, але росте і з
+    // атласом, і з кількістю елементів, тобто впреться саме тоді, коли
+    // розкладку зроблять щільнішою.
+    //
+    // Сортування СТАБІЛЬНЕ, і це не дрібниця: у наборі є пара іконок з
+    // однаковим хешем (compass_heading і ground_speed), а перебір віддавав
+    // ту, що йде в файлі першою. Стабільне сортування зберігає цей самий
+    // порядок, тож поведінка для колізій не змінюється — правка про
+    // швидкість, а не про вибір гліфа.
     const OsdGlyphInfo* find_glyph(uint32_t full_code) const {
-        for (const auto& g : glyphs) {
-            if (g.unicode_char == full_code) return &g;
-        }
-        return nullptr;
+        const auto it = std::lower_bound(
+            glyphs.begin(), glyphs.end(), full_code,
+            [](const OsdGlyphInfo& g, uint32_t code) { return g.unicode_char < code; });
+        if (it == glyphs.end() || it->unicode_char != full_code) return nullptr;
+        return &*it;
     }
 
     // --- видача квадів ---
@@ -280,10 +316,17 @@ struct Osd::Impl {
     // Трактувати g.width як частку ШИРИНИ ЕКРАНА (як довелося зробити в
     // CPU-версії VRX, бо там не було чим перевірити) не можна: пропорції
     // атласа й екрана різні, і гліфи вийшли б сплюснуті.
+    //
+    // МАСШТАБ. Піксельний розмір гліфа множиться на glyph_scale — це
+    // відношення висоти екрана до тієї, на якій робили розкладку. Без
+    // нього позиції масштабувались із екраном, а розміри ні: на 1080p
+    // проти 1366x768 напис виходив у 1.4 раза дрібнішим відносно
+    // картинки. Множник ОДИН на обидві осі, інакше екран з іншою
+    // пропорцією розтягнув би літери.
     float emit_glyph(render::DrawList& dl, const OsdGlyphInfo& g,
                      float x, float y, int fw, int fh) const {
-        const float w = g.width * atlas_w / fw;
-        const float h = g.height * atlas_h / fh;
+        const float w = g.width * atlas_w * glyph_scale / fw;
+        const float h = g.height * atlas_h * glyph_scale / fh;
         push_rect(dl, 0, x, y, w, h,
                   g.left, g.top, g.left + g.width, g.top + g.height);
         return x + w;
@@ -491,6 +534,17 @@ struct Osd::Impl {
         const int fh = frame_h.load(std::memory_order_relaxed);
         if (fw <= 0 || fh <= 0) return;      // рендерер ще не сказав геометрію
 
+        const float scale = (cfg.layout_ref_height > 0)
+                          ? float(fh) / float(cfg.layout_ref_height) : 1.0f;
+        if (scale != glyph_scale) {
+            // Рядок один на зміну геометрії. Без нього перевірити масштаб
+            // можна лише оком і лише маючи другий монітор.
+            std::fprintf(stderr, "[osd] екран %dx%d -> масштаб гліфів %.3f"
+                         " (розкладку робили на висоті %d)\n",
+                         fw, fh, scale, cfg.layout_ref_height);
+            glyph_scale = scale;
+        }
+
         const int64_t t0 = now_ns();
 
         render::DrawList dl;
@@ -568,8 +622,35 @@ struct Osd::Impl {
         }
     }
 
+    // ПРИЙМАЧ ТЕЛЕМЕТРІЇ ПІДНІМАЄТЬСЯ У ФОНІ, І ЙОГО НЕВДАЧА НЕ ВБИВАЄ OSD.
+    //
+    // Раніше невдалий bind означав, що OSD не піднімається ВЗАГАЛІ —
+    // разом із локальними каналами, яким той сокет не потрібен: частоти,
+    // затримка, стан запису, втрачені кадри рахуються станцією самою.
+    // Тобто зайнятий порт забирав і те, що від нього не залежить, та ще й
+    // назавжди: повторної спроби не було.
+    //
+    // Той самий клас, що вже виправляли двічі — невдалий build() у джерелі
+    // й open_probe() у рекордері. Разова невдача на старті не має вимикати
+    // підсистему до кінця польоту.
+    void try_listener(int64_t now) {
+        if (listener_up || now - last_listen_try_ms < 1000) return;
+        last_listen_try_ms = now;
+        if (listener.start(storage, cfg.telemetry_port)) {
+            listener_up = true;
+            std::fprintf(stderr, "[osd] приймач телеметрії піднявся на порту %u%s\n",
+                         cfg.telemetry_port, listen_fails ? " (з повторної спроби)" : "");
+        } else if (listen_fails++ == 0) {
+            // Рядок один: далі пробуємо мовчки, щоб не залити лог за політ.
+            std::fprintf(stderr, "[osd] приймач телеметрії не став на порт %u,"
+                         " пробую раз на секунду; локальні канали працюють\n",
+                         cfg.telemetry_port);
+        }
+    }
+
     void loop() {
         while (running.load(std::memory_order_relaxed)) {
+            try_listener(now_ns() / 1000000);
             build();
             std::unique_lock<std::mutex> lk(wake_mtx);
             wake_cv.wait_for(lk, std::chrono::milliseconds(cfg.rebuild_ms),
@@ -594,14 +675,10 @@ bool Osd::init() {
 bool Osd::start() {
     if (impl_->running.load()) return true;
 
-    // Потік 1: приймач телеметрії. Піднімає власний сокет і власний потік.
-    if (!impl_->listener.start(impl_->storage, impl_->cfg.telemetry_port)) {
-        std::fprintf(stderr, "[osd] приймач телеметрії не піднявся (порт %u)\n",
-                     impl_->cfg.telemetry_port);
-        return false;
-    }
-
-    // Потік 2: збирач списку квадів.
+    // Збирач квадів піднімається БЕЗУМОВНО. Приймач телеметрії — його
+    // турбота: перша спроба на першому ж такті, далі раз на секунду, поки
+    // не вийде. OSD від цього не залежить: локальні канали станція рахує
+    // сама, і показувати їх треба навіть тоді, коли з борту не йде нічого.
     impl_->running.store(true);
     impl_->builder = std::thread([this] { impl_->loop(); });
 
