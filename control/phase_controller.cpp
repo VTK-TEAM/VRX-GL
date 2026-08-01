@@ -64,6 +64,7 @@ struct PhaseController::Impl {
     static constexpr int kPhaseTermLag = 2;
     double phase_term_hist[kPhaseTermLag] = {};
     int hist_head = 0;
+    bool seeded = false;           // частотну ланку вже засіяно виміром
     int applied_mhz = 0;           // що, за нашими даними, стоїть на камері
     int64_t last_send_ns = 0;
     uint64_t last_taken = 0;
@@ -130,10 +131,9 @@ struct PhaseController::Impl {
         // Поки розкид ще не виміряний (коротка вибірка після старту),
         // беремо МАКСИМАЛЬНИЙ запас: помилитися в бік зайвої затримки
         // дешевше, ніж у бік втрачених кадрів.
-        double guard = rs.phase_jitter_ms > 0.0
-                     ? cfg.guard_sigmas * rs.phase_jitter_ms
-                     : cfg.guard_max_ms;
-        guard = clamp(guard, cfg.guard_min_ms, cfg.guard_max_ms);
+        // Запас сталий: підлаштовувати його під поточний розкид означає
+        // рухати ціль, а рух цілі петля потім виправляє як помилку.
+        const double guard = cfg.guard_ms;
 
         double target = cfg.target_phase_ms;
         if (target < 0.0) target = rs.poll_offset_ms - guard;
@@ -161,8 +161,27 @@ struct PhaseController::Impl {
         phase_term_hist[hist_head] = cfg.kp_mhz_per_ms * err;
         hist_head = (hist_head + 1) % kPhaseTermLag;
 
-        freq_mhz -= cfg.kf_per_step * (mismatch_mhz - own * cfg.actuator_gain)
-                    / cfg.actuator_gain;
+        // ОДНОРАЗОВЕ ЗАСІВАННЯ замість повільного набігання з нуля.
+        //
+        // Ланка шукає константу — розстройку кварців, — і ця константа
+        // ВИМІРЮЄТЬСЯ прямо, першим же виміром дрейфу. Набігати на неї
+        // інтегратором означає витратити стільки часу, скільки дозволить
+        // стала ланки, і весь цей час тримати фазу не там, де треба.
+        //
+        // Заміряно: при kf = 0.01 (стала 50 с) захоплення тривало 140 с,
+        // і за цей час на екран не дійшло 4% кадрів, а крок зйомки був у
+        // нормі лише 96%. Проти 20 с і 99.7% при kf = 0.10.
+        //
+        // Тому перший достовірний вимір дрейфу застосовуємо ЦІЛКОМ, а
+        // повільний інтегратор далі лише підчищає залишок.
+        if (!seeded) {
+            freq_mhz = clamp(-mismatch_mhz / cfg.actuator_gain,
+                             -double(cfg.trim_limit_mhz), double(cfg.trim_max_mhz));
+            seeded = true;
+        } else {
+            freq_mhz -= cfg.kf_per_step * (mismatch_mhz - own * cfg.actuator_gain)
+                        / cfg.actuator_gain;
+        }
 
         // Антивіндап: частотна ланка сама по собі не має права впертися
         // в рейку, інакше після довгої відсутності сигналу петля
