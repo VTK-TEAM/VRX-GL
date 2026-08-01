@@ -9,6 +9,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <deque>
 #include <vector>
@@ -141,14 +142,27 @@ struct VideoSource::Impl {
 
     std::thread watchdog;
 
+    // Пауза сторожа переривається зупинкою, а не пересиджується.
+    // Прогресивний backoff доходить до 8 секунд, і на sleep_for це
+    // означало б, що stop() (а він join'ить сторожа) висить рівно
+    // стільки ж — Ctrl-C посеред паузи гальмував би вихід на 8 с.
+    std::mutex wake_mtx;
+    std::condition_variable wake_cv;
+
     // Коли востаннє буфер зайшов У ДЕКОДЕР. Не те саме, що last_frame_ms:
     // той про ВИХІД. Різниця між ними й відрізняє "камера мовчить" від
     // "декодер завис".
     std::atomic<int64_t> last_input_ms{0};
 
-    // Стан перезбирання: коли робили востаннє й скільки разів поспіль
-    // не вдалося.
-    int64_t last_restart_ms = 0;
+    // Коли зібрано ПОТОЧНИЙ пайплайн. Нуль означає, що його немає.
+    //
+    // Це не те саме, що "коли востаннє перезбирали": відлік прив'язаний
+    // до життя конкретного пайплайна, і саме тому він природно дає
+    // фору на старті — новозібраному декодеру треба дочекатись першого
+    // IDR, і до того кадрів на виході законно немає.
+    int64_t built_at_ms = 0;
+
+    // Скільки перезбирань поспіль не дали здорового пайплайна.
     int fail_streak = 0;
     std::atomic<bool> running{false};
 
@@ -214,53 +228,25 @@ struct VideoSource::Impl {
                 ? float(GST_VIDEO_INFO_PAR_N(&vi)) / float(GST_VIDEO_INFO_PAR_D(&vi))
                 : 1.0f;
 
-        {
-            struct timespec ts;
-            clock_gettime(CLOCK_MONOTONIC, &ts);
-            const double us = ts.tv_sec * 1e6 + ts.tv_nsec / 1e3;
-            if (prev_arrival_us > 0) {
-                const double dt = (us - prev_arrival_us) / 1000.0;
-                if (iv_n == 0 || dt < iv_min) iv_min = dt;
-                if (dt > iv_max) iv_max = dt;
-                iv_sum += dt;
-                iv_n++;
-            }
-            prev_arrival_us = us;
-        }
+        // ОДНА мітка часу на весь хвіст. Раніше тут стояло три
+        // послідовні clock_gettime() — для інтервалів, для produced_ns і
+        // для затримки декоду. Вони давали трохи різний час, тобто три
+        // заміри одного й того ж кадру не сходились між собою.
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        const int64_t at_ns = ts.tv_sec * 1000000000LL + ts.tv_nsec;
+        const double at_us = at_ns / 1e3;
+        frame->produced_ns = at_ns;
 
-        {
-            struct timespec ts;
-            clock_gettime(CLOCK_MONOTONIC, &ts);
-            frame->produced_ns = ts.tv_sec * 1000000000LL + ts.tv_nsec;
+        fw.store(f.width, std::memory_order_relaxed);
+        fh.store(f.height, std::memory_order_relaxed);
+        last_frame_ms.store(now_ms(), std::memory_order_relaxed);
 
-            // Частота по лічильнику на вікні 1..30 с. Джитер приходу
-            // (±5 мс) ділиться на довжину вікна: за 10 с це вже краще
-            // за 2 мГц, тобто тонше за крок підстроювання камери.
-            const int64_t now = frame->produced_ns;
-            const uint64_t seq = st.produced;          // ще не інкрементований
-            if (rate_anchor_ns == 0) {
-                rate_anchor_ns = now;
-                rate_anchor_n = seq;
-            } else {
-                const int64_t span = now - rate_anchor_ns;
-                const uint64_t dn = seq - rate_anchor_n;
-                if (span > 1000000000LL && dn > 0) {
-                    produced_hz = double(dn) * 1e9 / double(span);
-                    if (span > 30000000000LL) {
-                        rate_anchor_ns = now;
-                        rate_anchor_n = seq;
-                    }
-                }
-            }
-        }
-
+        // Затримка чистого декоду: вхід зіставляється з виходом за FIFO.
         {
-            struct timespec ts2;
-            clock_gettime(CLOCK_MONOTONIC, &ts2);
-            const double out_us = ts2.tv_sec * 1e6 + ts2.tv_nsec / 1e3;
             std::lock_guard<std::mutex> lk2(in_mtx);
             if (!in_times.empty()) {
-                const double dt = (out_us - in_times.front()) / 1000.0;
+                const double dt = (at_us - in_times.front()) / 1000.0;
                 in_times.pop_front();
                 if (dec_n == 0 || dt < dec_min) dec_min = dt;
                 if (dt > dec_max) dec_max = dt;
@@ -269,11 +255,45 @@ struct VideoSource::Impl {
             }
         }
 
-        fw.store(f.width, std::memory_order_relaxed);
-        fh.store(f.height, std::memory_order_relaxed);
-        last_frame_ms.store(now_ms(), std::memory_order_relaxed);
-
+        // ВСЯ решта статистики — під тим самим локом, що й черга.
+        //
+        // Раніше інтервали приходу й produced_hz рахувалися вище, поза
+        // локом, а stats() читав їх під локом. Тобто ФАПЧ, локальні
+        // канали ОСД і друк статусу читали ці поля просто конкурентно з
+        // записом. Найпомітніший наслідок — неузгоджена пара sum/n, з
+        // якої виходить середній інтервал, якого не було.
         std::lock_guard<std::mutex> lk(mtx);
+
+        if (prev_arrival_us > 0) {
+            const double dt = (at_us - prev_arrival_us) / 1000.0;
+            if (iv_n == 0 || dt < iv_min) iv_min = dt;
+            if (dt > iv_max) iv_max = dt;
+            iv_sum += dt;
+            iv_n++;
+        }
+        prev_arrival_us = at_us;
+
+        // Частота по лічильнику на вікні 1..30 с. Джитер приходу (±5 мс)
+        // ділиться на довжину вікна: за 10 с це вже краще за 2 мГц,
+        // тобто тонше за крок підстроювання камери.
+        {
+            const uint64_t seq = st.produced;          // ще не інкрементований
+            if (rate_anchor_ns == 0) {
+                rate_anchor_ns = at_ns;
+                rate_anchor_n = seq;
+            } else {
+                const int64_t span = at_ns - rate_anchor_ns;
+                const uint64_t dn = seq - rate_anchor_n;
+                if (span > 1000000000LL && dn > 0) {
+                    produced_hz = double(dn) * 1e9 / double(span);
+                    if (span > 30000000000LL) {
+                        rate_anchor_ns = at_ns;
+                        rate_anchor_n = seq;
+                    }
+                }
+            }
+        }
+
         frame->where = place;
         queue.push_back(std::move(frame));
         while (queue.size() > kMaxQueue) {
@@ -364,12 +384,14 @@ struct VideoSource::Impl {
         pipeline = p;
         appsink = sink;
         bus = gst_element_get_bus(p);
+        built_at_ms = now_ms();
         std::fprintf(stderr, "[%s] порт %d, пайплайн піднято\n",
                      name.c_str(), cfg.udp_port);
         return true;
     }
 
     void teardown() {
+        built_at_ms = 0;
         if (bus) { gst_object_unref(bus); bus = nullptr; }
         if (appsink) { gst_object_unref(appsink); appsink = nullptr; }
         if (pipeline) {
@@ -405,33 +427,60 @@ struct VideoSource::Impl {
         return err;
     }
 
-    // Перезбирання пайплайна. Дві причини, і кожна своя.
     void restart(const char* why) {
-        std::fprintf(stderr, "[%s] перезбираю пайплайн: %s\n", name.c_str(), why);
+        // ЧИ ДОПОМОГЛО ПОПЕРЕДНЄ ПЕРЕЗБИРАННЯ. Ознака здорового
+        // пайплайна одна: він прожив довше за restart_after_ms і встиг
+        // віддати хоч кадр. Тоді нинішній збій — разовий, і реагувати на
+        // нього треба одразу, без пауз.
+        //
+        // Раніше прогресивна пауза рахувала ЛИШЕ невдалі build(), і тому
+        // не спрацьовувала в найгіршому випадку: пайплайн збирається
+        // успішно й одразу падає з помилкою на шині. fail_streak при
+        // цьому обнулявся, кулдауна на цій гілці не було — і сторож
+        // перезбирав п'ять разів на секунду, заливаючи лог.
+        const bool healthy = built_at_ms != 0 &&
+                             (now_ms() - built_at_ms) >= cfg.restart_after_ms &&
+                             last_frame_ms.load(std::memory_order_relaxed) != 0;
+        if (healthy) fail_streak = 0;
+        else if (fail_streak < 4) fail_streak++;
+
+        if (fail_streak > 1) {
+            std::fprintf(stderr, "[%s] перезбираю пайплайн: %s (%d-те поспіль, пауза %d с)\n",
+                         name.c_str(), why, fail_streak, 1 << (fail_streak - 1));
+        } else {
+            std::fprintf(stderr, "[%s] перезбираю пайплайн: %s\n", name.c_str(), why);
+        }
+
         teardown();
         last_input_ms.store(0, std::memory_order_relaxed);
         last_frame_ms.store(0, std::memory_order_relaxed);
 
-        if (build()) {
-            fail_streak = 0;
-        } else {
-            // Прогресивна пауза. При СТАЛІЙ помилці — немає елемента,
-            // зайнятий порт — перезбирання раз на 200 мс залило б лог і
-            // не дало б нічого. Крок 1, 2, 4, 8 с, стеля 8.
-            if (fail_streak < 4) fail_streak++;
-            const int wait_s = 1 << (fail_streak - 1);
-            std::this_thread::sleep_for(std::chrono::seconds(wait_s));
-        }
-        last_restart_ms = now_ms();
+        build();
+
+        // Прогресивна пауза 1, 2, 4, 8 с — стеля 8. Тримає темп
+        // перезбирань при СТАЛОМУ збої, байдуже якої природи: немає
+        // елемента, зайнятий порт, потік не той. Пайплайн, якщо він
+        // зібрався, живе й працює всю паузу — ми лише не смикаємо його
+        // повторно.
+        if (fail_streak > 0) nap(1000 << (fail_streak - 1));
     }
 
     void watchdog_loop() {
-        while (running.load(std::memory_order_relaxed)) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(200));
-            if (!running.load(std::memory_order_relaxed)) break;
+        while (nap(200)) {
+            // ПРИЧИНА НУЛЬОВА: пайплайна немає взагалі.
+            //
+            // Так буває лише після невдалого build(). Без цієї гілки
+            // канал лишався б мертвим назавжди: проби немає, шини немає,
+            // тож жодна з умов нижче спрацювати не може в принципі. А
+            // типові причини невдачі — порт ще тримає попередній процес,
+            // GStreamer ще не побачив плагін — минають самі за секунди.
+            if (!pipeline) {
+                restart("пайплайна немає");
+                continue;
+            }
 
             // ПРИЧИНА ПЕРША: елемент поскаржився. Однозначна, реагуємо
-            // одразу.
+            // одразу; темп повторів тримає пауза всередині restart().
             if (drain_bus_has_error()) {
                 restart("помилка на шині");
                 continue;
@@ -452,12 +501,29 @@ struct VideoSource::Impl {
 
             const bool data_flows = in != 0 && (now - in) < 1000;
             const bool no_frames = out == 0 || (now - out) > cfg.restart_after_ms;
-            const bool cooled = (now - last_restart_ms) > cfg.restart_after_ms;
 
-            if (data_flows && no_frames && cooled) {
+            // ФОРА НОВОМУ ПАЙПЛАЙНУ. Гілка `out == 0` інакше спрацьовує
+            // майже миттєво після старту: дані в декодер заходять за
+            // ~50 мс, а першого кадру на виході законно немає, поки не
+            // прийде IDR — а це до секунди, бо ми під'єднуємось посеред
+            // GOP. Раніше замість цього стояв кулдаун від ОСТАННЬОГО
+            // ПЕРЕЗБИРАННЯ, а на старті його ще не було: лічильник
+            // дорівнював нулю, умова була істинна з першого ж проходу, і
+            // станція перезбирала здоровий пайплайн на кожному запуску.
+            const bool settled = (now - built_at_ms) > cfg.restart_after_ms;
+
+            if (data_flows && no_frames && settled) {
                 restart("дані йдуть, а кадрів немає");
             }
         }
+    }
+
+    // Пауза, яку перериває stop(). false = час виходити.
+    bool nap(int ms) {
+        std::unique_lock<std::mutex> lk(wake_mtx);
+        wake_cv.wait_for(lk, std::chrono::milliseconds(ms),
+                         [this] { return !running.load(std::memory_order_relaxed); });
+        return running.load(std::memory_order_relaxed);
     }
 
     bool signal_ok() const {
@@ -482,15 +548,28 @@ const VideoSource::Config& VideoSource::config() const { return impl_->cfg; }
 bool VideoSource::start() {
     Impl& d = *impl_;
     if (d.running.load()) return true;
-    if (!d.build()) return false;
+
+    // СТОРОЖ ПІДНІМАЄТЬСЯ НЕЗАЛЕЖНО ВІД ТОГО, чи зібрався пайплайн з
+    // першого разу. Раніше невдача тут лишала канал мертвим до
+    // перезапуску програми: start() виходив із false, потік нагляду не
+    // стартував, і повторити спробу було нікому — а зайнятий порт чи
+    // ще не підхоплений плагін минають самі за секунди.
+    const bool ok = d.build();
     d.running.store(true);
     d.watchdog = std::thread([&d] { d.watchdog_loop(); });
+    if (!ok) {
+        std::fprintf(stderr, "[%s] пайплайн не зібрався на старті — сторож повторюватиме\n",
+                     d.name.c_str());
+    }
     return true;
 }
 
 void VideoSource::stop() {
     Impl& d = *impl_;
-    if (d.running.exchange(false) && d.watchdog.joinable()) d.watchdog.join();
+    if (d.running.exchange(false)) {
+        d.wake_cv.notify_all();          // інакше чекали б до 8 с паузи
+        if (d.watchdog.joinable()) d.watchdog.join();
+    }
     d.teardown();
 }
 
