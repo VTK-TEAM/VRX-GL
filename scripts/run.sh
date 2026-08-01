@@ -90,6 +90,23 @@ fi
 # Видима частина: те, що бачить інженер у вікні термінала.
 # ---------------------------------------------------------------------
 
+# ТЕРМІНАЛ ВІДКРИВАЄМО СОБІ САМІ, якщо нас запустили без нього. Файловий
+# менеджер саме так і робить, а нам треба і показати хід роботи, і дати
+# ввести пароль адміністратора. --hold лишає вікно відкритим, щоб
+# повідомлення можна було прочитати, а не ловити поглядом.
+if [[ ! -t 0 || ! -t 1 ]]; then
+    for term in xfce4-terminal x-terminal-emulator mate-terminal gnome-terminal lxterminal xterm; do
+        command -v "$term" >/dev/null 2>&1 || continue
+        case "$term" in
+            xfce4-terminal) exec "$term" --title=VRX-GL --hold -x bash "$0" "$@" ;;
+            xterm)          exec "$term" -title VRX-GL -hold -e bash "$0" "$@" ;;
+            *)              exec "$term" -e bash "$0" "$@" ;;
+        esac
+    done
+    # Термінала в системі немає — працюємо мовчки, усе піде в лог.
+fi
+
+
 # ВСЕ, ЩО ТУТ ДРУКУЄТЬСЯ, ДУБЛЮЄТЬСЯ У ФАЙЛ. Причина конкретна: якщо
 # вікно термінала закриється швидше, ніж людина встигне прочитати, від
 # помилки не лишається жодного сліду — наглядач свій лог ще не почав, бо
@@ -165,15 +182,27 @@ if command -v fuser >/dev/null 2>&1; then
     fi
 fi
 
-# ЗАПУСК ОКРЕМИМ СЕАНСОМ. setsid відв'язує наглядача від термінала, тож
-# загибель вікна разом із графічною сесією його вже не зачіпає.
+# ЗАПУСК ОКРЕМИМ СИСТЕМНИМ ЮНІТОМ.
+#
+# Тут недостатньо ні фонового запуску, ні навіть setsid. Причина тонка:
+# setsid міняє СЕАНС, але не виводить процес із cgroup графічної сесії.
+# А ми цю сесію гасимо — і systemd прибирає разом із нею все, що в ній
+# лишилось, включно з нашим наглядачем. У лозі це виглядало як
+# "Terminated" одразу після запуску, а на екрані — як спалах і
+# повернення робочого стола.
+#
+# systemd-run піднімає наглядача власним системним юнітом, поза будь-якою
+# сесією. Саме тому в старому VRX був systemd-юніт — тепер зрозуміло,
+# чому без нього не обійтись.
 say "Запускаю станцію..."
-if $SUDO setsid --fork bash "$HERE/scripts/run.sh" --supervise "$@" </dev/null >/dev/null 2>&1; then
-    :
+if command -v systemd-run >/dev/null 2>&1; then
+    $SUDO systemd-run --collect --unit=vrx-gl \
+        --description="VRX-GL" \
+        --property=WorkingDirectory="$HERE" \
+        bash "$HERE/scripts/run.sh" --supervise "$@" >/dev/null 2>&1
 else
-    # На системах без setsid --fork — те саме через nohup.
-    $SUDO nohup bash "$HERE/scripts/run.sh" --supervise "$@" </dev/null >/dev/null 2>&1 &
-    disown 2>/dev/null || true
+    # Без systemd лишається setsid: не так надійно, але краще, ніж нічого.
+    $SUDO setsid --fork bash "$HERE/scripts/run.sh" --supervise "$@" </dev/null >/dev/null 2>&1
 fi
 
 sleep 3

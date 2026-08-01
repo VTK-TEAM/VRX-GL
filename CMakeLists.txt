@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(VRX_GL CXX)
+project(VRX_GL CXX C)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -80,4 +80,13 @@ target_compile_options(vrx_gl PRIVATE
     ${EGL_CFLAGS_OTHER}
     ${GLES2_CFLAGS_OTHER}
     ${GST_CFLAGS_OTHER}
+)
+
+# Запускач для подвійного кліку. Двійковий навмисно: файловий менеджер
+# XFCE не виконує кліком ні .desktop у папці, ні шелл-скрипти — обидва
+# відкриваються як текст. Двійковий файл виконує.
+add_executable(vrx_launcher scripts/launcher.c)
+set_target_properties(vrx_launcher PROPERTIES
+    OUTPUT_NAME "ЗАПУСТИТИ VRX-GL"
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
