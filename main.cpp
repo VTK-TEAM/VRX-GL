@@ -24,6 +24,7 @@
 #include "record/recorder.hpp"
 #include "record/storage.hpp"
 #include "diag/link_monitor.hpp"
+#include "diag/path_meter.hpp"
 #include "display/display.hpp"
 #include "osd/osd.hpp"
 #include "osd/local_channels.hpp"
@@ -437,6 +438,10 @@ int main(int argc, char** argv) {
                 "          намальовано %llu, прохід GPU %.2f мс\n",
                 (unsigned long long)ds.presented, sec, ds.presented / sec, i.refresh_hz(),
                 (unsigned long long)rs.frames, rs.avg_draw_ms);
+
+    // Наскрізний вимір тракту, якщо його зібрано (VRX_MEASURE). У
+    // звичайній збірці від цього рядка не лишається нічого.
+    VRX_PM_REPORT();
 
     display.close();
     return 0;

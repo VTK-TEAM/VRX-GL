@@ -1,6 +1,7 @@
 #include "gl_renderer.hpp"
 #include "gl_quad.hpp"
 #include "phase_meter.hpp"
+#include "../diag/path_meter.hpp"
 
 #include <gbm.h>
 #include <EGL/egl.h>
@@ -355,6 +356,13 @@ struct GlRenderer::Impl {
         source::SourceFrame f;
     };
 
+#if VRX_MEASURE
+    // Що саме зараз їде на екран, по каналах. Заповнює потік малювання,
+    // читає потік подій дисплея в обробнику розгортки — звідти й лок.
+    std::mutex pm_mtx;
+    std::vector<std::pair<int, int64_t>> pm_inflight;
+#endif
+
     // Забирає кадри в усіх джерел і вкладає їх у порядок малювання.
     //
     // Повертає false, якщо показувати нема чого. Заглушку в такому разі
@@ -371,6 +379,9 @@ struct GlRenderer::Impl {
 
         const float screen_aspect = float(info.width) / float(info.height);
         items.reserve(snap.size());
+#if VRX_MEASURE
+        std::vector<std::pair<int, int64_t>> pm_now;
+#endif
         primary_produced = 0;
 
         bool primary = true;
@@ -398,9 +409,20 @@ struct GlRenderer::Impl {
             // вела б то одну камеру, то другу.
             if (is_primary) primary_produced = f.produced_ns;
 
+#if VRX_MEASURE
+            pm_now.push_back({VRX_PM_CHANNEL(src->name()), f.produced_ns});
+#endif
+
             items.push_back({layout::fit_source(f.where, a, screen_aspect), f});
         }
         if (items.empty()) return false;
+
+#if VRX_MEASURE
+        {
+            std::lock_guard<std::mutex> lk(pm_mtx);
+            pm_inflight.swap(pm_now);
+        }
+#endif
 
         // Порядок за z: менше — далі. Джерел одиниці, тож stable_sort
         // дешевший за будь-яку хитрість і зберігає порядок реєстрації
@@ -604,6 +626,14 @@ struct GlRenderer::Impl {
     // було видно, хоча вона рахує дві метрики тракту.
     void on_flip(int64_t t) {
         last_present_ns.store(t, std::memory_order_relaxed);
+
+        VRX_PM_FLIP(t);
+#if VRX_MEASURE
+        {
+            std::lock_guard<std::mutex> lk(pm_mtx);
+            for (const auto& e : pm_inflight) VRX_PM_SHOWN(e.first, e.second, t);
+        }
+#endif
 
         const int64_t produced = inflight_produced_ns.load(std::memory_order_relaxed);
         if (produced > 0) {

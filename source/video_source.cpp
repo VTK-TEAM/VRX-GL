@@ -1,5 +1,7 @@
 #include "video_source.hpp"
 
+#include "../diag/path_meter.hpp"
+
 #include <gst/gst.h>
 #include <gst/app/gstappsink.h>
 #include <gst/video/video.h>
@@ -144,6 +146,8 @@ struct VideoSource::Impl {
         d->in_prev_us = us;
         d->last_input_ms.store((int64_t)(us / 1000.0), std::memory_order_relaxed);
 
+        VRX_PM_IN(d->pm_ch, (int64_t)(us * 1000.0));
+
         d->in_times.push_back(us);
         // Якщо декодер щось проковтнув, черга міток поповзе — тоді
         // зіставлення втратить сенс, тож обмежуємо й скидаємо надлишок.
@@ -151,6 +155,9 @@ struct VideoSource::Impl {
         return GST_PAD_PROBE_OK;
     }
     std::atomic<int> fw{0}, fh{0};
+
+    // Номер каналу в наскрізному вимірі. -1, коли вимір вимкнено.
+    int pm_ch = -1;
 
     std::thread watchdog;
 
@@ -256,15 +263,20 @@ struct VideoSource::Impl {
 
         // Затримка чистого декоду: вхід зіставляється з виходом за FIFO.
         {
-            std::lock_guard<std::mutex> lk2(in_mtx);
-            if (!in_times.empty()) {
-                const double dt = (at_us - in_times.front()) / 1000.0;
-                in_times.pop_front();
-                if (dec_n == 0 || dt < dec_min) dec_min = dt;
-                if (dt > dec_max) dec_max = dt;
-                dec_sum += dt;
-                dec_n++;
+            double matched_in_us = 0;
+            {
+                std::lock_guard<std::mutex> lk2(in_mtx);
+                if (!in_times.empty()) {
+                    matched_in_us = in_times.front();
+                    const double dt = (at_us - matched_in_us) / 1000.0;
+                    in_times.pop_front();
+                    if (dec_n == 0 || dt < dec_min) dec_min = dt;
+                    if (dt > dec_max) dec_max = dt;
+                    dec_sum += dt;
+                    dec_n++;
+                }
             }
+            VRX_PM_OUT(pm_ch, at_ns, (int64_t)(matched_in_us * 1000.0));
         }
 
         // ВСЯ решта статистики — під тим самим локом, що й черга.
@@ -566,6 +578,8 @@ bool VideoSource::start() {
     // перезапуску програми: start() виходив із false, потік нагляду не
     // стартував, і повторити спробу було нікому — а зайнятий порт чи
     // ще не підхоплений плагін минають самі за секунди.
+    d.pm_ch = VRX_PM_CHANNEL(d.name.c_str());
+
     const bool ok = d.build();
     d.running.store(true);
     d.watchdog = std::thread([&d] { d.watchdog_loop(); });
