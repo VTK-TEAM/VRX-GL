@@ -95,8 +95,11 @@ int main(int argc, char** argv) {
     // Без цього прапорця не можна ні зміряти власну частоту камери, ні
     // перевірити, що підстроювання взагалі діє.
     bool phase_loop = true;
+    bool colortest = false;
     for (int i = 1; i < argc; ++i) {
-        if (std::string(argv[i]) == "--no-phase") phase_loop = false;
+        const std::string a = argv[i];
+        if (a == "--no-phase") phase_loop = false;
+        if (a == "--colortest") colortest = true;
     }
 
     stop_desktop_if_running();
@@ -141,7 +144,10 @@ int main(int argc, char** argv) {
     }
 
     vrx::render::GlRenderer renderer;
-    if (!renderer.init(display)) {
+    vrx::render::GlRenderer::Config rend_cfg;
+    rend_cfg.colortest = colortest;
+    if (colortest) std::printf("РЕЖИМ ПЕРЕВІРКИ КОЛЬОРУ: смуги R/G/B зліва направо\n");
+    if (!renderer.init(display, rend_cfg)) {
         std::fprintf(stderr, "[main] рендерер не піднявся\n");
         display.close();
         return 1;
