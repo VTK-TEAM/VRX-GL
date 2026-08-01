@@ -128,6 +128,7 @@ struct VideoSource::Impl {
             d->in_n++;
         }
         d->in_prev_us = us;
+        d->last_input_ms.store((int64_t)(us / 1000.0), std::memory_order_relaxed);
 
         d->in_times.push_back(us);
         // Якщо декодер щось проковтнув, черга міток поповзе — тоді
@@ -138,6 +139,16 @@ struct VideoSource::Impl {
     std::atomic<int> fw{0}, fh{0};
 
     std::thread watchdog;
+
+    // Коли востаннє буфер зайшов У ДЕКОДЕР. Не те саме, що last_frame_ms:
+    // той про ВИХІД. Різниця між ними й відрізняє "камера мовчить" від
+    // "декодер завис".
+    std::atomic<int64_t> last_input_ms{0};
+
+    // Стан перезбирання: коли робили востаннє й скільки разів поспіль
+    // не вдалося.
+    int64_t last_restart_ms = 0;
+    int fail_streak = 0;
     std::atomic<bool> running{false};
 
     // --- прийом кадру, викликається з потоку GStreamer ---
@@ -393,17 +404,57 @@ struct VideoSource::Impl {
         return err;
     }
 
+    // Перезбирання пайплайна. Дві причини, і кожна своя.
+    void restart(const char* why) {
+        std::fprintf(stderr, "[%s] перезбираю пайплайн: %s\n", name.c_str(), why);
+        teardown();
+        last_input_ms.store(0, std::memory_order_relaxed);
+        last_frame_ms.store(0, std::memory_order_relaxed);
+
+        if (build()) {
+            fail_streak = 0;
+        } else {
+            // Прогресивна пауза. При СТАЛІЙ помилці — немає елемента,
+            // зайнятий порт — перезбирання раз на 200 мс залило б лог і
+            // не дало б нічого. Крок 1, 2, 4, 8 с, стеля 8.
+            if (fail_streak < 4) fail_streak++;
+            const int wait_s = 1 << (fail_streak - 1);
+            std::this_thread::sleep_for(std::chrono::seconds(wait_s));
+        }
+        last_restart_ms = now_ms();
+    }
+
     void watchdog_loop() {
         while (running.load(std::memory_order_relaxed)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
             if (!running.load(std::memory_order_relaxed)) break;
 
+            // ПРИЧИНА ПЕРША: елемент поскаржився. Однозначна, реагуємо
+            // одразу.
             if (drain_bus_has_error()) {
-                std::fprintf(stderr, "[%s] перезапускаю пайплайн\n", name.c_str());
-                teardown();
-                if (!build()) {
-                    std::this_thread::sleep_for(std::chrono::seconds(1));
-                }
+                restart("помилка на шині");
+                continue;
+            }
+
+            // ПРИЧИНА ДРУГА: дані в декодер ІДУТЬ, а кадрів на виході
+            // немає. Це і є "декодер завис" або "негоціація не склалася":
+            // пайплайн у PLAYING, елементи здорові, на шині тиша.
+            //
+            // ЧОМУ САМЕ ТАКА УМОВА, А НЕ ПРОСТО "кадрів немає". Якщо
+            // камера мовчить, перезбирати НЕМА ЧОГО: udpsrc підхопить
+            // потік сам, щойно той з'явиться, і перезапуск був би
+            // марною роботою з ризиком. Відрізняє їх проба на вході
+            // декодера: буфери туди заходять — значить дані є.
+            const int64_t now = now_ms();
+            const int64_t in = last_input_ms.load(std::memory_order_relaxed);
+            const int64_t out = last_frame_ms.load(std::memory_order_relaxed);
+
+            const bool data_flows = in != 0 && (now - in) < 1000;
+            const bool no_frames = out == 0 || (now - out) > cfg.restart_after_ms;
+            const bool cooled = (now - last_restart_ms) > cfg.restart_after_ms;
+
+            if (data_flows && no_frames && cooled) {
+                restart("дані йдуть, а кадрів немає");
             }
         }
     }
