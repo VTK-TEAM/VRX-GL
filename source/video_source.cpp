@@ -280,14 +280,13 @@ struct VideoSource::Impl {
     // --- пайплайн ---
 
     // Збирає опис із гачків нащадка. Сама база про кодеки не знає нічого.
-    std::string describe(const std::string& variant) const {
+    std::string describe() const {
         std::string s = "udpsrc port=" + std::to_string(cfg.udp_port);
 
         const std::string c = owner->caps();
         if (!c.empty()) s += " caps=\"" + c + "\"";
 
         s += " ! " + owner->parse_chain();
-        if (!variant.empty()) s += " ! " + variant;
 
         // Без черги перед appsink. Вона стояла з max-size-buffers=1,
         // тобто була постійно повна й постійно текла, а appsink із
@@ -300,54 +299,62 @@ struct VideoSource::Impl {
     }
 
     bool build() {
-        const std::vector<std::string> variants = owner->decode_variants();
-        for (size_t variant = 0; variant < variants.size(); ++variant) {
-            const std::string desc = describe(variants[variant]);
-            GError* err = nullptr;
-            GstElement* p = gst_parse_launch(desc.c_str(), &err);
-            if (!p || err) {
-                std::fprintf(stderr, "[%s] пайплайн[%d] не зібрався: %s\n",
-                             name.c_str(), (int)(variant + 1), err ? err->message : "?");
-                if (err) g_error_free(err);
-                if (p) gst_object_unref(p);
-                continue;
-            }
+        // ОДИН ПАЙПЛАЙН, БЕЗ ВАРІАНТІВ. Раніше тут був перебір ланок між
+        // парсером і декодером — на випадок, якщо негоціація не складеться.
+        // Прибрано з двох причин.
+        //
+        // По-перше, він не працював саме тоді, коли був потрібен: невдала
+        // негоціація стається АСИНХРОННО, коли піде перший буфер, а
+        // set_state(PLAYING) на живому udpsrc успішний завжди. Тобто до
+        // другого варіанта справа не доходила ніколи, а після помилки на
+        // шині сторож перезбирав той самий перший.
+        //
+        // По-друге, вгадувати нема чого: камера — наша ж прошивка, потік
+        // сталий. Формат на стику пиниться явно в parse_chain() нащадка.
+        const std::string desc = describe();
 
-            GstElement* sink = gst_bin_get_by_name(GST_BIN(p), "sink");
-            if (!sink) { gst_object_unref(p); continue; }
-
-            GstAppSinkCallbacks cb{};
-            cb.new_sample = &Impl::on_new_sample;
-            gst_app_sink_set_callbacks(GST_APP_SINK(sink), &cb, this, nullptr);
-
-            if (gst_element_set_state(p, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
-                std::fprintf(stderr, "[%s] пайплайн[%d] не пішов у PLAYING\n",
-                             name.c_str(), (int)(variant + 1));
-                gst_element_set_state(p, GST_STATE_NULL);
-                gst_object_unref(sink);
-                gst_object_unref(p);
-                continue;
-            }
-
-            // Проба на ВХОДІ декодера: інтервали тут проти інтервалів на
-            // виході покажуть, хто саме створює парність.
-            if (GstElement* dec = gst_bin_get_by_name(GST_BIN(p), "dec")) {
-                if (GstPad* sp = gst_element_get_static_pad(dec, "sink")) {
-                    gst_pad_add_probe(sp, GST_PAD_PROBE_TYPE_BUFFER,
-                                      &Impl::on_dec_input, this, nullptr);
-                    gst_object_unref(sp);
-                }
-                gst_object_unref(dec);
-            }
-
-            pipeline = p;
-            appsink = sink;
-            bus = gst_element_get_bus(p);
-            std::fprintf(stderr, "[%s] порт %d, пайплайн[%d] піднято\n",
-                         name.c_str(), cfg.udp_port, (int)(variant + 1));
-            return true;
+        GError* err = nullptr;
+        GstElement* p = gst_parse_launch(desc.c_str(), &err);
+        if (!p || err) {
+            std::fprintf(stderr, "[%s] пайплайн не зібрався: %s\n",
+                         name.c_str(), err ? err->message : "?");
+            if (err) g_error_free(err);
+            if (p) gst_object_unref(p);
+            return false;
         }
-        return false;
+
+        GstElement* sink = gst_bin_get_by_name(GST_BIN(p), "sink");
+        if (!sink) { gst_object_unref(p); return false; }
+
+        GstAppSinkCallbacks cb{};
+        cb.new_sample = &Impl::on_new_sample;
+        gst_app_sink_set_callbacks(GST_APP_SINK(sink), &cb, this, nullptr);
+
+        if (gst_element_set_state(p, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
+            std::fprintf(stderr, "[%s] пайплайн не пішов у PLAYING\n", name.c_str());
+            gst_element_set_state(p, GST_STATE_NULL);
+            gst_object_unref(sink);
+            gst_object_unref(p);
+            return false;
+        }
+
+        // Проба на ВХОДІ декодера: інтервали тут проти інтервалів на
+        // виході покажуть, хто саме створює парність.
+        if (GstElement* dec = gst_bin_get_by_name(GST_BIN(p), "dec")) {
+            if (GstPad* sp = gst_element_get_static_pad(dec, "sink")) {
+                gst_pad_add_probe(sp, GST_PAD_PROBE_TYPE_BUFFER,
+                                  &Impl::on_dec_input, this, nullptr);
+                gst_object_unref(sp);
+            }
+            gst_object_unref(dec);
+        }
+
+        pipeline = p;
+        appsink = sink;
+        bus = gst_element_get_bus(p);
+        std::fprintf(stderr, "[%s] порт %d, пайплайн піднято\n",
+                     name.c_str(), cfg.udp_port);
+        return true;
     }
 
     void teardown() {

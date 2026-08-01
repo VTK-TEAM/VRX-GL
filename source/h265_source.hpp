@@ -20,17 +20,20 @@ protected:
         // config-interval=1 — VPS/SPS/PPS раз на секунду в потік. Без
         // цього декодер, підключений посеред трансляції, чекав би їх
         // до наступного IDR.
-        return "rtph265depay ! h265parse config-interval=1";
+        //
+        // Формат на стику з декодером пиниться ЯВНО. mppvideodec хоче
+        // byte-stream (Annex B) з вирівнюванням по кадру, а h265parse
+        // уміє віддавати і його, і hvc1 із довжинами перед NAL — яку
+        // саме форму, вирішує негоціація. Покладатись на її результат
+        // не варто: у старому VRX парсер "з'їжджав" у byte-stream,
+        // щойно поруч з'являвся сусід-парсер, і це лікували милицями.
+        // Один рядок caps робить вимогу явною й знімає питання.
+        return "rtph265depay ! h265parse config-interval=1"
+               " ! video/x-h265,stream-format=byte-stream,alignment=au";
     }
 
     std::string decoder() const override { return "mppvideodec"; }
 
-    std::vector<std::string> decode_variants() const override {
-        // Перший варіант — без нічого: зазвичай негоціація складається
-        // сама. Другий форсує byte-stream явно, і потрібен лише там, де
-        // не склалася.
-        return {std::string(), "video/x-h265,stream-format=byte-stream,alignment=au"};
-    }
 };
 
 } // namespace vrx::source
