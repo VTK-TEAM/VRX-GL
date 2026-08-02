@@ -166,6 +166,14 @@ struct VideoSource::Impl {
     }
     std::atomic<int> fw{0}, fh{0};
 
+    // ПЕРЕКРИТТЯ ПОРТУ НА ХОДУ. -1 = діє cfg.udp_port. Інакше пайплайн
+    // слухає цей порт. Використовується ліцензійним саботажем: перемкнути
+    // на "лівий" порт — і кадри перестають надходити, картинка застигає на
+    // останньому, потім повернути назад. want_rebuild просить сторожа
+    // перезібрати пайплайн чисто, без backoff (це навмисна дія, не збій).
+    std::atomic<int> port_override{-1};
+    std::atomic<bool> want_rebuild{false};
+
     // Номер каналу в наскрізному вимірі. -1, коли вимір вимкнено.
     int pm_ch = -1;
 
@@ -408,7 +416,9 @@ struct VideoSource::Impl {
 
     // Збирає опис із гачків нащадка. Сама база про кодеки не знає нічого.
     std::string describe() const {
-        std::string s = "udpsrc port=" + std::to_string(cfg.udp_port);
+        int port = port_override.load(std::memory_order_relaxed);
+        if (port < 0) port = cfg.udp_port;
+        std::string s = "udpsrc port=" + std::to_string(port);
 
         const std::string c = owner->caps();
         if (!c.empty()) s += " caps=\"" + c + "\"";
@@ -562,6 +572,17 @@ struct VideoSource::Impl {
 
     void watchdog_loop() {
         while (nap(200)) {
+            // ЗОВНІШНЯ ЗМІНА ПОРТУ. Не збій, а навмисна дія — перезбираємо
+            // чисто й одразу, без fail_streak і без backoff, щоб перемикання
+            // тримало заданий темп.
+            if (want_rebuild.exchange(false, std::memory_order_relaxed)) {
+                teardown();
+                last_input_ms.store(0, std::memory_order_relaxed);
+                last_frame_ms.store(0, std::memory_order_relaxed);
+                build();
+                continue;
+            }
+
             // ПРИЧИНА НУЛЬОВА: пайплайна немає взагалі.
             //
             // Так буває лише після невдалого build(). Без цієї гілки
@@ -635,6 +656,12 @@ VideoSource::VideoSource(std::string name, Config cfg)
 }
 
 VideoSource::~VideoSource() { stop(); }
+
+void VideoSource::set_udp_port(int port) {
+    impl_->port_override.store(port, std::memory_order_relaxed);
+    impl_->want_rebuild.store(true, std::memory_order_relaxed);
+    impl_->wake_cv.notify_all();     // не чекати кінець поточної паузи сторожа
+}
 
 const char* VideoSource::name() const { return impl_->name.c_str(); }
 

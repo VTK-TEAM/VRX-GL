@@ -45,6 +45,7 @@ struct Pointer::Impl {
     Config cfg;
 
     std::vector<int> fds;
+    std::vector<std::string> fd_paths;   // паралельно fds — щоб не відкрити те саме двічі
     std::thread th;
     std::atomic<bool> running{false};
 
@@ -54,16 +55,27 @@ struct Pointer::Impl {
 
     explicit Impl(Config c) : cfg(c) {}
 
-    void open_devices() {
+    // Перебирає /dev/input і відкриває НОВІ пристрої-вказівники, яких ще
+    // немає в fds. Повертає, скільки додав. Викликається і на старті, і
+    // періодично з циклу — щоб мишу, під'єднану вже під час роботи,
+    // підхопило само (udev/X тут немає, слухати нікого).
+    int scan_once(bool verbose) {
         DIR* d = ::opendir("/dev/input");
         if (!d) {
-            std::fprintf(stderr, "[миша] /dev/input не читається\n");
-            return;
+            if (verbose) std::fprintf(stderr, "[миша] /dev/input не читається\n");
+            return 0;
         }
+        int added = 0;
         while (dirent* e = ::readdir(d)) {
             const std::string name = e->d_name;
             if (name.compare(0, 5, "event") != 0) continue;
             const std::string path = "/dev/input/" + name;
+
+            // Уже відкритий — пропускаємо (інакше при кожному скані
+            // накопичували б дублікати того самого пристрою).
+            bool known = false;
+            for (const auto& p : fd_paths) if (p == path) { known = true; break; }
+            if (known) continue;
 
             const int fd = ::open(path.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
             if (fd < 0) continue;
@@ -74,22 +86,49 @@ struct Pointer::Impl {
             std::fprintf(stderr, "[миша] %s: %s\n", path.c_str(),
                          dev_name[0] ? dev_name : "?");
             fds.push_back(fd);
+            fd_paths.push_back(path);
+            added++;
         }
         ::closedir(d);
 
         std::lock_guard<std::mutex> lk(mtx);
         st.present = !fds.empty();
-        if (fds.empty()) {
-            std::fprintf(stderr, "[миша] пристроїв не знайдено\n");
+        return added;
+    }
+
+    void open_devices() {
+        if (scan_once(true) == 0) {
+            std::fprintf(stderr, "[миша] пристроїв поки немає — чекаю підключення\n");
         }
+    }
+
+    // Прибрати fd за індексом: закрити й викинути з fds/fd_paths.
+    void drop_index(size_t i) {
+        ::close(fds[i]);
+        fds.erase(fds.begin() + i);
+        fd_paths.erase(fd_paths.begin() + i);
     }
 
     void loop() {
         std::vector<pollfd> pfds;
-        pfds.reserve(fds.size());
-        for (int fd : fds) pfds.push_back(pollfd{fd, POLLIN, 0});
+        auto rebuild_pfds = [&] {
+            pfds.clear();
+            pfds.reserve(fds.size());
+            for (int fd : fds) pfds.push_back(pollfd{fd, POLLIN, 0});
+        };
+        rebuild_pfds();
+
+        auto next_scan = std::chrono::steady_clock::now() + std::chrono::seconds(1);
 
         while (running.load(std::memory_order_relaxed)) {
+            // Періодичне досканування: гаряче підключення миші й
+            // від'єднання (мертві fd прибираються нижче за POLLHUP).
+            const auto now_tp = std::chrono::steady_clock::now();
+            if (now_tp >= next_scan) {
+                next_scan = now_tp + std::chrono::seconds(1);
+                if (scan_once(false) > 0) rebuild_pfds();
+            }
+
             if (pfds.empty()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(200));
                 continue;
@@ -98,6 +137,20 @@ struct Pointer::Impl {
             // першого руху мишею.
             const int rc = ::poll(pfds.data(), pfds.size(), 100);
             if (rc <= 0) continue;
+
+            // Від'єднаний пристрій: ядро віддає POLLHUP/POLLERR. Закриваємо
+            // й перебудовуємо список — щоб при повторному під'єднанні
+            // (інший event-вузол) скан підхопив його як новий.
+            bool dropped = false;
+            for (size_t i = pfds.size(); i-- > 0;) {
+                if (pfds[i].revents & (POLLHUP | POLLERR)) { drop_index(i); dropped = true; }
+            }
+            if (dropped) {
+                rebuild_pfds();
+                std::lock_guard<std::mutex> lk(mtx);
+                st.present = !fds.empty();
+                continue;
+            }
 
             int dx = 0, dy = 0;
             bool btn_changed = false, btn_down = false;
@@ -150,10 +203,13 @@ void Pointer::set_bounds(int width, int height) {
     std::lock_guard<std::mutex> lk(impl_->mtx);
     impl_->w = width;
     impl_->h = height;
-    // Перший раз — ставимо курсор у центр, щоб його не довелося шукати.
+    // Перший раз — ставимо курсор у нижній лівий кут, а не в центр.
+    // Миша тут лише для налаштування (кнопка редактора у верхньому куті);
+    // посеред екрана курсор просто заважав би дивитись відео. Кут —
+    // найменш помітне місце, звідки його легко підхопити, коли треба.
     if (impl_->st.x == 0 && impl_->st.y == 0) {
-        impl_->st.x = width / 2;
-        impl_->st.y = height / 2;
+        impl_->st.x = 2;
+        impl_->st.y = height - 3;
     }
     if (impl_->st.x > width - 1) impl_->st.x = width - 1;
     if (impl_->st.y > height - 1) impl_->st.y = height - 1;
@@ -172,6 +228,7 @@ void Pointer::stop() {
     if (impl_->th.joinable()) impl_->th.join();
     for (int fd : impl_->fds) ::close(fd);
     impl_->fds.clear();
+    impl_->fd_paths.clear();
 }
 
 PointerState Pointer::state() const {

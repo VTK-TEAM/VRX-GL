@@ -3,3 +3,14 @@ compile_commands.json
 logs/
 build-*/
 measure.txt
+
+# приватний ключ вендора — НІКОЛИ в git
+tools/vendor_ed25519_private.pem
+tools/vendor_ed25519_public.pem
+
+# провізійний SSH-ключ (приватний) — не комітити
+tools/provision_key
+
+# python bytecode
+tools/__pycache__/
+*.pyc

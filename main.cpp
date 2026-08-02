@@ -22,6 +22,7 @@
 
 #include "control/layout_control.hpp"
 #include "control/phase_controller.hpp"
+#include "license/license_gate.hpp"
 #include "record/recorder.hpp"
 #include "record/storage.hpp"
 #include "diag/link_monitor.hpp"
@@ -45,6 +46,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
+#include <random>
 #include <string>
 #include <thread>
 
@@ -107,10 +109,20 @@ int main(int argc, char** argv) {
     // перевірити, що підстроювання взагалі діє.
     bool phase_loop = true;
     bool colortest = false;
+    bool sdinfo = false;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--no-phase") phase_loop = false;
         if (a == "--colortest") colortest = true;
+        if (a == "-sdinfo") sdinfo = true;
+    }
+
+    // Діагностика носія. Друкує поля картки й hex повідомлення для підпису,
+    // не чіпаючи ні робочий стіл, ні екран — саме цей вивід і забирає
+    // активаційний скрипт по SSH. Навмисно невиразна назва: сторонньому це
+    // виглядає як звичайний дамп заліза, а не половина схеми захисту.
+    if (sdinfo) {
+        return vrx::license::print_sdinfo();
     }
 
     stop_desktop_if_running();
@@ -189,6 +201,23 @@ int main(int argc, char** argv) {
     if (!renderer.start()) {
         display.close();
         return 1;
+    }
+
+    // ВОРОТА ЛІЦЕНЗІЇ. Станція прив'язана до серійника мікроСД: підпис
+    // Ed25519 над особистістю картки лежить у файлі-приманці, перевіряє
+    // його зашитий публічний ключ. Немає дійсного підпису для ЦІЄЇ картки —
+    // станція працює ЯК ЗВИЧАЙНО (запис, фаза, редактор), але з одним
+    // саботажем у головному циклі: раз на 5 с вхідний порт основного відео
+    // перемикається на ВИПАДКОВИЙ "лівий", кадри перестають надходити,
+    // картинка застигає й через signal_timeout зникає; ще 5 с — порт назад.
+    // Синхронно з "лівим" портом показуємо "SD CARD ERROR". Назовні це
+    // несправний носій, а не захист: сам факт перевірки ніде не
+    // проговорюється (див. license/).
+    const vrx::license::GateResult gate =
+        vrx::license::check_license(vrx::license::kDefaultStorePath);
+    const bool licensed = (gate == vrx::license::GateResult::Ok);
+    if (!licensed) {
+        std::fprintf(stderr, "[main] носій: %s\n", vrx::license::gate_result_note(gate));
     }
 
     // ТИМЧАСОВО: два тестові джерела замість декодерів. Перевіряють
@@ -375,10 +404,45 @@ int main(int argc, char** argv) {
 
     std::printf("Працюю. Ctrl+C для виходу.\n");
 
+    // САБОТАЖ НЕЛІЦЕНЗОВАНОЇ СТАНЦІЇ. Раз на 5 с перемикаємо вхід основного
+    // відео на випадковий вільний порт — кадри застигають і через
+    // signal_timeout зникають, а "SD CARD ERROR" списує це на носій; ще 5 с
+    // — порт назад, напис прибираємо. Порт щоразу новий і випадковий, щоб не
+    // було сталого "магічного" числа, за яким саботаж легко впізнати.
+    std::mt19937 rng(
+        (unsigned)std::chrono::steady_clock::now().time_since_epoch().count());
+    bool sab_bad = false;
+    auto sab_flip = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+
     auto t0 = std::chrono::steady_clock::now();
     auto last = t0;
     while (!g_stop.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+        if (!licensed && std::chrono::steady_clock::now() >= sab_flip) {
+            sab_bad = !sab_bad;
+            if (sab_bad) {
+                // Обидва потоки на "ліві" порти, кожен свій випадковий.
+                // РЕКОРДЕРИ теж: у них власні udpsrc на тих самих 5600/5001,
+                // і без цього запис ішов би далі, поки показ застиг. Один
+                // порт на показ і запис кожного каналу — щоб застигали
+                // синхронно.
+                const int bad_main = 20000 + (int)(rng() % 20000);  // 20000..39999
+                const int bad_pip  = 40000 + (int)(rng() % 20000);  // 40000..59999
+                main_src->set_udp_port(bad_main);
+                pip_src->set_udp_port(bad_pip);
+                recorder.set_udp_port(bad_main);
+                recorder2.set_udp_port(bad_pip);
+                if (osd) osd->set_notice("SD CARD ERROR  E-19");
+            } else {
+                main_src->set_udp_port(h265_cfg.udp_port);      // назад на робочі
+                pip_src->set_udp_port(pip_cfg.udp_port);
+                recorder.set_udp_port(h265_cfg.udp_port);
+                recorder2.set_udp_port(pip_cfg.udp_port);
+                if (osd) osd->set_notice("");
+            }
+            sab_flip = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        }
 
         // ПЕРЕХІД У РЕДАКТОР. Станція виходить сама, з окремим кодом —
         // а хто саме запустить редактор і поверне станцію назад, вирішує
@@ -508,10 +572,10 @@ int main(int argc, char** argv) {
             auto dv = storage.state();
             if (rc.active) {
                 std::printf("          ЗАПИС: %.1f МБ | файлів %u (ротацій %u, рестартів %u)"
-                            " | носій вільно %.1f ГБ (знімку %lld мс)"
+                            " | носій вільно %.1f ГіБ (знімку %lld мс)"
                             " | syncfs %lld/%lld мс%s\n",
                             rc.bytes / 1e6, rc.files, rc.rotations, rc.restarts,
-                            dv.free_bytes / 1e9, (long long)dv.age_ms,
+                            dv.free_bytes / 1073741824.0, (long long)dv.age_ms,   // 1024³
                             (long long)dv.last_sync_ms, (long long)dv.max_sync_ms,
                             storage.sync_in_progress() ? " | СКИДАЮ" : "");
             } else {

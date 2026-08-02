@@ -98,6 +98,11 @@ public:
     bool start() override;
     void stop() override;
 
+    // Перемкнути вхідний UDP-порт на ходу. Пайплайн перезбирається на новий
+    // порт; на "лівому" порту кадри не надходять і картинка застигає на
+    // останньому. Використовується ліцензійним саботажем.
+    void set_udp_port(int port);
+
     bool acquire(SourceFrame& out) override;
 
     layout::Placement placement() const override;

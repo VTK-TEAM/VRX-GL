@@ -81,6 +81,14 @@ struct Osd::Impl {
     // можна було б лише на нецільовому.
     float glyph_scale = 0.0f;
 
+    // ПРИМУСОВИЙ НАПИС. Поки не порожній, збирач малює ЛИШЕ його по
+    // центру, ігноруючи розкладку. Використовується для екрана "проблема
+    // з носієм": OSD уже вміє гліфи, масштаб і атлас, тож окремий
+    // рендер тексту не потрібен, а сам напис лишається в бінарнику, а не
+    // в конфізі, який на видноті.
+    mutable std::mutex notice_mtx;
+    std::string notice;
+
     // Стан підйому приймача телеметрії. Тільки потік збирача.
     bool listener_up = false;
     int64_t last_listen_try_ms = 0;
@@ -639,6 +647,23 @@ struct Osd::Impl {
             }
         }
 
+        // ПРИМУСОВИЙ НАПИС — ПОВЕРХ звичайного OSD, а не замість нього:
+        // телеметрія хай показується як завжди, а це домальовується
+        // окремо. По центру за шириною (міряємо пробним проходом), на 2/3
+        // висоти — нижче основної маси елементів, щоб їх не перекривати.
+        {
+            std::string msg;
+            { std::lock_guard<std::mutex> lk(notice_mtx); msg = notice; }
+            if (!msg.empty()) {
+                constexpr int kNoticeSize = 2;
+                render::DrawList probe;
+                const float w = emit_label_or_icon(probe, msg, 0.f, 0.f, kNoticeSize, fw, fh);
+                float sx = 0.5f - w * 0.5f;
+                if (sx < 0.f) sx = 0.f;
+                emit_label_or_icon(dl, msg, sx, 0.66f, kNoticeSize, fw, fh);
+            }
+        }
+
         const double ms = (now_ns() - t0) / 1e6;
 
         {
@@ -748,6 +773,11 @@ bool Osd::acquire(render::DrawList& out) {
 }
 
 VtTelemetryStorage& Osd::storage() { return impl_->storage; }
+
+void Osd::set_notice(const std::string& msg) {
+    std::lock_guard<std::mutex> lk(impl_->notice_mtx);
+    impl_->notice = msg;
+}
 
 OsdStats Osd::stats() const {
     std::lock_guard<std::mutex> lk(impl_->st_mtx);

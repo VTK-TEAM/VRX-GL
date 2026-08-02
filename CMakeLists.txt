@@ -12,6 +12,11 @@ endif()
 find_package(Threads REQUIRED)
 find_package(PkgConfig REQUIRED)
 
+# --- Ліцензія: перевірка підпису Ed25519 ---
+# Станції потрібне лише verify; підпис робить вендор окремо (tools/).
+# libcrypto тут уже є як залежність GStreamer/системи.
+find_package(OpenSSL REQUIRED)
+
 # --- Вивід: DRM/KMS + GBM + EGL/GLES2 ---
 # Композиція шарів робиться на GPU в один буфер, який далі сканується
 # одним плейном. GBM потрібен для виділення буферів, придатних і для
@@ -48,6 +53,10 @@ add_executable(vrx_gl
     osd/local_channels.cpp
     osd/stb_image_impl.cpp
     osd/telemetry/vt_telemetry_listener.cpp
+    license/sd_identity.cpp
+    license/ed25519.cpp
+    license/license_store.cpp
+    license/license_gate.cpp
 )
 
 target_include_directories(vrx_gl PRIVATE
@@ -65,6 +74,7 @@ target_link_libraries(vrx_gl PRIVATE
     ${EGL_LIBRARIES}
     ${GLES2_LIBRARIES}
     ${GST_LIBRARIES}
+    OpenSSL::Crypto
     Threads::Threads
 )
 

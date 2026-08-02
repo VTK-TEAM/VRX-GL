@@ -42,6 +42,18 @@ struct Recorder::Impl {
     mutable std::mutex mtx;
     RecordStats st{};
 
+    // ПЕРЕКРИТТЯ ВХІДНОГО ПОРТУ НА ХОДУ (ліцензійний саботаж). -1 = діє
+    // cfg.udp_port. На "лівому" порту проба не бачить пакетів -> сигнал
+    // "зник" -> файл закривається, і клон нічого корисного не пише. Той
+    // самий приймач шле на 5600, тож рекордер мусить саботуватись окремо
+    // від показу: у нього СВІЙ udpsrc і своя проба.
+    std::atomic<int> port_override{-1};
+    std::atomic<bool> want_reopen{false};
+    int eff_port() const {
+        const int p = port_override.load(std::memory_order_relaxed);
+        return p < 0 ? cfg.udp_port : p;
+    }
+
     // Лічильники веде пад-проба, тобто потік GStreamer.
     std::atomic<uint64_t> file_bytes{0};
     std::atomic<int64_t> last_buffer_ms{0};
@@ -100,10 +112,10 @@ struct Recorder::Impl {
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
         addr.sin_addr.s_addr = htonl(INADDR_ANY);
-        addr.sin_port = htons((uint16_t)cfg.udp_port);
+        addr.sin_port = htons((uint16_t)eff_port());
         if (::bind(probe_fd, (sockaddr*)&addr, sizeof(addr)) != 0) {
             std::fprintf(stderr, "[запис %s] проба сигналу не стала на порт %d: %s\n",
-                         cfg.name.c_str(), cfg.udp_port, std::strerror(errno));
+                         cfg.name.c_str(), eff_port(), std::strerror(errno));
             ::close(probe_fd);
             probe_fd = -1;
             return false;
@@ -259,7 +271,7 @@ struct Recorder::Impl {
                 "max-size-bytes=%d max-size-buffers=%d "
                 "! matroskamux name=mux streamable=true "
                 "! filesink name=sink location=\"%s\" sync=false async=false",
-                cfg.udp_port, (unsigned long long)cfg.queue_ms * 1000000ULL,
+                eff_port(), (unsigned long long)cfg.queue_ms * 1000000ULL,
                 cfg.queue_bytes, cfg.queue_buffers, path.c_str());
         } else {
         std::snprintf(desc, sizeof(desc),
@@ -273,7 +285,7 @@ struct Recorder::Impl {
                 "max-size-bytes=%d max-size-buffers=%d "
             "! matroskamux name=mux streamable=true "
             "! filesink name=sink location=\"%s\" sync=false async=false",
-            cfg.udp_port, cfg.payload_type, cfg.jitter_ms,
+            eff_port(), cfg.payload_type, cfg.jitter_ms,
             (unsigned long long)cfg.queue_ms * 1000000ULL,
             cfg.queue_bytes, cfg.queue_buffers, path.c_str());
         }
@@ -454,6 +466,16 @@ struct Recorder::Impl {
     void loop() {
         while (running.load(std::memory_order_relaxed)) {
             const int64_t now = now_ms();
+
+            // ЗМІНА ПОРТУ НА ХОДУ. Закриваємо пробу (стане на новий порт
+            // наступним тіком) і поточний файл — далі звичайна логіка сама
+            // відкриє новий, коли/якщо на новому порту з'явиться сигнал.
+            if (want_reopen.exchange(false, std::memory_order_relaxed)) {
+                if (probe_fd >= 0) { ::close(probe_fd); probe_fd = -1; }
+                last_probe_open_ms = 0;
+                last_packet_ms = 0;
+                if (pipeline) close_file(false, "зміна порту");
+            }
 
             // ПОВТОРНА СПРОБА ВІДКРИТИ ПРОБУ.
             //
@@ -637,6 +659,11 @@ bool Recorder::start() {
 void Recorder::stop() {
     if (!impl_->running.exchange(false)) return;
     if (impl_->th.joinable()) impl_->th.join();
+}
+
+void Recorder::set_udp_port(int port) {
+    impl_->port_override.store(port, std::memory_order_relaxed);
+    impl_->want_reopen.store(true, std::memory_order_relaxed);
 }
 
 RecordStats Recorder::stats() const {

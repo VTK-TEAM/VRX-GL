@@ -405,8 +405,8 @@ void Storage::Impl::probe_once() {
         // тієї самої флешки дає ТОЙ САМИЙ текст, придушення повторів його
         // ковтає, і в лозі не лишається сліду від події, через яку
         // рекордер щойно почав новий файл.
-        std::snprintf(buf, sizeof(buf), "%s, вільно %.1f ГБ з %.1f (монтування #%ld)",
-                      found.c_str(), free_b / 1e9, total_b / 1e9, found_id);
+        std::snprintf(buf, sizeof(buf), "%s, вільно %.1f ГіБ з %.1f (монтування #%ld)",
+                      found.c_str(), free_b / 1073741824.0, total_b / 1073741824.0, found_id);  // 1024³
     }
     if (last_log != buf) {
         last_log = buf;
@@ -417,9 +417,9 @@ void Storage::Impl::probe_once() {
     // по собі є вимірюванням — за ним видно і паузу, коли потік застряг у
     // ядрі, і момент, коли він відмер.
     const int64_t took_ms = (now_ns() - probe_t0) / 1000000;
-    VRX_RLOG("носій", "перевірка %lld мс: %s | вільно %.2f ГБ | брудних %ld КБ",
+    VRX_RLOG("носій", "перевірка %lld мс: %s | вільно %.2f ГіБ | брудних %ld КБ",
              (long long)took_ms, found.empty() ? "НЕМАЄ" : found.c_str(),
-             free_b / 1e9, VRX_RLOG_DIRTY());
+             free_b / 1073741824.0, VRX_RLOG_DIRTY());
 }
 
 void Storage::Impl::probe_loop() {
