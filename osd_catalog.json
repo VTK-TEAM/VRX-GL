@@ -2382,6 +2382,48 @@
       "group": "Станція"
     },
     {
+      "display_name": "Станція: годинник (HH:MM)",
+      "key_prefix": "clock",
+      "group": "Станція",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 1,
+        "LABEL": "",
+        "DATACHANNEL": 211,
+        "DECIMALS": 0,
+        "UNITS": "",
+        "FORMAT": "HH:MM"
+      }
+    },
+    {
+      "display_name": "Станція: годинник із секундами",
+      "key_prefix": "clock_sec",
+      "group": "Станція",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 1,
+        "LABEL": "",
+        "DATACHANNEL": 211,
+        "DECIMALS": 0,
+        "UNITS": "",
+        "FORMAT": "HH:MM:SS"
+      }
+    },
+    {
+      "display_name": "Станція: дата (DD.MM.YY)",
+      "key_prefix": "date",
+      "group": "Станція",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 1,
+        "LABEL": "",
+        "DATACHANNEL": 212,
+        "DECIMALS": 0,
+        "UNITS": "",
+        "FORMAT": "DD.MM.YY"
+      }
+    },
+    {
       "display_name": "Станція: запізнілих кадрів/с",
       "key_prefix": "late_fps",
       "template": {

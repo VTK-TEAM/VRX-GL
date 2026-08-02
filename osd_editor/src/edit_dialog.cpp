@@ -1,4 +1,8 @@
 #include "edit_dialog.h"
+
+#include <sys/time.h>
+#include <ctime>
+#include <cstdlib>
 #include "vt_telemetry_names.h"
 #include <cstdio>
 
@@ -6,6 +10,7 @@ namespace osdedit {
 
 TextField* ElementEditDialog::add_text_field(const std::string& label, const std::string& initial,
                                               std::function<void(const std::string&)> commit) {
+    if (!row_visible(FIELD_H)) { cursor_y_ += FIELD_GAP; return nullptr; }
     TextField* tf = add<TextField>();
     tf->bounds = SDL_Rect{bounds.x + MARGIN, cursor_y_, bounds.w - MARGIN * 2, FIELD_H};
     tf->label_text = label;
@@ -20,6 +25,7 @@ TextField* ElementEditDialog::add_text_field(const std::string& label, const std
 NumberField* ElementEditDialog::add_number_field(const std::string& label, float initial, float step,
                                                   float min_v, float max_v, int decimals,
                                                   std::function<void(float)> commit, float big_step) {
+    if (!row_visible(FIELD_H)) { cursor_y_ += FIELD_GAP; return nullptr; }
     NumberField* nf = add<NumberField>();
     nf->bounds = SDL_Rect{bounds.x + MARGIN, cursor_y_, bounds.w - MARGIN * 2, FIELD_H};
     nf->label_text = label;
@@ -76,6 +82,53 @@ void ElementEditDialog::build_label_fields() {
                    el->label(), [el](const std::string& v) { el->set_label(v); });
 }
 
+// ВИСТАВЛЕННЯ СИСТЕМНОГО ГОДИННИКА СТАНЦІЇ.
+//
+// Рішення відверто костильне, і це свідомо. Інтернету в полі немає,
+// синхронізувати час нема з чим, а в записі й на екрані він потрібен: за
+// ним потім розбирають політ. Городити окреме вікно налаштувань заради
+// операції, яку роблять раз на кілька місяців, дорожче, ніж дописати
+// півтора десятка рядків туди, де вже є і миша, і поля вводу.
+//
+// Прив'язка ДО КАНАЛУ, а не до нового типу елемента. Новий TYPE довелося
+// б навчити розуміти й станцію, і писаря субтитрів, і схему конфігу — а
+// в конфізі це лишається звичайним VALUE, який просто показує час.
+// Редактор єдиний, кому тут потрібне щось більше.
+static void apply_system_datetime(int hh, int mm, int dd, int mon, int yy) {
+    std::time_t now = std::time(nullptr);
+    struct tm lt;
+    localtime_r(&now, &lt);
+
+    lt.tm_hour = hh;
+    lt.tm_min  = mm;
+    lt.tm_sec  = 0;
+    lt.tm_mday = dd;
+    lt.tm_mon  = mon - 1;
+    lt.tm_year = 100 + yy;          // yy=26 -> 2026
+    lt.tm_isdst = -1;               // хай система сама розбереться з переходом
+
+    const std::time_t t = mktime(&lt);
+    if (t == (std::time_t)-1) {
+        std::fprintf(stderr, "[годинник] неможлива дата, нічого не міняю\n");
+        return;
+    }
+    struct timeval tv{};
+    tv.tv_sec = t;
+    if (settimeofday(&tv, nullptr) != 0) {
+        std::fprintf(stderr, "[годинник] settimeofday не вдався (потрібен root)\n");
+        return;
+    }
+    // У ГОДИННИК ПЛАТИ ТЕЖ. Без цього виставлений час живе до першого
+    // перезавантаження — а станцію вимикають живленням, і саме після
+    // цього час і потрібен правильний.
+    if (std::system("hwclock --systohc >/dev/null 2>&1") != 0) {
+        std::fprintf(stderr, "[годинник] системний час виставлено,"
+                             " але в RTC записати не вдалось\n");
+    }
+    std::fprintf(stderr, "[годинник] встановлено %02d:%02d %02d.%02d.20%02d\n",
+                 hh, mm, dd, mon, yy);
+}
+
 void ElementEditDialog::build_value_fields() {
     OsdElement* el = el_;
     add_readonly_row("Канал (не редагується):", vt_telemetry_channel_label(el->data_channel()));
@@ -85,8 +138,48 @@ void ElementEditDialog::build_value_fields() {
     add_text_field("Лейбл-префікс (текст/<іконка>)",
                    el->label(), [el](const std::string& v) { el->set_label(v); });
     add_text_field("Одиниці (UNITS)", el->units(), [el](const std::string& v) { el->set_units(v); });
-    add_number_field("Знаків після коми (DECIMALS)", static_cast<float>(el->decimals()), 1.f, 0.f, 6.f, 0,
-                     [el](float v) { el->set_decimals(static_cast<int>(v)); });
+    if (!el->value_format().empty()) {
+        // Формат не редагується: він властивість каналу, а не смак. Але
+        // мовчати про нього не можна — інакше "чому тут двокрапка" не має
+        // відповіді ніде.
+        add_readonly_row("Формат (не редагується):", el->value_format());
+    } else {
+        add_number_field("Знаків після коми (DECIMALS)", static_cast<float>(el->decimals()), 1.f, 0.f, 6.f, 0,
+                         [el](float v) { el->set_decimals(static_cast<int>(v)); });
+    }
+
+    // Годинник і дата станції — єдине місце, де їх можна виставити.
+    const int ch = el->data_channel();
+    if (ch == 211 || ch == 212) {
+        std::time_t now = std::time(nullptr);
+        struct tm lt;
+        localtime_r(&now, &lt);
+        clk_hh_ = lt.tm_hour; clk_mm_ = lt.tm_min;
+        clk_dd_ = lt.tm_mday; clk_mon_ = lt.tm_mon + 1; clk_yy_ = lt.tm_year % 100;
+
+        add_section_title("Системний годинник станції:");
+        add_number_field("Година", (float)clk_hh_, 1.f, 0.f, 23.f, 0,
+                         [this](float v) { clk_hh_ = (int)v; });
+        add_number_field("Хвилина", (float)clk_mm_, 1.f, 0.f, 59.f, 0,
+                         [this](float v) { clk_mm_ = (int)v; });
+        add_number_field("День", (float)clk_dd_, 1.f, 1.f, 31.f, 0,
+                         [this](float v) { clk_dd_ = (int)v; });
+        add_number_field("Місяць", (float)clk_mon_, 1.f, 1.f, 12.f, 0,
+                         [this](float v) { clk_mon_ = (int)v; });
+        add_number_field("Рік (20xx)", (float)clk_yy_, 1.f, 24.f, 99.f, 0,
+                         [this](float v) { clk_yy_ = (int)v; });
+
+        Button* apply = add<Button>();
+        apply->bounds = SDL_Rect{bounds.x + MARGIN, cursor_y_, bounds.w - MARGIN * 2, FIELD_H};
+        apply->label = "Встановити час і дату";
+        apply->bg_color = ui_color::SUCCESS;
+        apply->text_color = SDL_Color{15, 15, 15, 255};
+        apply->on_click = [this]() {
+            apply_system_datetime(clk_hh_, clk_mm_, clk_dd_, clk_mon_, clk_yy_);
+            request_rebuild();
+        };
+        cursor_y_ += FIELD_GAP;
+    }
 }
 
 void ElementEditDialog::build_enum_fields() {
@@ -105,7 +198,6 @@ void ElementEditDialog::build_enum_fields() {
     SDL_Rect list_area{bounds.x + MARGIN, cursor_y_, bounds.w - MARGIN * 2,
                        (bounds.y + bounds.h - MARGIN) - cursor_y_};
     if (list_area.h < FIELD_H) list_area.h = FIELD_H;
-    case_list_area_ = list_area;
     rebuild_case_rows(list_area);
 }
 
@@ -114,16 +206,21 @@ void ElementEditDialog::build_enum_fields() {
 // їх усі створеними означало б тримати клікабельними й ті, що за межами
 // діалогу.
 bool ElementEditDialog::handle_wheel(int x, int y, int delta) {
-    if (case_list_area_.w > 0 && case_scroll_max_ > 0 &&
-        x >= case_list_area_.x && x < case_list_area_.x + case_list_area_.w &&
-        y >= case_list_area_.y && y < case_list_area_.y + case_list_area_.h) {
-        case_scroll_ -= delta * FIELD_GAP;
-        if (case_scroll_ < 0) case_scroll_ = 0;
-        if (case_scroll_ > case_scroll_max_) case_scroll_ = case_scroll_max_;
+    if (scroll_max_ > 0 && contains(x, y)) {
+        scroll_ -= delta * FIELD_GAP;
+        if (scroll_ < 0) scroll_ = 0;
+        if (scroll_ > scroll_max_) scroll_ = scroll_max_;
         request_rebuild();
         return true;
     }
     return Panel::handle_wheel(x, y, delta);
+}
+
+// Чи потрапляє рядок висотою h у видиму частину діалогу. Рядок за межами
+// не створюється взагалі: він однаково лишався б клікабельним, а видно
+// його не було б.
+bool ElementEditDialog::row_visible(int h) const {
+    return cursor_y_ + h > content_top_ && cursor_y_ < bounds.y + bounds.h - MARGIN;
 }
 
 void ElementEditDialog::rebuild_case_rows(SDL_Rect list_area) {
@@ -139,17 +236,11 @@ void ElementEditDialog::rebuild_case_rows(SDL_Rect list_area) {
     // Це не лише економія: віджет за межами діалогу однаково лишався б
     // клікабельним, і натиснути невидиму кнопку "X" було б легше, ніж
     // видиму.
-    const int content_h = (int)cases.size() * FIELD_GAP + FIELD_H;
-    case_scroll_max_ = content_h - list_area.h;
-    if (case_scroll_max_ < 0) case_scroll_max_ = 0;
-    if (case_scroll_ > case_scroll_max_) case_scroll_ = case_scroll_max_;
-    if (case_scroll_ < 0) case_scroll_ = 0;
-
-    const int top = list_area.y;
-    const int bottom = list_area.y + list_area.h;
+    const int top = content_top_;
+    const int bottom = bounds.y + bounds.h - MARGIN;
     auto visible = [&](int y) { return y + FIELD_H > top && y < bottom; };
 
-    int row_y = list_area.y - case_scroll_;
+    int row_y = list_area.y;
     for (size_t i = 0; i < cases.size(); ++i) {
         if (!visible(row_y)) { row_y += FIELD_GAP; continue; }
         EnumOpPicker* op = add<EnumOpPicker>();
@@ -199,7 +290,8 @@ void ElementEditDialog::rebuild_case_rows(SDL_Rect list_area) {
         row_y += FIELD_GAP;
     }
 
-    if (!visible(row_y)) return;
+    cursor_y_ = row_y;
+    if (!visible(row_y)) { cursor_y_ += FIELD_GAP; return; }
     Button* add_case = add<Button>();
     add_case->bounds = SDL_Rect{list_area.x, row_y, list_area.w, FIELD_H};
     add_case->label = "+ додати умову";
@@ -234,7 +326,34 @@ void ElementEditDialog::draw(SDL_Renderer* renderer, TTF_Font* font) {
         if (on_before_rebuild) on_before_rebuild();
         build(bounds, el_, request_keyboard_, on_click_close_);
     }
-    Panel::draw(renderer, font);
+
+    // ЗАГОЛОВОК НЕ ПРОКРУЧУЄТЬСЯ Й НЕ ОБРІЗАЄТЬСЯ, ВМІСТ — НАВПАКИ.
+    //
+    // Спершу я обрізав увесь діалог по його межі. Низ це полагодило, а
+    // верх ні: вміст, прокручений угору, налазив на заголовок і на кнопку
+    // "Готово" — вони ж усередині тієї самої межі.
+    //
+    // Тому діалог малюється у два проходи. Перші header_count_ дітей —
+    // заголовок і "Готово" — це рамка: вони не рухаються й малюються
+    // поверх. Решта це вміст: він живе у своєму прямокутнику й за нього не
+    // виходить ні вгору, ні вниз.
+    if (!visible) return;
+    fill_rounded_rect(renderer, bounds, bg_color);
+    if (draw_border) draw_rounded_rect_border(renderer, bounds, ui_color::BORDER);
+
+    const SDL_Rect content{bounds.x, content_top_,
+                           bounds.w, (bounds.y + bounds.h) - content_top_};
+    SDL_Rect prev{};
+    SDL_RenderGetClipRect(renderer, &prev);
+    SDL_RenderSetClipRect(renderer, &content);
+    for (size_t i = (size_t)header_count_; i < children().size(); ++i) {
+        children()[i]->draw(renderer, font);
+    }
+    SDL_RenderSetClipRect(renderer, prev.w > 0 ? &prev : nullptr);
+
+    for (size_t i = 0; i < (size_t)header_count_ && i < children().size(); ++i) {
+        children()[i]->draw(renderer, font);
+    }
 }
 
 void ElementEditDialog::build_bar_fields() {
@@ -273,7 +392,16 @@ void ElementEditDialog::build(SDL_Rect area, OsdElement* el, KeyboardRequestFn r
     bounds = area;
     bg_color = ui_color::BG;
 
-    cursor_y_ = bounds.y + 52;
+    // ПРОКРУТКА ВСЬОГО ДІАЛОГУ, а не окремо списку умов.
+    //
+    // Полів побільшало (формат, годинник із датою), і за нижній край
+    // почали виходити вже не лише умови. Одна прокрутка на весь вміст
+    // простіша за дві окремі й не має швів між ними.
+    //
+    // Заголовок і "Готово" лишаються на місці: вони не частина вмісту, а
+    // рамка навколо нього.
+    content_top_ = bounds.y + 52;
+    cursor_y_ = content_top_ - scroll_;
 
     UiLabel* title = add<UiLabel>();
     title->bounds = SDL_Rect{bounds.x + MARGIN, bounds.y + 12, bounds.w - MARGIN * 2, 22};
@@ -287,6 +415,10 @@ void ElementEditDialog::build(SDL_Rect area, OsdElement* el, KeyboardRequestFn r
     close_btn->bg_color = ui_color::SUCCESS;
     close_btn->on_click = on_close;
 
+    // Усе, що додано до цього рядка, — рамка діалогу: заголовок і
+    // "Готово". Вони не прокручуються.
+    header_count_ = (int)children().size();
+
     build_common_size_row();
 
     switch (el_->type()) {
@@ -296,6 +428,13 @@ void ElementEditDialog::build(SDL_Rect area, OsdElement* el, KeyboardRequestFn r
         case ElementType::BAR: build_bar_fields(); break;
         case ElementType::HORIZON: build_horizon_fields(); break;
     }
+
+    // Скільки вмісту вийшло й скільки з нього видно.
+    content_h_ = (cursor_y_ + scroll_) - content_top_;
+    const int view_h = (bounds.y + bounds.h - MARGIN) - content_top_;
+    scroll_max_ = content_h_ - view_h;
+    if (scroll_max_ < 0) scroll_max_ = 0;
+    if (scroll_ > scroll_max_) { scroll_ = scroll_max_; request_rebuild(); }
 }
 
 } // namespace osdedit

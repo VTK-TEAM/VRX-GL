@@ -31,6 +31,38 @@ bool fetch_channel_value(VtTelemetryStorage* storage, int channel_id,
 // елемент існує і ДЕ він стоїть, і зникне сама, щойно з'явиться значення.
 const char* kNoText = "NOTEXT";
 
+// ТЕ САМЕ ПЕРЕТВОРЕННЯ, ЩО Й У СТАНЦІЇ (osd.cpp, format_value).
+//
+// Редактор — це превʼю того, що намалює станція. Показувати тут сирі
+// 45296 там, де в польоті буде 12:34, означає брехати про ширину напису:
+// саме за нею й розставляють елементи.
+std::string format_value_str(const OsdElement& el, float value) {
+    char buf[64];
+    const std::string f = el.value_format();
+
+    if (f == "HH:MM" || f == "HH:MM:SS") {
+        long t = (long)(value + 0.5f);
+        if (t < 0) t = 0;
+        t %= 86400;
+        if (f == "HH:MM") std::snprintf(buf, sizeof(buf), "%02ld:%02ld", t / 3600, (t / 60) % 60);
+        else std::snprintf(buf, sizeof(buf), "%02ld:%02ld:%02ld", t / 3600, (t / 60) % 60, t % 60);
+        return buf;
+    }
+    if (f == "DD.MM.YY") {
+        const long v = (long)(value + 0.5f);
+        std::snprintf(buf, sizeof(buf), "%02ld.%02ld.%02ld", v % 100, (v / 100) % 100, (v / 10000) % 100);
+        return buf;
+    }
+    if (f == "MM:SS") {
+        long total = (long)(value + 0.5f);
+        if (total < 0) total = 0;
+        std::snprintf(buf, sizeof(buf), "%02ld:%02ld", total / 60, total % 60);
+        return buf;
+    }
+    std::snprintf(buf, sizeof(buf), "%.*f", el.decimals(), value);
+    return buf;
+}
+
 std::string with_placeholder(const std::string& s) {
     return s.empty() ? std::string(kNoText) : s;
 }
@@ -115,9 +147,7 @@ void CanvasRenderer::draw_element(SDL_Renderer* renderer, const OsdElement& el, 
         std::string value_str = "--";
         float value = 0.f;
         if (fetch_channel_value(storage, el.data_channel(), el.meta(), &value)) {
-            char num_buf[32];
-            std::snprintf(num_buf, sizeof(num_buf), "%.*f", el.decimals(), value);
-            value_str = num_buf;
+            value_str = format_value_str(el, value);
         }
         int lw = 0, lh = 0, vw = 0, vh = 0;
         font_.measure_label_or_icon(el.label(), el.size_index(), &lw, &lh, ref_w, ref_h);

@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <ctime>
 #include "editor_app.h"
 #include "vt_telemetry_names.h"
 #include <cstdio>
@@ -644,6 +645,25 @@ void EditorApp::set_status(const std::string& text, bool is_error) {
 }
 
 void EditorApp::render_frame() {
+    // ЛОКАЛЬНІ КАНАЛИ СТАНЦІЇ, ЯКІ РЕДАКТОР ЗНАЄ САМ.
+    //
+    // 211/212 наповнює станція, а вона під час роботи редактора зупинена:
+    // екран один, DRM master ексклюзивний. Тому в превʼю вони показувались
+    // як "--" — тобто саме ті два елементи, заради яких у діалозі є
+    // виставлення часу, у самому превʼю не працювали.
+    //
+    // Годинник у редактора той самий, системний, і підставити його тут
+    // чесно: превʼю показує рівно те, що покаже станція.
+    {
+        const std::time_t now = std::time(nullptr);
+        struct tm lt;
+        localtime_r(&now, &lt);
+        telemetry_storage_.set_value(211,
+            (float)(lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec));
+        telemetry_storage_.set_value(212,
+            (float)((lt.tm_year % 100) * 10000 + (lt.tm_mon + 1) * 100 + lt.tm_mday));
+    }
+
     // РОЗМІР БЕРЕМО В РЕНДЕРЕРА, І ЩОКАДРУ.
     //
     // SDL_GetWindowSize одразу після створення вікна віддає ЗАПРОШЕНИЙ

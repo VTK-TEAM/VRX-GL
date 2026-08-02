@@ -405,6 +405,30 @@ struct Osd::Impl {
     static std::string format_value(const OsdElementConfig& el, float value) {
         char buf[32];
 
+        // ГОДИННИК: секунди від опівночі.
+        if (el.value_format == "HH:MM" || el.value_format == "HH:MM:SS") {
+            long t = (long)(value + 0.5f);
+            if (t < 0) t = 0;
+            t %= 86400;
+            if (el.value_format == "HH:MM") {
+                std::snprintf(buf, sizeof(buf), "%02ld:%02ld", t / 3600, (t / 60) % 60);
+            } else {
+                std::snprintf(buf, sizeof(buf), "%02ld:%02ld:%02ld",
+                              t / 3600, (t / 60) % 60, t % 60);
+            }
+            return buf;
+        }
+
+        // ДАТА: YYMMDD одним числом. Канал передається float32, у якого
+        // точних цілих лише до 16.7 млн — YYYYMMDD туди не влазить і
+        // зсунув би день мовчки.
+        if (el.value_format == "DD.MM.YY") {
+            const long v = (long)(value + 0.5f);
+            std::snprintf(buf, sizeof(buf), "%02ld.%02ld.%02ld",
+                          v % 100, (v / 100) % 100, (v / 10000) % 100);
+            return buf;
+        }
+
         if (el.value_format == "MM:SS") {
             // Канал віддає секунди. Від'ємних тут не буває, але якщо
             // прийдуть — не показуємо "-1:-5", а тримаємо нуль.

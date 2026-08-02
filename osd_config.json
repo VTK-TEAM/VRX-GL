@@ -203,12 +203,34 @@
       "T": 0.43358129262924194,
       "TYPE": "HORIZON"
     },
+    "clock_display": {
+      "// NOTE": "LOCAL_CLOCK(211) — системний годинник станції, секунди від опівночі. FORMAT дає HH:MM. Виставляється в редакторі.",
+      "DATACHANNEL": 211,
+      "DECIMALS": 0,
+      "FORMAT": "HH:MM",
+      "L": 0.26061493158340454,
+      "LABEL": "",
+      "S": 1,
+      "T": 0.9296875,
+      "UNITS": ""
+    },
     "custom_icon": {
       "L": 0.375,
       "LABEL": "<pilot>",
       "S": 3,
       "T": 0.0010626992443576455,
       "TYPE": "LABEL",
+      "UNITS": ""
+    },
+    "date_display": {
+      "// NOTE": "LOCAL_DATE(212) — дата як YYMMDD одним числом: float32 має точні цілі лише до 16.7 млн, і YYYYMMDD зсунув би день мовчки.",
+      "DATACHANNEL": 212,
+      "DECIMALS": 0,
+      "FORMAT": "DD.MM.YY",
+      "L": 0.17057101428508759,
+      "LABEL": "",
+      "S": 1,
+      "T": 0.9309895634651184,
       "UNITS": ""
     },
     "drone_battery_display": {
@@ -488,10 +510,10 @@
     "power_supply_A_value": {
       "DATACHANNEL": 35,
       "DECIMALS": 1,
-      "L": 0.011217948980629444,
+      "L": 0.010980966500937939,
       "LABEL": "A ",
       "S": 1,
-      "T": 0.9301994442939758,
+      "T": 0.9309895634651184,
       "TYPE": "VALUE",
       "UNITS": "V"
     },

@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <ctime>
 #include <condition_variable>
 #include <cstdio>
 #include <mutex>
@@ -216,6 +217,22 @@ struct LocalChannels::Impl {
         // отримати величину, за якою не видно жодного з двох.
         if (h265) {
             storage->set_value(VT_TLM_LOCAL_LOST_FRAMES, (float)h265->stats().missing);
+        }
+
+        // --- 211/212: системний годинник і дата ---
+        //
+        // Найпростіший канал у станції: просто те, що показує сам
+        // пристрій. Потрібен саме тому, що синхронізувати його в полі нема
+        // з чим — інтернету немає, — і єдине джерело правди тут це те, що
+        // хтось виставив руками.
+        {
+            const std::time_t t = std::time(nullptr);
+            struct tm lt;
+            localtime_r(&t, &lt);
+            storage->set_value(VT_TLM_LOCAL_CLOCK,
+                               (float)(lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec));
+            storage->set_value(VT_TLM_LOCAL_DATE,
+                               (float)((lt.tm_year % 100) * 10000 + (lt.tm_mon + 1) * 100 + lt.tm_mday));
         }
 
         prev_at = now;
