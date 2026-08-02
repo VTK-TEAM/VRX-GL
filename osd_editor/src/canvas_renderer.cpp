@@ -18,6 +18,23 @@ bool fetch_channel_value(VtTelemetryStorage* storage, int channel_id,
     return vt_fetch_channel_value(*storage, channel_id, meta == "AGE_S", meta == "RATE_HZ", out_value);
 }
 
+// ЩО ПОКАЗАТИ, КОЛИ ПОКАЗУВАТИ НІЧОГО.
+//
+// Елемент, який у поточному стані даних не дає жодного символу — ENUM без
+// збігу й без DEFAULT (як причина дизарму, коли їх немає), порожній
+// LABEL, — на полотні не малюється зовсім. У станції це правильно: немає
+// чого казати, нічого й не займає місця.
+//
+// У РЕДАКТОРІ це помилка. Невидимий елемент не можна ні вибрати, ні
+// пересунути, ні видалити: він є у файлі, займе місце в польоті, а тут
+// його наче й немає. Тому підставляємо явну заглушку — вона показує, ЩО
+// елемент існує і ДЕ він стоїть, і зникне сама, щойно з'явиться значення.
+const char* kNoText = "NOTEXT";
+
+std::string with_placeholder(const std::string& s) {
+    return s.empty() ? std::string(kNoText) : s;
+}
+
 std::string eval_enum(const OsdElement& el, float value) {
     constexpr float EQ_EPSILON = 0.0001f;
     for (const auto& c : el.cases()) {
@@ -86,8 +103,9 @@ void CanvasRenderer::draw_element(SDL_Renderer* renderer, const OsdElement& el, 
     switch (el.type()) {
     case ElementType::LABEL: {
         int w = 0, h = 0;
-        font_.measure_label_or_icon(el.label(), el.size_index(), &w, &h, ref_w, ref_h);
-        font_.draw_label_or_icon(renderer, el.label(), sx, sy, el.size_index(), tint, ref_w, ref_h);
+        const std::string text = with_placeholder(el.label());
+        font_.measure_label_or_icon(text, el.size_index(), &w, &h, ref_w, ref_h);
+        font_.draw_label_or_icon(renderer, text, sx, sy, el.size_index(), tint, ref_w, ref_h);
         if (w <= 0) w = 12;
         if (h <= 0) h = 16;
         hits->push_back({el.key(), SDL_Rect{sx - 3, sy - 3, w + 6, h + 6}});
@@ -125,6 +143,8 @@ void CanvasRenderer::draw_element(SDL_Renderer* renderer, const OsdElement& el, 
         float value = 0.f;
         bool have_value = fetch_channel_value(storage, el.data_channel(), el.meta(), &value);
         std::string preview = have_value ? eval_enum(el, value) : el.enum_default();
+        // Порожньо і в підпису, і в значенні — елемент лишився б невидимим.
+        if (preview.empty() && el.label().empty()) preview = kNoText;
 
         int lw = 0, lh = 0, pw = 0, ph = 0;
         font_.measure_label_or_icon(el.label(), el.size_index(), &lw, &lh, ref_w, ref_h);

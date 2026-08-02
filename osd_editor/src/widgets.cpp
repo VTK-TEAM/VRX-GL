@@ -113,6 +113,15 @@ bool Panel::handle_wheel(int x, int y, int delta) {
 
 // ---------------------------------------------------------------- NumberField
 
+int NumberField::button_w() const {
+    // Половина ширини на кнопки, половина на число — але не ширше за
+    // зручні 26 і не вужче за 14, інакше в них не влучити пальцем.
+    int w = bounds.w / 8;
+    if (w > 26) w = 26;
+    if (w < 14) w = 14;
+    return w;
+}
+
 void NumberField::draw(SDL_Renderer* renderer, TTF_Font* font) {
     if (!visible) return;
     fill_rounded_rect(renderer, bounds, ui_color::BG_LIGHT);
@@ -127,7 +136,7 @@ void NumberField::draw(SDL_Renderer* renderer, TTF_Font* font) {
     // одна пара -/+ і big_step ніде не читався: щоб дійти від 0 до
     // 12.6 з кроком 0.1 треба було 126 кліків. Тепер [++] за 1-2 кліки
     // покриває більшість діапазону, [+] лишається для точного підбору.
-    int btn_w = 26;
+    const int btn_w = button_w();
     SDL_Rect big_minus{bounds.x, bounds.y, btn_w, bounds.h};
     SDL_Rect minus{bounds.x + btn_w, bounds.y, btn_w, bounds.h};
     SDL_Rect plus{bounds.x + bounds.w - btn_w * 2, bounds.y, btn_w, bounds.h};
@@ -138,15 +147,25 @@ void NumberField::draw(SDL_Renderer* renderer, TTF_Font* font) {
     fill_rounded_rect(renderer, plus, ui_color::BG);
     fill_rounded_rect(renderer, big_plus, ui_color::BG);
 
-    draw_ui_text(renderer, font, "--", big_minus.x + 4, big_minus.y + 2, ui_color::TEXT_MUTED);
-    draw_ui_text(renderer, font, "-", minus.x + 10, minus.y + 2, ui_color::TEXT);
-    draw_ui_text(renderer, font, "+", plus.x + 9, plus.y + 2, ui_color::TEXT);
-    draw_ui_text(renderer, font, "++", big_plus.x + 2, big_plus.y + 2, ui_color::TEXT_MUTED);
+    // Підписи кнопок центруємо в самих кнопках, а не зсуваємо на око:
+    // при змінній ширині будь-який сталий відступ рано чи пізно з'їде.
+    auto centered = [&](const char* t, const SDL_Rect& r, SDL_Color c) {
+        const int w = measure_ui_text_width(font, t);
+        draw_ui_text(renderer, font, t, r.x + (r.w - w) / 2, r.y + 2, c);
+    };
+    centered("--", big_minus, ui_color::TEXT_MUTED);
+    centered("-", minus, ui_color::TEXT);
+    centered("+", plus, ui_color::TEXT);
+    centered("++", big_plus, ui_color::TEXT_MUTED);
 
+    // ЗНАЧЕННЯ — по центру ВІЛЬНОГО МІСЦЯ між кнопками, а не всього поля.
     char buf[32];
     std::snprintf(buf, sizeof(buf), "%.*f", decimals, value);
-    int tw = measure_ui_text_width(font, buf);
-    int tx = bounds.x + (bounds.w - tw) / 2;
+    const int gap_x = bounds.x + btn_w * 2;
+    const int gap_w = bounds.w - btn_w * 4;
+    const int tw = measure_ui_text_width(font, buf);
+    int tx = gap_x + (gap_w - tw) / 2;
+    if (tx < gap_x) tx = gap_x;              // не влазить — притискаємо, не наїжджаємо
     draw_ui_text(renderer, font, buf, tx, bounds.y + 2, ui_color::TEXT);
 }
 
@@ -159,7 +178,7 @@ void NumberField::apply_delta(float d) {
 
 bool NumberField::handle_mouse_down(int x, int y) {
     if (!visible || !enabled || !contains(x, y)) return false;
-    int btn_w = 26;
+    const int btn_w = button_w();
     if (x < bounds.x + btn_w) {
         apply_delta(-big_step);
     } else if (x < bounds.x + btn_w * 2) {
@@ -260,6 +279,16 @@ void ListView::draw(SDL_Renderer* renderer, TTF_Font* font) {
     for (size_t i = 0; i < items.size(); ++i) {
         SDL_Rect row{bounds.x, y, bounds.w, row_height};
         if (row.y + row.h > bounds.y && row.y < bounds.y + bounds.h) {
+            if (items[i].header) {
+                // Заголовок групи: суцільна темна смуга, текст із
+                // відступом меншим — щоб рядки групи візуально "висіли"
+                // під ним, а не стояли з ним урівень.
+                fill_rounded_rect(renderer, row, ui_color::ACCENT);
+                draw_ui_text(renderer, font, items[i].text, row.x + 8, row.y + 4,
+                             ui_color::TEXT);
+                y += row_height;
+                continue;
+            }
             if (static_cast<int>(i) % 2 == 1) {
                 fill_rounded_rect(renderer, row, ui_color::BG);
             }
@@ -282,7 +311,10 @@ bool ListView::handle_mouse_down(int x, int y) {
     int rel_y = (y - bounds.y) + scroll_offset;
     int idx = rel_y / row_height;
     if (idx >= 0 && idx < static_cast<int>(items.size())) {
-        if (on_select) on_select(idx);
+        // Заголовок групи — не рядок вибору. Клік по ньому не має нічого
+        // додавати: інакше ткнувши в назву групи, користувач отримав би
+        // випадковий елемент.
+        if (!items[static_cast<size_t>(idx)].header && on_select) on_select(idx);
     }
     return true;
 }

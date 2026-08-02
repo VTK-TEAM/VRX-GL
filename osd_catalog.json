@@ -1,238 +1,6 @@
 {
   "catalog": [
     {
-      "display_name": "Батарея: напруга (текст)",
-      "key_prefix": "battery_vbat_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "<fpv_battery>",
-        "DATACHANNEL": 2,
-        "DECIMALS": 1,
-        "UNITS": "V"
-      }
-    },
-    {
-      "display_name": "Батарея: струм (текст)",
-      "key_prefix": "battery_current_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "<fpv_current>",
-        "DATACHANNEL": 1,
-        "DECIMALS": 0,
-        "UNITS": "A"
-      }
-    },
-    {
-      "display_name": "Батарея: використано (текст)",
-      "key_prefix": "battery_drawn_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "mAh",
-        "DATACHANNEL": 0,
-        "DECIMALS": 0,
-        "UNITS": "mAh"
-      }
-    },
-    {
-      "display_name": "Батарея: іконка заряду (enum)",
-      "key_prefix": "battery_icon_enum",
-      "template": {
-        "TYPE": "ENUM",
-        "S": 1,
-        "LABEL": "",
-        "DATACHANNEL": 2,
-        "UNITS": "",
-        "CASES": [
-          {
-            "OP": "LT",
-            "VALUE": 10.5,
-            "LABEL": "<battery_empty>"
-          },
-          {
-            "OP": "LT",
-            "VALUE": 11.2,
-            "LABEL": "<battery_low>"
-          },
-          {
-            "OP": "LT",
-            "VALUE": 12.0,
-            "LABEL": "<battery_mid>"
-          }
-        ],
-        "DEFAULT": "<battery_full>"
-      }
-    },
-    {
-      "display_name": "Батарея: прогрес-бар",
-      "key_prefix": "battery_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 2,
-        "UNITS": "",
-        "MIN": 9.0,
-        "MAX": 12.6,
-        "BAR_W": 0.12,
-        "BAR_H": 0.018,
-        "EMPTY_IMAGE": "img/battery_bar_empty.png",
-        "FILL_IMAGE": "img/battery_bar_fill.png"
-      }
-    },
-    {
-      "display_name": "Батарея: вік даних (діагностика)",
-      "key_prefix": "battery_age_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "AGE",
-        "DATACHANNEL": 2,
-        "DECIMALS": 0,
-        "UNITS": "s",
-        "META": "AGE_S"
-      }
-    },
-    {
-      "display_name": "GPS: супутники (текст)",
-      "key_prefix": "gps_sat_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "<gps_sat>",
-        "DATACHANNEL": 7,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "GPS: швидкість (текст)",
-      "key_prefix": "gps_speed_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "SPD",
-        "DATACHANNEL": 11,
-        "DECIMALS": 0,
-        "UNITS": "km/h"
-      }
-    },
-    {
-      "display_name": "GPS: відстань до дому (текст)",
-      "key_prefix": "gps_dist_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "DIST",
-        "DATACHANNEL": 3,
-        "DECIMALS": 0,
-        "UNITS": "m"
-      }
-    },
-    {
-      "display_name": "GPS: тип фіксації (текст)",
-      "key_prefix": "gps_fixtype_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "FIX",
-        "DATACHANNEL": 6,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "GPS: широта (текст)",
-      "key_prefix": "gps_lat_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "LAT",
-        "DATACHANNEL": 8,
-        "DECIMALS": 5,
-        "UNITS": "°"
-      }
-    },
-    {
-      "display_name": "GPS: довгота (текст)",
-      "key_prefix": "gps_lon_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "LON",
-        "DATACHANNEL": 9,
-        "DECIMALS": 5,
-        "UNITS": "°"
-      }
-    },
-    {
-      "display_name": "GPS: висота (текст)",
-      "key_prefix": "gps_alt_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "GPS.ALT",
-        "DATACHANNEL": 10,
-        "DECIMALS": 0,
-        "UNITS": "m"
-      }
-    },
-    {
-      "display_name": "GPS: курс (текст)",
-      "key_prefix": "gps_course_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "CRS",
-        "DATACHANNEL": 12,
-        "DECIMALS": 0,
-        "UNITS": "°"
-      }
-    },
-    {
-      "display_name": "Політ: час польоту (текст)",
-      "key_prefix": "flight_time_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "TIME",
-        "DATACHANNEL": 19,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "Політ: газ THROTTLE (текст)",
-      "key_prefix": "flight_throttle_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "THR",
-        "DATACHANNEL": 20,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "Політ: газ THROTTLE (прогрес-бар)",
-      "key_prefix": "flight_throttle_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 20,
-        "UNITS": "",
-        "MIN": 1000,
-        "MAX": 2000,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
       "display_name": "Політ: ARM статус (enum ARM/DISARM)",
       "key_prefix": "flight_arm_enum",
       "template": {
@@ -249,140 +17,8 @@
           }
         ],
         "DEFAULT": "DISARM"
-      }
-    },
-    {
-      "display_name": "Політ: ARM статус сире (текст)",
-      "key_prefix": "flight_arm_raw_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "ARM",
-        "DATACHANNEL": 21,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "Політ: причина дизарму (текст)",
-      "key_prefix": "flight_disarm_reason_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "DISARM.R",
-        "DATACHANNEL": 22,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "Політ: причина блокування арму (текст)",
-      "key_prefix": "flight_arming_disable_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "ARM.BLK",
-        "DATACHANNEL": 23,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "Політ: режим (enum з назвами)",
-      "key_prefix": "flight_mode_enum",
-      "template": {
-        "TYPE": "ENUM",
-        "S": 1,
-        "LABEL": "MODE:",
-        "DATACHANNEL": 24,
-        "UNITS": "",
-        "CASES": [
-          {
-            "OP": "EQ",
-            "VALUE": 0,
-            "LABEL": "ACRO"
-          },
-          {
-            "OP": "EQ",
-            "VALUE": 1,
-            "LABEL": "ANGLE"
-          },
-          {
-            "OP": "EQ",
-            "VALUE": 2,
-            "LABEL": "HORIZON"
-          },
-          {
-            "OP": "EQ",
-            "VALUE": 3,
-            "LABEL": "HEADFREE"
-          },
-          {
-            "OP": "EQ",
-            "VALUE": 4,
-            "LABEL": "PASSTHRU"
-          },
-          {
-            "OP": "EQ",
-            "VALUE": 5,
-            "LABEL": "RESCUE"
-          },
-          {
-            "OP": "EQ",
-            "VALUE": 6,
-            "LABEL": "FAILSAFE"
-          }
-        ],
-        "DEFAULT": ""
-      }
-    },
-    {
-      "display_name": "Політ: режим сирий (текст)",
-      "key_prefix": "flight_mode_raw_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "MODE:",
-        "DATACHANNEL": 24,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "Політ: висота (баро+GPS ф'южн, текст)",
-      "key_prefix": "flight_alt_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "ALT",
-        "DATACHANNEL": 16,
-        "DECIMALS": 0,
-        "UNITS": "m"
-      }
-    },
-    {
-      "display_name": "Політ: вертикальна швидкість (текст)",
-      "key_prefix": "flight_climb_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "CLB",
-        "DATACHANNEL": 17,
-        "DECIMALS": 0,
-        "UNITS": "km/h"
-      }
-    },
-    {
-      "display_name": "Політ: пройдена відстань (одометр, текст)",
-      "key_prefix": "flight_odometer_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "ODO",
-        "DATACHANNEL": 18,
-        "DECIMALS": 0,
-        "UNITS": "m"
-      }
+      },
+      "group": "Політ"
     },
     {
       "display_name": "Політ: G-навантаження (текст)",
@@ -394,1612 +30,91 @@
         "DATACHANNEL": 4,
         "DECIMALS": 1,
         "UNITS": "G"
-      }
+      },
+      "group": "Політ"
     },
     {
-      "display_name": "Політ: індекс PID-профілю (текст)",
-      "key_prefix": "flight_profile_value",
+      "display_name": "Політ: вертикальна швидкість (текст)",
+      "key_prefix": "flight_climb_value",
       "template": {
         "TYPE": "VALUE",
         "S": 0,
-        "LABEL": "PID",
-        "DATACHANNEL": 5,
+        "LABEL": "CLB",
+        "DATACHANNEL": 17,
         "DECIMALS": 0,
-        "UNITS": ""
-      }
+        "UNITS": "km/h"
+      },
+      "group": "Політ"
     },
     {
-      "display_name": "Кути: крен (текст)",
-      "key_prefix": "angles_roll_value",
+      "display_name": "Політ: висота (баро+GPS ф'южн, текст)",
+      "key_prefix": "flight_alt_value",
       "template": {
         "TYPE": "VALUE",
         "S": 0,
-        "LABEL": "ROLL",
-        "DATACHANNEL": 13,
-        "DECIMALS": 1,
-        "UNITS": "°"
-      }
-    },
-    {
-      "display_name": "Кути: тангаж (текст)",
-      "key_prefix": "angles_pitch_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "PITCH",
-        "DATACHANNEL": 14,
-        "DECIMALS": 1,
-        "UNITS": "°"
-      }
-    },
-    {
-      "display_name": "Кути: курс (текст)",
-      "key_prefix": "angles_yaw_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "YAW",
-        "DATACHANNEL": 15,
-        "DECIMALS": 1,
-        "UNITS": "°"
-      }
-    },
-    {
-      "display_name": "Крен борта (горизонт)",
-      "key_prefix": "attitude_horizon",
-      "template": {
-        "TYPE": "HORIZON",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 13,
-        "UNITS": "",
-        "BASE_IMAGE": "img/horizont_0.png",
-        "POINTER_IMAGE": "img/horizont_1.png"
-      }
-    },
-    {
-      "display_name": "Оптика (борт): TX (текст)",
-      "key_prefix": "optics_A_tx_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "ATx",
-        "DATACHANNEL": 28,
-        "DECIMALS": 1,
-        "UNITS": "dBm"
-      }
-    },
-    {
-      "display_name": "Оптика (борт): RX (текст)",
-      "key_prefix": "optics_A_rx_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "ARx",
-        "DATACHANNEL": 29,
-        "DECIMALS": 1,
-        "UNITS": "dBm"
-      }
-    },
-    {
-      "display_name": "Оптика (борт): температура SFP (текст)",
-      "key_prefix": "optics_A_temp_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "A.T",
-        "DATACHANNEL": 25,
-        "DECIMALS": 1,
-        "UNITS": "°C"
-      }
-    },
-    {
-      "display_name": "Оптика (борт): напруга SFP (текст)",
-      "key_prefix": "optics_A_vcc_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "A.V",
-        "DATACHANNEL": 26,
-        "DECIMALS": 2,
-        "UNITS": "V"
-      }
-    },
-    {
-      "display_name": "Оптика (борт): bias SFP (текст)",
-      "key_prefix": "optics_A_bias_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "A.B",
-        "DATACHANNEL": 27,
-        "DECIMALS": 1,
-        "UNITS": "mA"
-      }
-    },
-    {
-      "display_name": "Живлення плати (борт, текст)",
-      "key_prefix": "power_supply_A_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "A.PWR",
-        "DATACHANNEL": 35,
-        "DECIMALS": 1,
-        "UNITS": "V"
-      }
-    },
-    {
-      "display_name": "BOSA монітор RX (борт, текст)",
-      "key_prefix": "bosa_rx_A_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "A.BRx",
-        "DATACHANNEL": 37,
-        "DECIMALS": 2,
-        "UNITS": "V"
-      }
-    },
-    {
-      "display_name": "BOSA монітор TX (борт, текст)",
-      "key_prefix": "bosa_tx_A_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "A.BTx",
-        "DATACHANNEL": 38,
-        "DECIMALS": 2,
-        "UNITS": "V"
-      }
-    },
-    {
-      "display_name": "Оптика (земля): TX (текст)",
-      "key_prefix": "optics_G_tx_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "GTx",
-        "DATACHANNEL": 33,
-        "DECIMALS": 1,
-        "UNITS": "dBm"
-      }
-    },
-    {
-      "display_name": "Оптика (земля): RX (текст)",
-      "key_prefix": "optics_G_rx_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "GRx",
-        "DATACHANNEL": 34,
-        "DECIMALS": 1,
-        "UNITS": "dBm"
-      }
-    },
-    {
-      "display_name": "Оптика (земля): температура SFP (текст)",
-      "key_prefix": "optics_G_temp_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "G.T",
-        "DATACHANNEL": 30,
-        "DECIMALS": 1,
-        "UNITS": "°C"
-      }
-    },
-    {
-      "display_name": "Оптика (земля): напруга SFP (текст)",
-      "key_prefix": "optics_G_vcc_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "G.V",
-        "DATACHANNEL": 31,
-        "DECIMALS": 2,
-        "UNITS": "V"
-      }
-    },
-    {
-      "display_name": "Оптика (земля): bias SFP (текст)",
-      "key_prefix": "optics_G_bias_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "G.B",
-        "DATACHANNEL": 32,
-        "DECIMALS": 1,
-        "UNITS": "mA"
-      }
-    },
-    {
-      "display_name": "Живлення плати (земля, текст)",
-      "key_prefix": "power_supply_G_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "G.PWR",
-        "DATACHANNEL": 36,
-        "DECIMALS": 1,
-        "UNITS": "V"
-      }
-    },
-    {
-      "display_name": "BOSA монітор RX (земля, текст)",
-      "key_prefix": "bosa_rx_G_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "G.BRx",
-        "DATACHANNEL": 39,
-        "DECIMALS": 2,
-        "UNITS": "V"
-      }
-    },
-    {
-      "display_name": "BOSA монітор TX (земля, текст)",
-      "key_prefix": "bosa_tx_G_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "G.BTx",
-        "DATACHANNEL": 40,
-        "DECIMALS": 2,
-        "UNITS": "V"
-      }
-    },
-    {
-      "display_name": "Оптика: втрати лінії (текст)",
-      "key_prefix": "optics_line_loss_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "LOSS",
-        "DATACHANNEL": 201,
-        "DECIMALS": 1,
-        "UNITS": "dB"
-      }
-    },
-    {
-      "display_name": "Реальний fps H265 (текст)",
-      "key_prefix": "h265_fps_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "H265",
-        "DATACHANNEL": 202,
+        "LABEL": "ALT",
+        "DATACHANNEL": 16,
         "DECIMALS": 0,
-        "UNITS": "fps"
-      }
+        "UNITS": "m"
+      },
+      "group": "Політ"
     },
     {
-      "display_name": "Реальний fps MJPEG (текст)",
-      "key_prefix": "mjpeg_fps_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "MJPG",
-        "DATACHANNEL": 203,
-        "DECIMALS": 0,
-        "UNITS": "fps"
-      }
-    },
-    {
-      "display_name": "ELRS: RSSI1 (текст)",
-      "key_prefix": "erls_rssi1_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "RSSI1",
-        "DATACHANNEL": 41,
-        "DECIMALS": 0,
-        "UNITS": "dBm"
-      }
-    },
-    {
-      "display_name": "ELRS: RSSI2 (текст)",
-      "key_prefix": "erls_rssi2_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "RSSI2",
-        "DATACHANNEL": 42,
-        "DECIMALS": 0,
-        "UNITS": "dBm"
-      }
-    },
-    {
-      "display_name": "ELRS: link quality (текст)",
-      "key_prefix": "erls_lq_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "LQ",
-        "DATACHANNEL": 43,
-        "DECIMALS": 0,
-        "UNITS": "%"
-      }
-    },
-    {
-      "display_name": "ELRS: SNR (текст)",
-      "key_prefix": "erls_snr_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "SNR",
-        "DATACHANNEL": 44,
-        "DECIMALS": 0,
-        "UNITS": "dB"
-      }
-    },
-    {
-      "display_name": "ELRS: TX потужність (текст)",
-      "key_prefix": "erls_txpwr_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "TXP",
-        "DATACHANNEL": 45,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "ELRS: downlink LQ (текст)",
-      "key_prefix": "erls_dllq_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "DL.LQ",
-        "DATACHANNEL": 46,
-        "DECIMALS": 0,
-        "UNITS": "%"
-      }
-    },
-    {
-      "display_name": "ELRS: downlink SNR (текст)",
-      "key_prefix": "erls_dlsnr_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "DL.SNR",
-        "DATACHANNEL": 47,
-        "DECIMALS": 0,
-        "UNITS": "dB"
-      }
-    },
-    {
-      "display_name": "RC: активне джерело CRSF (текст)",
-      "key_prefix": "rc_crsfsrc_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "SRC",
-        "DATACHANNEL": 48,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "RC: вік даних (текст)",
-      "key_prefix": "rc_age_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "RC.AGE",
-        "DATACHANNEL": 49,
-        "DECIMALS": 0,
-        "UNITS": "ms"
-      }
-    },
-    {
-      "display_name": "ELRS: вік лінк-статистики (текст)",
-      "key_prefix": "erls_linkage_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "E.AGE",
-        "DATACHANNEL": 50,
-        "DECIMALS": 0,
-        "UNITS": "ms"
-      }
-    },
-    {
-      "display_name": "RC ch1 (текст)",
-      "key_prefix": "rc_ch1_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "C1",
-        "DATACHANNEL": 51,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "RC ch1 (прогрес-бар)",
-      "key_prefix": "rc_ch1_bar",
+      "display_name": "Політ: газ THROTTLE (прогрес-бар)",
+      "key_prefix": "flight_throttle_bar",
       "template": {
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 51,
+        "DATACHANNEL": 20,
         "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
+        "MIN": 1000,
+        "MAX": 2000,
         "BAR_W": 0.1,
         "BAR_H": 0.015,
         "EMPTY_IMAGE": "img/pgbar_empy.png",
         "FILL_IMAGE": "img/pgbar_green.png"
-      }
+      },
+      "group": "Політ"
     },
     {
-      "display_name": "RC ch2 (текст)",
-      "key_prefix": "rc_ch2_value",
+      "display_name": "Політ: газ THROTTLE (текст)",
+      "key_prefix": "flight_throttle_value",
       "template": {
         "TYPE": "VALUE",
         "S": 0,
-        "LABEL": "C2",
-        "DATACHANNEL": 52,
+        "LABEL": "THR",
+        "DATACHANNEL": 20,
         "DECIMALS": 0,
         "UNITS": ""
-      }
+      },
+      "group": "Політ"
     },
     {
-      "display_name": "RC ch2 (прогрес-бар)",
-      "key_prefix": "rc_ch2_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 52,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "RC ch3 (текст)",
-      "key_prefix": "rc_ch3_value",
+      "display_name": "Політ: причина дизарму (текст)",
+      "key_prefix": "flight_disarm_reason_value",
       "template": {
         "TYPE": "VALUE",
         "S": 0,
-        "LABEL": "C3",
-        "DATACHANNEL": 53,
+        "LABEL": "DISARM.R",
+        "DATACHANNEL": 22,
         "DECIMALS": 0,
         "UNITS": ""
-      }
+      },
+      "group": "Політ"
     },
     {
-      "display_name": "RC ch3 (прогрес-бар)",
-      "key_prefix": "rc_ch3_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 53,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "RC ch4 (текст)",
-      "key_prefix": "rc_ch4_value",
+      "display_name": "Політ: пройдена відстань (одометр, текст)",
+      "key_prefix": "flight_odometer_value",
       "template": {
         "TYPE": "VALUE",
         "S": 0,
-        "LABEL": "C4",
-        "DATACHANNEL": 54,
+        "LABEL": "ODO",
+        "DATACHANNEL": 18,
         "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "RC ch4 (прогрес-бар)",
-      "key_prefix": "rc_ch4_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 54,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "RC ch5 (текст)",
-      "key_prefix": "rc_ch5_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "C5",
-        "DATACHANNEL": 55,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "RC ch5 (прогрес-бар)",
-      "key_prefix": "rc_ch5_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 55,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "RC ch6 (текст)",
-      "key_prefix": "rc_ch6_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "C6",
-        "DATACHANNEL": 56,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "RC ch6 (прогрес-бар)",
-      "key_prefix": "rc_ch6_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 56,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "RC ch7 (текст)",
-      "key_prefix": "rc_ch7_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "C7",
-        "DATACHANNEL": 57,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "RC ch7 (прогрес-бар)",
-      "key_prefix": "rc_ch7_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 57,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "RC ch8 (текст)",
-      "key_prefix": "rc_ch8_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "C8",
-        "DATACHANNEL": 58,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "RC ch8 (прогрес-бар)",
-      "key_prefix": "rc_ch8_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 58,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "RC ch9 (текст)",
-      "key_prefix": "rc_ch9_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "C9",
-        "DATACHANNEL": 59,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "RC ch9 (прогрес-бар)",
-      "key_prefix": "rc_ch9_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 59,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "RC ch10 (текст)",
-      "key_prefix": "rc_ch10_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "C10",
-        "DATACHANNEL": 60,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "RC ch10 (прогрес-бар)",
-      "key_prefix": "rc_ch10_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 60,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "RC ch11 (текст)",
-      "key_prefix": "rc_ch11_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "C11",
-        "DATACHANNEL": 61,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "RC ch11 (прогрес-бар)",
-      "key_prefix": "rc_ch11_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 61,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "RC ch12 (текст)",
-      "key_prefix": "rc_ch12_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "C12",
-        "DATACHANNEL": 62,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "RC ch12 (прогрес-бар)",
-      "key_prefix": "rc_ch12_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 62,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "RC ch13 (текст)",
-      "key_prefix": "rc_ch13_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "C13",
-        "DATACHANNEL": 63,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "RC ch13 (прогрес-бар)",
-      "key_prefix": "rc_ch13_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 63,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "RC ch14 (текст)",
-      "key_prefix": "rc_ch14_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "C14",
-        "DATACHANNEL": 64,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "RC ch14 (прогрес-бар)",
-      "key_prefix": "rc_ch14_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 64,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "RC ch15 (текст)",
-      "key_prefix": "rc_ch15_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "C15",
-        "DATACHANNEL": 65,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "RC ch15 (прогрес-бар)",
-      "key_prefix": "rc_ch15_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 65,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "RC ch16 (текст)",
-      "key_prefix": "rc_ch16_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "C16",
-        "DATACHANNEL": 66,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "RC ch16 (прогрес-бар)",
-      "key_prefix": "rc_ch16_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 66,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "RC ch17 (текст)",
-      "key_prefix": "rc_ch17_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "C17",
-        "DATACHANNEL": 67,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "RC ch17 (прогрес-бар)",
-      "key_prefix": "rc_ch17_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 67,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "RC ch18 (текст)",
-      "key_prefix": "rc_ch18_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "C18",
-        "DATACHANNEL": 68,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "RC ch18 (прогрес-бар)",
-      "key_prefix": "rc_ch18_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 68,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "ELRS ch1 (текст)",
-      "key_prefix": "erls_ch1_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "E1",
-        "DATACHANNEL": 69,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "ELRS ch1 (прогрес-бар)",
-      "key_prefix": "erls_ch1_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 69,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "ELRS ch2 (текст)",
-      "key_prefix": "erls_ch2_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "E2",
-        "DATACHANNEL": 70,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "ELRS ch2 (прогрес-бар)",
-      "key_prefix": "erls_ch2_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 70,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "ELRS ch3 (текст)",
-      "key_prefix": "erls_ch3_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "E3",
-        "DATACHANNEL": 71,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "ELRS ch3 (прогрес-бар)",
-      "key_prefix": "erls_ch3_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 71,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "ELRS ch4 (текст)",
-      "key_prefix": "erls_ch4_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "E4",
-        "DATACHANNEL": 72,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "ELRS ch4 (прогрес-бар)",
-      "key_prefix": "erls_ch4_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 72,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "ELRS ch5 (текст)",
-      "key_prefix": "erls_ch5_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "E5",
-        "DATACHANNEL": 73,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "ELRS ch5 (прогрес-бар)",
-      "key_prefix": "erls_ch5_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 73,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "ELRS ch6 (текст)",
-      "key_prefix": "erls_ch6_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "E6",
-        "DATACHANNEL": 74,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "ELRS ch6 (прогрес-бар)",
-      "key_prefix": "erls_ch6_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 74,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "ELRS ch7 (текст)",
-      "key_prefix": "erls_ch7_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "E7",
-        "DATACHANNEL": 75,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "ELRS ch7 (прогрес-бар)",
-      "key_prefix": "erls_ch7_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 75,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "ELRS ch8 (текст)",
-      "key_prefix": "erls_ch8_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "E8",
-        "DATACHANNEL": 76,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "ELRS ch8 (прогрес-бар)",
-      "key_prefix": "erls_ch8_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 76,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "ELRS ch9 (текст)",
-      "key_prefix": "erls_ch9_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "E9",
-        "DATACHANNEL": 77,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "ELRS ch9 (прогрес-бар)",
-      "key_prefix": "erls_ch9_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 77,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "ELRS ch10 (текст)",
-      "key_prefix": "erls_ch10_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "E10",
-        "DATACHANNEL": 78,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "ELRS ch10 (прогрес-бар)",
-      "key_prefix": "erls_ch10_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 78,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "ELRS ch11 (текст)",
-      "key_prefix": "erls_ch11_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "E11",
-        "DATACHANNEL": 79,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "ELRS ch11 (прогрес-бар)",
-      "key_prefix": "erls_ch11_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 79,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "ELRS ch12 (текст)",
-      "key_prefix": "erls_ch12_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "E12",
-        "DATACHANNEL": 80,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "ELRS ch12 (прогрес-бар)",
-      "key_prefix": "erls_ch12_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 80,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "ELRS ch13 (текст)",
-      "key_prefix": "erls_ch13_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "E13",
-        "DATACHANNEL": 81,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "ELRS ch13 (прогрес-бар)",
-      "key_prefix": "erls_ch13_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 81,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "ELRS ch14 (текст)",
-      "key_prefix": "erls_ch14_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "E14",
-        "DATACHANNEL": 82,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "ELRS ch14 (прогрес-бар)",
-      "key_prefix": "erls_ch14_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 82,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "ELRS ch15 (текст)",
-      "key_prefix": "erls_ch15_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "E15",
-        "DATACHANNEL": 83,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "ELRS ch15 (прогрес-бар)",
-      "key_prefix": "erls_ch15_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 83,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "ELRS ch16 (текст)",
-      "key_prefix": "erls_ch16_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "E16",
-        "DATACHANNEL": 84,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "ELRS ch16 (прогрес-бар)",
-      "key_prefix": "erls_ch16_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 84,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "ELRS ch17 (текст)",
-      "key_prefix": "erls_ch17_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "E17",
-        "DATACHANNEL": 85,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "ELRS ch17 (прогрес-бар)",
-      "key_prefix": "erls_ch17_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 85,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "ELRS ch18 (текст)",
-      "key_prefix": "erls_ch18_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "E18",
-        "DATACHANNEL": 86,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "ELRS ch18 (прогрес-бар)",
-      "key_prefix": "erls_ch18_bar",
-      "template": {
-        "TYPE": "BAR",
-        "S": 0,
-        "LABEL": "",
-        "DATACHANNEL": 86,
-        "UNITS": "",
-        "MIN": 172,
-        "MAX": 1811,
-        "BAR_W": 0.1,
-        "BAR_H": 0.015,
-        "EMPTY_IMAGE": "img/pgbar_empy.png",
-        "FILL_IMAGE": "img/pgbar_green.png"
-      }
-    },
-    {
-      "display_name": "Діагностика: soonest-fallback лічильник",
-      "key_prefix": "tlm_fallback_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "Q.FB",
-        "DATACHANNEL": 87,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "Діагностика: is_change-fallback лічильник",
-      "key_prefix": "tlm_ischange_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "Q.IC",
-        "DATACHANNEL": 88,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "Діагностика: період TOS-пакетів (текст)",
-      "key_prefix": "tos_period_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "TOS.MS",
-        "DATACHANNEL": 89,
-        "DECIMALS": 0,
-        "UNITS": "ms"
-      }
-    },
-    {
-      "display_name": "Просто текст (без каналу)",
-      "key_prefix": "custom_label",
-      "template": {
-        "TYPE": "LABEL",
-        "S": 0,
-        "LABEL": "TEXT",
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "Просто іконка (без каналу)",
-      "key_prefix": "custom_icon",
-      "template": {
-        "TYPE": "LABEL",
-        "S": 1,
-        "LABEL": "<pilot>",
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "Станція: fps на екрані",
-      "key_prefix": "screen_fps",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "Screen ",
-        "DATACHANNEL": 204,
-        "DECIMALS": 1,
-        "UNITS": "fps"
-      }
-    },
-    {
-      "display_name": "Станція: частота показів",
-      "key_prefix": "display_fps",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "Disp ",
-        "DATACHANNEL": 205,
-        "DECIMALS": 1,
-        "UNITS": "fps"
-      }
-    },
-    {
-      "display_name": "Станція: стан ФАПЧ",
-      "key_prefix": "phase_lock",
-      "template": {
-        "TYPE": "ENUM",
-        "S": 0,
-        "LABEL": "PLL ",
-        "DATACHANNEL": 206,
-        "DEFAULT": "----",
-        "CASES": [
-          {
-            "LABEL": "LOCK",
-            "OP": "EQ",
-            "VALUE": 2
-          },
-          {
-            "LABEL": "SYNC",
-            "OP": "EQ",
-            "VALUE": 1
-          }
-        ],
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "Станція: затримка тракту",
-      "key_prefix": "latency",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "Lat ",
-        "DATACHANNEL": 207,
-        "DECIMALS": 1,
-        "UNITS": "ms"
-      }
-    },
-    {
-      "display_name": "Станція: втрачено кадрів/с",
-      "key_prefix": "dropped_fps",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "Drop ",
-        "DATACHANNEL": 208,
-        "DECIMALS": 2,
-        "UNITS": "fps"
-      }
-    },
-    {
-      "display_name": "Станція: запізнілих кадрів/с",
-      "key_prefix": "late_fps",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "Late ",
-        "DATACHANNEL": 209,
-        "DECIMALS": 2,
-        "UNITS": "fps"
-      }
-    },
-    {
-      "display_name": "Станція: не прийшло кадрів",
-      "key_prefix": "lost_frames",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "Lost ",
-        "DATACHANNEL": 210,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
+        "UNITS": "m"
+      },
+      "group": "Політ"
     },
     {
       "display_name": "Політ: режим (повний перелік)",
@@ -2048,7 +163,22 @@
           }
         ],
         "UNITS": ""
-      }
+      },
+      "group": "Політ"
+    },
+    {
+      "display_name": "Політ: час польоту (текст)",
+      "key_prefix": "flight_time_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "TIME",
+        "DATACHANNEL": 19,
+        "DECIMALS": 0,
+        "UNITS": "",
+        "FORMAT": "MM:SS"
+      },
+      "group": "Політ"
     },
     {
       "display_name": "Політ: чому не армиться (повний перелік)",
@@ -2061,7 +191,7 @@
         "DEFAULT": "",
         "CASES": [
           {
-            "LABEL": "НЕМА ГІРО",
+            "LABEL": "NO GYRO",
             "OP": "EQ",
             "VALUE": 1
           },
@@ -2076,7 +206,7 @@
             "VALUE": 3
           },
           {
-            "LABEL": "НЕ РОЗАРМ",
+            "LABEL": "NOT DISARMED",
             "OP": "EQ",
             "VALUE": 4
           },
@@ -2091,22 +221,22 @@
             "VALUE": 6
           },
           {
-            "LABEL": "КРАШ",
+            "LABEL": "CRASH",
             "OP": "EQ",
             "VALUE": 7
           },
           {
-            "LABEL": "ГАЗ",
+            "LABEL": "THROTTLE",
             "OP": "EQ",
             "VALUE": 8
           },
           {
-            "LABEL": "КУТ",
+            "LABEL": "ANGLE",
             "OP": "EQ",
             "VALUE": 9
           },
           {
-            "LABEL": "ЗАГРУЗКА",
+            "LABEL": "BOOT GRACE",
             "OP": "EQ",
             "VALUE": 10
           },
@@ -2116,12 +246,12 @@
             "VALUE": 11
           },
           {
-            "LABEL": "НАВАНТАЖ",
+            "LABEL": "LOAD",
             "OP": "EQ",
             "VALUE": 12
           },
           {
-            "LABEL": "КАЛІБР",
+            "LABEL": "CALIB",
             "OP": "EQ",
             "VALUE": 13
           },
@@ -2131,7 +261,7 @@
             "VALUE": 14
           },
           {
-            "LABEL": "МЕНЮ",
+            "LABEL": "CMS MENU",
             "OP": "EQ",
             "VALUE": 15
           },
@@ -2166,7 +296,7 @@
             "VALUE": 21
           },
           {
-            "LABEL": "ПЕРЕЗАВАНТ",
+            "LABEL": "REBOOT REQ",
             "OP": "EQ",
             "VALUE": 22
           },
@@ -2176,12 +306,12 @@
             "VALUE": 23
           },
           {
-            "LABEL": "КАЛІБР ACC",
+            "LABEL": "ACC CALIB",
             "OP": "EQ",
             "VALUE": 24
           },
           {
-            "LABEL": "ПРОТОКОЛ",
+            "LABEL": "MOTOR PROTO",
             "OP": "EQ",
             "VALUE": 25
           },
@@ -2201,7 +331,7 @@
             "VALUE": 28
           },
           {
-            "LABEL": "АВТОПІЛОТ",
+            "LABEL": "AUTOPILOT",
             "OP": "EQ",
             "VALUE": 29
           },
@@ -2212,7 +342,266 @@
           }
         ],
         "UNITS": ""
-      }
+      },
+      "group": "Політ"
+    },
+    {
+      "display_name": "Політ: індекс PID-профілю (текст)",
+      "key_prefix": "flight_profile_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "PID",
+        "DATACHANNEL": 5,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Політ"
+    },
+    {
+      "display_name": "Крен борта (горизонт)",
+      "key_prefix": "attitude_horizon",
+      "template": {
+        "TYPE": "HORIZON",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 13,
+        "UNITS": "",
+        "BASE_IMAGE": "img/horizont_0.png",
+        "POINTER_IMAGE": "img/horizont_1.png"
+      },
+      "group": "Кути й горизонт"
+    },
+    {
+      "display_name": "Кути: крен (текст)",
+      "key_prefix": "angles_roll_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "ROLL",
+        "DATACHANNEL": 13,
+        "DECIMALS": 1,
+        "UNITS": "°"
+      },
+      "group": "Кути й горизонт"
+    },
+    {
+      "display_name": "Кути: курс (текст)",
+      "key_prefix": "angles_yaw_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "YAW",
+        "DATACHANNEL": 15,
+        "DECIMALS": 1,
+        "UNITS": "°"
+      },
+      "group": "Кути й горизонт"
+    },
+    {
+      "display_name": "Кути: тангаж (текст)",
+      "key_prefix": "angles_pitch_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "PITCH",
+        "DATACHANNEL": 14,
+        "DECIMALS": 1,
+        "UNITS": "°"
+      },
+      "group": "Кути й горизонт"
+    },
+    {
+      "display_name": "Батарея: використано (текст)",
+      "key_prefix": "battery_drawn_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "mAh",
+        "DATACHANNEL": 0,
+        "DECIMALS": 0,
+        "UNITS": "mAh"
+      },
+      "group": "Батарея й живлення"
+    },
+    {
+      "display_name": "Батарея: вік даних (діагностика)",
+      "key_prefix": "battery_age_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "AGE",
+        "DATACHANNEL": 2,
+        "DECIMALS": 0,
+        "UNITS": "s",
+        "META": "AGE_S"
+      },
+      "group": "Батарея й живлення"
+    },
+    {
+      "display_name": "Батарея: напруга (текст)",
+      "key_prefix": "battery_vbat_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "<fpv_battery>",
+        "DATACHANNEL": 2,
+        "DECIMALS": 1,
+        "UNITS": "V"
+      },
+      "group": "Батарея й живлення"
+    },
+    {
+      "display_name": "Батарея: прогрес-бар",
+      "key_prefix": "battery_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 2,
+        "UNITS": "",
+        "MIN": 9.0,
+        "MAX": 12.6,
+        "BAR_W": 0.12,
+        "BAR_H": 0.018,
+        "EMPTY_IMAGE": "img/battery_bar_empty.png",
+        "FILL_IMAGE": "img/battery_bar_fill.png"
+      },
+      "group": "Батарея й живлення"
+    },
+    {
+      "display_name": "Батарея: струм (текст)",
+      "key_prefix": "battery_current_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "<fpv_current>",
+        "DATACHANNEL": 1,
+        "DECIMALS": 0,
+        "UNITS": "A"
+      },
+      "group": "Батарея й живлення"
+    },
+    {
+      "display_name": "Батарея: іконка заряду (enum)",
+      "key_prefix": "battery_icon_enum",
+      "template": {
+        "TYPE": "ENUM",
+        "S": 1,
+        "LABEL": "",
+        "DATACHANNEL": 2,
+        "UNITS": "",
+        "CASES": [
+          {
+            "OP": "LT",
+            "VALUE": 10.5,
+            "LABEL": "<battery_empty>"
+          },
+          {
+            "OP": "LT",
+            "VALUE": 11.2,
+            "LABEL": "<battery_low>"
+          },
+          {
+            "OP": "LT",
+            "VALUE": 12.0,
+            "LABEL": "<battery_mid>"
+          }
+        ],
+        "DEFAULT": "<battery_full>"
+      },
+      "group": "Батарея й живлення"
+    },
+    {
+      "display_name": "Живлення плати (борт, текст)",
+      "key_prefix": "power_supply_A_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "A.PWR",
+        "DATACHANNEL": 35,
+        "DECIMALS": 1,
+        "UNITS": "V"
+      },
+      "group": "Батарея й живлення"
+    },
+    {
+      "display_name": "Живлення плати (земля, текст)",
+      "key_prefix": "power_supply_G_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "G.PWR",
+        "DATACHANNEL": 36,
+        "DECIMALS": 1,
+        "UNITS": "V"
+      },
+      "group": "Батарея й живлення"
+    },
+    {
+      "display_name": "GPS: висота (текст)",
+      "key_prefix": "gps_alt_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "GPS.ALT",
+        "DATACHANNEL": 10,
+        "DECIMALS": 0,
+        "UNITS": "m"
+      },
+      "group": "GPS"
+    },
+    {
+      "display_name": "GPS: відстань до дому (текст)",
+      "key_prefix": "gps_dist_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "DIST",
+        "DATACHANNEL": 3,
+        "DECIMALS": 0,
+        "UNITS": "m"
+      },
+      "group": "GPS"
+    },
+    {
+      "display_name": "GPS: довгота (текст)",
+      "key_prefix": "gps_lon_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "LON",
+        "DATACHANNEL": 9,
+        "DECIMALS": 5,
+        "UNITS": "°"
+      },
+      "group": "GPS"
+    },
+    {
+      "display_name": "GPS: курс (текст)",
+      "key_prefix": "gps_course_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "CRS",
+        "DATACHANNEL": 12,
+        "DECIMALS": 0,
+        "UNITS": "°"
+      },
+      "group": "GPS"
+    },
+    {
+      "display_name": "GPS: супутники (текст)",
+      "key_prefix": "gps_sat_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "<gps_sat>",
+        "DATACHANNEL": 7,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "GPS"
     },
     {
       "display_name": "GPS: тип фіксу",
@@ -2222,7 +611,7 @@
         "S": 1,
         "LABEL": "FIX ",
         "DATACHANNEL": 6,
-        "DEFAULT": "НЕМА",
+        "DEFAULT": "NO FIX",
         "CASES": [
           {
             "LABEL": "3D",
@@ -2236,223 +625,592 @@
           }
         ],
         "UNITS": ""
-      }
+      },
+      "group": "GPS"
     },
     {
-      "display_name": "Пульт 1: канал 1",
-      "key_prefix": "rc_ch1",
+      "display_name": "GPS: швидкість (текст)",
+      "key_prefix": "gps_speed_value",
       "template": {
         "TYPE": "VALUE",
         "S": 0,
-        "LABEL": "CH1 ",
+        "LABEL": "SPD",
+        "DATACHANNEL": 11,
+        "DECIMALS": 0,
+        "UNITS": "km/h"
+      },
+      "group": "GPS"
+    },
+    {
+      "display_name": "GPS: широта (текст)",
+      "key_prefix": "gps_lat_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "LAT",
+        "DATACHANNEL": 8,
+        "DECIMALS": 5,
+        "UNITS": "°"
+      },
+      "group": "GPS"
+    },
+    {
+      "display_name": "RC ch1 (прогрес-бар)",
+      "key_prefix": "rc_ch1_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 51,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Пульт 1"
+    },
+    {
+      "display_name": "RC ch1 (текст)",
+      "key_prefix": "rc_ch1_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "C1",
         "DATACHANNEL": 51,
         "DECIMALS": 0,
         "UNITS": ""
-      }
+      },
+      "group": "Пульт 1"
     },
     {
-      "display_name": "Пульт 1: канал 2",
-      "key_prefix": "rc_ch2",
+      "display_name": "RC ch10 (прогрес-бар)",
+      "key_prefix": "rc_ch10_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 60,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Пульт 1"
+    },
+    {
+      "display_name": "RC ch10 (текст)",
+      "key_prefix": "rc_ch10_value",
       "template": {
         "TYPE": "VALUE",
         "S": 0,
-        "LABEL": "CH2 ",
-        "DATACHANNEL": 52,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "Пульт 1: канал 3",
-      "key_prefix": "rc_ch3",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "CH3 ",
-        "DATACHANNEL": 53,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "Пульт 1: канал 4",
-      "key_prefix": "rc_ch4",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "CH4 ",
-        "DATACHANNEL": 54,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "Пульт 1: канал 5",
-      "key_prefix": "rc_ch5",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "CH5 ",
-        "DATACHANNEL": 55,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "Пульт 1: канал 6",
-      "key_prefix": "rc_ch6",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "CH6 ",
-        "DATACHANNEL": 56,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "Пульт 1: канал 7",
-      "key_prefix": "rc_ch7",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "CH7 ",
-        "DATACHANNEL": 57,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "Пульт 1: канал 8",
-      "key_prefix": "rc_ch8",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "CH8 ",
-        "DATACHANNEL": 58,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "Пульт 1: канал 9",
-      "key_prefix": "rc_ch9",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "CH9 ",
-        "DATACHANNEL": 59,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "Пульт 1: канал 10",
-      "key_prefix": "rc_ch10",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "CH10 ",
+        "LABEL": "C10",
         "DATACHANNEL": 60,
         "DECIMALS": 0,
         "UNITS": ""
-      }
+      },
+      "group": "Пульт 1"
     },
     {
-      "display_name": "Пульт 1: канал 11",
-      "key_prefix": "rc_ch11",
+      "display_name": "RC ch11 (прогрес-бар)",
+      "key_prefix": "rc_ch11_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 61,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Пульт 1"
+    },
+    {
+      "display_name": "RC ch11 (текст)",
+      "key_prefix": "rc_ch11_value",
       "template": {
         "TYPE": "VALUE",
         "S": 0,
-        "LABEL": "CH11 ",
+        "LABEL": "C11",
         "DATACHANNEL": 61,
         "DECIMALS": 0,
         "UNITS": ""
-      }
+      },
+      "group": "Пульт 1"
     },
     {
-      "display_name": "Пульт 1: канал 12",
-      "key_prefix": "rc_ch12",
+      "display_name": "RC ch12 (прогрес-бар)",
+      "key_prefix": "rc_ch12_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 62,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Пульт 1"
+    },
+    {
+      "display_name": "RC ch12 (текст)",
+      "key_prefix": "rc_ch12_value",
       "template": {
         "TYPE": "VALUE",
         "S": 0,
-        "LABEL": "CH12 ",
+        "LABEL": "C12",
         "DATACHANNEL": 62,
         "DECIMALS": 0,
         "UNITS": ""
-      }
+      },
+      "group": "Пульт 1"
     },
     {
-      "display_name": "Пульт 1: канал 13",
-      "key_prefix": "rc_ch13",
+      "display_name": "RC ch13 (прогрес-бар)",
+      "key_prefix": "rc_ch13_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 63,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Пульт 1"
+    },
+    {
+      "display_name": "RC ch13 (текст)",
+      "key_prefix": "rc_ch13_value",
       "template": {
         "TYPE": "VALUE",
         "S": 0,
-        "LABEL": "CH13 ",
+        "LABEL": "C13",
         "DATACHANNEL": 63,
         "DECIMALS": 0,
         "UNITS": ""
-      }
+      },
+      "group": "Пульт 1"
     },
     {
-      "display_name": "Пульт 1: канал 14",
-      "key_prefix": "rc_ch14",
+      "display_name": "RC ch14 (прогрес-бар)",
+      "key_prefix": "rc_ch14_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 64,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Пульт 1"
+    },
+    {
+      "display_name": "RC ch14 (текст)",
+      "key_prefix": "rc_ch14_value",
       "template": {
         "TYPE": "VALUE",
         "S": 0,
-        "LABEL": "CH14 ",
+        "LABEL": "C14",
         "DATACHANNEL": 64,
         "DECIMALS": 0,
         "UNITS": ""
-      }
+      },
+      "group": "Пульт 1"
     },
     {
-      "display_name": "Пульт 1: канал 15",
-      "key_prefix": "rc_ch15",
+      "display_name": "RC ch15 (прогрес-бар)",
+      "key_prefix": "rc_ch15_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 65,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Пульт 1"
+    },
+    {
+      "display_name": "RC ch15 (текст)",
+      "key_prefix": "rc_ch15_value",
       "template": {
         "TYPE": "VALUE",
         "S": 0,
-        "LABEL": "CH15 ",
+        "LABEL": "C15",
         "DATACHANNEL": 65,
         "DECIMALS": 0,
         "UNITS": ""
-      }
+      },
+      "group": "Пульт 1"
     },
     {
-      "display_name": "Пульт 1: канал 16",
-      "key_prefix": "rc_ch16",
+      "display_name": "RC ch16 (прогрес-бар)",
+      "key_prefix": "rc_ch16_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 66,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Пульт 1"
+    },
+    {
+      "display_name": "RC ch16 (текст)",
+      "key_prefix": "rc_ch16_value",
       "template": {
         "TYPE": "VALUE",
         "S": 0,
-        "LABEL": "CH16 ",
+        "LABEL": "C16",
         "DATACHANNEL": 66,
         "DECIMALS": 0,
         "UNITS": ""
-      }
+      },
+      "group": "Пульт 1"
     },
     {
-      "display_name": "Пульт 1: канал 17",
-      "key_prefix": "rc_ch17",
+      "display_name": "RC ch17 (прогрес-бар)",
+      "key_prefix": "rc_ch17_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 67,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Пульт 1"
+    },
+    {
+      "display_name": "RC ch17 (текст)",
+      "key_prefix": "rc_ch17_value",
       "template": {
         "TYPE": "VALUE",
         "S": 0,
-        "LABEL": "CH17 ",
+        "LABEL": "C17",
         "DATACHANNEL": 67,
         "DECIMALS": 0,
         "UNITS": ""
-      }
+      },
+      "group": "Пульт 1"
     },
     {
-      "display_name": "Пульт 1: канал 18",
-      "key_prefix": "rc_ch18",
+      "display_name": "RC ch18 (прогрес-бар)",
+      "key_prefix": "rc_ch18_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 68,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Пульт 1"
+    },
+    {
+      "display_name": "RC ch18 (текст)",
+      "key_prefix": "rc_ch18_value",
       "template": {
         "TYPE": "VALUE",
         "S": 0,
-        "LABEL": "CH18 ",
+        "LABEL": "C18",
         "DATACHANNEL": 68,
         "DECIMALS": 0,
         "UNITS": ""
-      }
+      },
+      "group": "Пульт 1"
+    },
+    {
+      "display_name": "RC ch2 (прогрес-бар)",
+      "key_prefix": "rc_ch2_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 52,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Пульт 1"
+    },
+    {
+      "display_name": "RC ch2 (текст)",
+      "key_prefix": "rc_ch2_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "C2",
+        "DATACHANNEL": 52,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Пульт 1"
+    },
+    {
+      "display_name": "RC ch3 (прогрес-бар)",
+      "key_prefix": "rc_ch3_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 53,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Пульт 1"
+    },
+    {
+      "display_name": "RC ch3 (текст)",
+      "key_prefix": "rc_ch3_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "C3",
+        "DATACHANNEL": 53,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Пульт 1"
+    },
+    {
+      "display_name": "RC ch4 (прогрес-бар)",
+      "key_prefix": "rc_ch4_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 54,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Пульт 1"
+    },
+    {
+      "display_name": "RC ch4 (текст)",
+      "key_prefix": "rc_ch4_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "C4",
+        "DATACHANNEL": 54,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Пульт 1"
+    },
+    {
+      "display_name": "RC ch5 (прогрес-бар)",
+      "key_prefix": "rc_ch5_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 55,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Пульт 1"
+    },
+    {
+      "display_name": "RC ch5 (текст)",
+      "key_prefix": "rc_ch5_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "C5",
+        "DATACHANNEL": 55,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Пульт 1"
+    },
+    {
+      "display_name": "RC ch6 (прогрес-бар)",
+      "key_prefix": "rc_ch6_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 56,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Пульт 1"
+    },
+    {
+      "display_name": "RC ch6 (текст)",
+      "key_prefix": "rc_ch6_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "C6",
+        "DATACHANNEL": 56,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Пульт 1"
+    },
+    {
+      "display_name": "RC ch7 (прогрес-бар)",
+      "key_prefix": "rc_ch7_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 57,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Пульт 1"
+    },
+    {
+      "display_name": "RC ch7 (текст)",
+      "key_prefix": "rc_ch7_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "C7",
+        "DATACHANNEL": 57,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Пульт 1"
+    },
+    {
+      "display_name": "RC ch8 (прогрес-бар)",
+      "key_prefix": "rc_ch8_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 58,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Пульт 1"
+    },
+    {
+      "display_name": "RC ch8 (текст)",
+      "key_prefix": "rc_ch8_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "C8",
+        "DATACHANNEL": 58,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Пульт 1"
+    },
+    {
+      "display_name": "RC ch9 (прогрес-бар)",
+      "key_prefix": "rc_ch9_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 59,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Пульт 1"
+    },
+    {
+      "display_name": "RC ch9 (текст)",
+      "key_prefix": "rc_ch9_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "C9",
+        "DATACHANNEL": 59,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Пульт 1"
     },
     {
       "display_name": "Пульт 2: канал 1",
@@ -2464,103 +1222,8 @@
         "DATACHANNEL": 90,
         "DECIMALS": 0,
         "UNITS": ""
-      }
-    },
-    {
-      "display_name": "Пульт 2: канал 2",
-      "key_prefix": "rc2_ch2",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "P2 CH2 ",
-        "DATACHANNEL": 91,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "Пульт 2: канал 3",
-      "key_prefix": "rc2_ch3",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "P2 CH3 ",
-        "DATACHANNEL": 92,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "Пульт 2: канал 4",
-      "key_prefix": "rc2_ch4",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "P2 CH4 ",
-        "DATACHANNEL": 93,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "Пульт 2: канал 5",
-      "key_prefix": "rc2_ch5",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "P2 CH5 ",
-        "DATACHANNEL": 94,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "Пульт 2: канал 6",
-      "key_prefix": "rc2_ch6",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "P2 CH6 ",
-        "DATACHANNEL": 95,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "Пульт 2: канал 7",
-      "key_prefix": "rc2_ch7",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "P2 CH7 ",
-        "DATACHANNEL": 96,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "Пульт 2: канал 8",
-      "key_prefix": "rc2_ch8",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "P2 CH8 ",
-        "DATACHANNEL": 97,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
-    },
-    {
-      "display_name": "Пульт 2: канал 9",
-      "key_prefix": "rc2_ch9",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "P2 CH9 ",
-        "DATACHANNEL": 98,
-        "DECIMALS": 0,
-        "UNITS": ""
-      }
+      },
+      "group": "Пульт 2"
     },
     {
       "display_name": "Пульт 2: канал 10",
@@ -2572,7 +1235,8 @@
         "DATACHANNEL": 99,
         "DECIMALS": 0,
         "UNITS": ""
-      }
+      },
+      "group": "Пульт 2"
     },
     {
       "display_name": "Пульт 2: канал 11",
@@ -2584,7 +1248,8 @@
         "DATACHANNEL": 100,
         "DECIMALS": 0,
         "UNITS": ""
-      }
+      },
+      "group": "Пульт 2"
     },
     {
       "display_name": "Пульт 2: канал 12",
@@ -2596,7 +1261,8 @@
         "DATACHANNEL": 101,
         "DECIMALS": 0,
         "UNITS": ""
-      }
+      },
+      "group": "Пульт 2"
     },
     {
       "display_name": "Пульт 2: канал 13",
@@ -2608,7 +1274,8 @@
         "DATACHANNEL": 102,
         "DECIMALS": 0,
         "UNITS": ""
-      }
+      },
+      "group": "Пульт 2"
     },
     {
       "display_name": "Пульт 2: канал 14",
@@ -2620,7 +1287,8 @@
         "DATACHANNEL": 103,
         "DECIMALS": 0,
         "UNITS": ""
-      }
+      },
+      "group": "Пульт 2"
     },
     {
       "display_name": "Пульт 2: канал 15",
@@ -2632,7 +1300,8 @@
         "DATACHANNEL": 104,
         "DECIMALS": 0,
         "UNITS": ""
-      }
+      },
+      "group": "Пульт 2"
     },
     {
       "display_name": "Пульт 2: канал 16",
@@ -2644,7 +1313,8 @@
         "DATACHANNEL": 105,
         "DECIMALS": 0,
         "UNITS": ""
-      }
+      },
+      "group": "Пульт 2"
     },
     {
       "display_name": "Пульт 2: канал 17",
@@ -2656,7 +1326,8 @@
         "DATACHANNEL": 106,
         "DECIMALS": 0,
         "UNITS": ""
-      }
+      },
+      "group": "Пульт 2"
     },
     {
       "display_name": "Пульт 2: канал 18",
@@ -2668,7 +1339,1111 @@
         "DATACHANNEL": 107,
         "DECIMALS": 0,
         "UNITS": ""
-      }
+      },
+      "group": "Пульт 2"
+    },
+    {
+      "display_name": "Пульт 2: канал 2",
+      "key_prefix": "rc2_ch2",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "P2 CH2 ",
+        "DATACHANNEL": 91,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Пульт 2"
+    },
+    {
+      "display_name": "Пульт 2: канал 3",
+      "key_prefix": "rc2_ch3",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "P2 CH3 ",
+        "DATACHANNEL": 92,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Пульт 2"
+    },
+    {
+      "display_name": "Пульт 2: канал 4",
+      "key_prefix": "rc2_ch4",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "P2 CH4 ",
+        "DATACHANNEL": 93,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Пульт 2"
+    },
+    {
+      "display_name": "Пульт 2: канал 5",
+      "key_prefix": "rc2_ch5",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "P2 CH5 ",
+        "DATACHANNEL": 94,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Пульт 2"
+    },
+    {
+      "display_name": "Пульт 2: канал 6",
+      "key_prefix": "rc2_ch6",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "P2 CH6 ",
+        "DATACHANNEL": 95,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Пульт 2"
+    },
+    {
+      "display_name": "Пульт 2: канал 7",
+      "key_prefix": "rc2_ch7",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "P2 CH7 ",
+        "DATACHANNEL": 96,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Пульт 2"
+    },
+    {
+      "display_name": "Пульт 2: канал 8",
+      "key_prefix": "rc2_ch8",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "P2 CH8 ",
+        "DATACHANNEL": 97,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Пульт 2"
+    },
+    {
+      "display_name": "Пульт 2: канал 9",
+      "key_prefix": "rc2_ch9",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "P2 CH9 ",
+        "DATACHANNEL": 98,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Пульт 2"
+    },
+    {
+      "display_name": "ELRS ch1 (прогрес-бар)",
+      "key_prefix": "erls_ch1_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 69,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch1 (текст)",
+      "key_prefix": "erls_ch1_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E1",
+        "DATACHANNEL": 69,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch10 (прогрес-бар)",
+      "key_prefix": "erls_ch10_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 78,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch10 (текст)",
+      "key_prefix": "erls_ch10_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E10",
+        "DATACHANNEL": 78,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch11 (прогрес-бар)",
+      "key_prefix": "erls_ch11_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 79,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch11 (текст)",
+      "key_prefix": "erls_ch11_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E11",
+        "DATACHANNEL": 79,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch12 (прогрес-бар)",
+      "key_prefix": "erls_ch12_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 80,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch12 (текст)",
+      "key_prefix": "erls_ch12_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E12",
+        "DATACHANNEL": 80,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch13 (прогрес-бар)",
+      "key_prefix": "erls_ch13_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 81,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch13 (текст)",
+      "key_prefix": "erls_ch13_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E13",
+        "DATACHANNEL": 81,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch14 (прогрес-бар)",
+      "key_prefix": "erls_ch14_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 82,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch14 (текст)",
+      "key_prefix": "erls_ch14_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E14",
+        "DATACHANNEL": 82,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch15 (прогрес-бар)",
+      "key_prefix": "erls_ch15_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 83,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch15 (текст)",
+      "key_prefix": "erls_ch15_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E15",
+        "DATACHANNEL": 83,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch16 (прогрес-бар)",
+      "key_prefix": "erls_ch16_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 84,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch16 (текст)",
+      "key_prefix": "erls_ch16_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E16",
+        "DATACHANNEL": 84,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch17 (прогрес-бар)",
+      "key_prefix": "erls_ch17_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 85,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch17 (текст)",
+      "key_prefix": "erls_ch17_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E17",
+        "DATACHANNEL": 85,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch18 (прогрес-бар)",
+      "key_prefix": "erls_ch18_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 86,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch18 (текст)",
+      "key_prefix": "erls_ch18_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E18",
+        "DATACHANNEL": 86,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch2 (прогрес-бар)",
+      "key_prefix": "erls_ch2_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 70,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch2 (текст)",
+      "key_prefix": "erls_ch2_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E2",
+        "DATACHANNEL": 70,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch3 (прогрес-бар)",
+      "key_prefix": "erls_ch3_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 71,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch3 (текст)",
+      "key_prefix": "erls_ch3_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E3",
+        "DATACHANNEL": 71,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch4 (прогрес-бар)",
+      "key_prefix": "erls_ch4_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 72,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch4 (текст)",
+      "key_prefix": "erls_ch4_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E4",
+        "DATACHANNEL": 72,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch5 (прогрес-бар)",
+      "key_prefix": "erls_ch5_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 73,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch5 (текст)",
+      "key_prefix": "erls_ch5_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E5",
+        "DATACHANNEL": 73,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch6 (прогрес-бар)",
+      "key_prefix": "erls_ch6_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 74,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch6 (текст)",
+      "key_prefix": "erls_ch6_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E6",
+        "DATACHANNEL": 74,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch7 (прогрес-бар)",
+      "key_prefix": "erls_ch7_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 75,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch7 (текст)",
+      "key_prefix": "erls_ch7_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E7",
+        "DATACHANNEL": 75,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch8 (прогрес-бар)",
+      "key_prefix": "erls_ch8_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 76,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch8 (текст)",
+      "key_prefix": "erls_ch8_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E8",
+        "DATACHANNEL": 76,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch9 (прогрес-бар)",
+      "key_prefix": "erls_ch9_bar",
+      "template": {
+        "TYPE": "BAR",
+        "S": 0,
+        "LABEL": "",
+        "DATACHANNEL": 77,
+        "UNITS": "",
+        "MIN": 172,
+        "MAX": 1811,
+        "BAR_W": 0.1,
+        "BAR_H": 0.015,
+        "EMPTY_IMAGE": "img/pgbar_empy.png",
+        "FILL_IMAGE": "img/pgbar_green.png"
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "ELRS ch9 (текст)",
+      "key_prefix": "erls_ch9_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E9",
+        "DATACHANNEL": 77,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Канали ELRS"
+    },
+    {
+      "display_name": "RC: активне джерело CRSF (текст)",
+      "key_prefix": "rc_crsfsrc_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "SRC",
+        "DATACHANNEL": 48,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Пульти: службове"
+    },
+    {
+      "display_name": "RC: вік даних (текст)",
+      "key_prefix": "rc_age_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "RC.AGE",
+        "DATACHANNEL": 49,
+        "DECIMALS": 0,
+        "UNITS": "ms"
+      },
+      "group": "Пульти: службове"
+    },
+    {
+      "display_name": "ELRS: RSSI1 (текст)",
+      "key_prefix": "erls_rssi1_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "RSSI1",
+        "DATACHANNEL": 41,
+        "DECIMALS": 0,
+        "UNITS": "dBm"
+      },
+      "group": "Лінк ELRS"
+    },
+    {
+      "display_name": "ELRS: RSSI2 (текст)",
+      "key_prefix": "erls_rssi2_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "RSSI2",
+        "DATACHANNEL": 42,
+        "DECIMALS": 0,
+        "UNITS": "dBm"
+      },
+      "group": "Лінк ELRS"
+    },
+    {
+      "display_name": "ELRS: SNR (текст)",
+      "key_prefix": "erls_snr_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "SNR",
+        "DATACHANNEL": 44,
+        "DECIMALS": 0,
+        "UNITS": "dB"
+      },
+      "group": "Лінк ELRS"
+    },
+    {
+      "display_name": "ELRS: TX потужність (текст)",
+      "key_prefix": "erls_txpwr_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "TXP",
+        "DATACHANNEL": 45,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Лінк ELRS"
+    },
+    {
+      "display_name": "ELRS: downlink LQ (текст)",
+      "key_prefix": "erls_dllq_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "DL.LQ",
+        "DATACHANNEL": 46,
+        "DECIMALS": 0,
+        "UNITS": "%"
+      },
+      "group": "Лінк ELRS"
+    },
+    {
+      "display_name": "ELRS: downlink SNR (текст)",
+      "key_prefix": "erls_dlsnr_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "DL.SNR",
+        "DATACHANNEL": 47,
+        "DECIMALS": 0,
+        "UNITS": "dB"
+      },
+      "group": "Лінк ELRS"
+    },
+    {
+      "display_name": "ELRS: link quality (текст)",
+      "key_prefix": "erls_lq_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "LQ",
+        "DATACHANNEL": 43,
+        "DECIMALS": 0,
+        "UNITS": "%"
+      },
+      "group": "Лінк ELRS"
+    },
+    {
+      "display_name": "ELRS: вік лінк-статистики (текст)",
+      "key_prefix": "erls_linkage_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E.AGE",
+        "DATACHANNEL": 50,
+        "DECIMALS": 0,
+        "UNITS": "ms"
+      },
+      "group": "Лінк ELRS"
+    },
+    {
+      "display_name": "BOSA монітор RX (борт, текст)",
+      "key_prefix": "bosa_rx_A_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "A.BRx",
+        "DATACHANNEL": 37,
+        "DECIMALS": 2,
+        "UNITS": "V"
+      },
+      "group": "Оптика: борт"
+    },
+    {
+      "display_name": "BOSA монітор TX (борт, текст)",
+      "key_prefix": "bosa_tx_A_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "A.BTx",
+        "DATACHANNEL": 38,
+        "DECIMALS": 2,
+        "UNITS": "V"
+      },
+      "group": "Оптика: борт"
+    },
+    {
+      "display_name": "Оптика (борт): RX (текст)",
+      "key_prefix": "optics_A_rx_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "ARx",
+        "DATACHANNEL": 29,
+        "DECIMALS": 1,
+        "UNITS": "dBm"
+      },
+      "group": "Оптика: борт"
+    },
+    {
+      "display_name": "Оптика (борт): TX (текст)",
+      "key_prefix": "optics_A_tx_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "ATx",
+        "DATACHANNEL": 28,
+        "DECIMALS": 1,
+        "UNITS": "dBm"
+      },
+      "group": "Оптика: борт"
+    },
+    {
+      "display_name": "Оптика (борт): bias SFP (текст)",
+      "key_prefix": "optics_A_bias_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "A.B",
+        "DATACHANNEL": 27,
+        "DECIMALS": 1,
+        "UNITS": "mA"
+      },
+      "group": "Оптика: борт"
+    },
+    {
+      "display_name": "Оптика (борт): напруга SFP (текст)",
+      "key_prefix": "optics_A_vcc_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "A.V",
+        "DATACHANNEL": 26,
+        "DECIMALS": 2,
+        "UNITS": "V"
+      },
+      "group": "Оптика: борт"
+    },
+    {
+      "display_name": "Оптика (борт): температура SFP (текст)",
+      "key_prefix": "optics_A_temp_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "A.T",
+        "DATACHANNEL": 25,
+        "DECIMALS": 1,
+        "UNITS": "°C"
+      },
+      "group": "Оптика: борт"
+    },
+    {
+      "display_name": "BOSA монітор RX (земля, текст)",
+      "key_prefix": "bosa_rx_G_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "G.BRx",
+        "DATACHANNEL": 39,
+        "DECIMALS": 2,
+        "UNITS": "V"
+      },
+      "group": "Оптика: земля"
+    },
+    {
+      "display_name": "BOSA монітор TX (земля, текст)",
+      "key_prefix": "bosa_tx_G_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "G.BTx",
+        "DATACHANNEL": 40,
+        "DECIMALS": 2,
+        "UNITS": "V"
+      },
+      "group": "Оптика: земля"
+    },
+    {
+      "display_name": "Оптика (земля): RX (текст)",
+      "key_prefix": "optics_G_rx_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "GRx",
+        "DATACHANNEL": 34,
+        "DECIMALS": 1,
+        "UNITS": "dBm"
+      },
+      "group": "Оптика: земля"
+    },
+    {
+      "display_name": "Оптика (земля): TX (текст)",
+      "key_prefix": "optics_G_tx_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "GTx",
+        "DATACHANNEL": 33,
+        "DECIMALS": 1,
+        "UNITS": "dBm"
+      },
+      "group": "Оптика: земля"
+    },
+    {
+      "display_name": "Оптика (земля): bias SFP (текст)",
+      "key_prefix": "optics_G_bias_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "G.B",
+        "DATACHANNEL": 32,
+        "DECIMALS": 1,
+        "UNITS": "mA"
+      },
+      "group": "Оптика: земля"
+    },
+    {
+      "display_name": "Оптика (земля): напруга SFP (текст)",
+      "key_prefix": "optics_G_vcc_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "G.V",
+        "DATACHANNEL": 31,
+        "DECIMALS": 2,
+        "UNITS": "V"
+      },
+      "group": "Оптика: земля"
+    },
+    {
+      "display_name": "Оптика (земля): температура SFP (текст)",
+      "key_prefix": "optics_G_temp_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "G.T",
+        "DATACHANNEL": 30,
+        "DECIMALS": 1,
+        "UNITS": "°C"
+      },
+      "group": "Оптика: земля"
+    },
+    {
+      "display_name": "Оптика: втрати лінії (текст)",
+      "key_prefix": "optics_line_loss_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "LOSS",
+        "DATACHANNEL": 201,
+        "DECIMALS": 1,
+        "UNITS": "dB"
+      },
+      "group": "Станція"
+    },
+    {
+      "display_name": "Реальний fps H265 (текст)",
+      "key_prefix": "h265_fps_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "H265",
+        "DATACHANNEL": 202,
+        "DECIMALS": 0,
+        "UNITS": "fps"
+      },
+      "group": "Станція"
+    },
+    {
+      "display_name": "Реальний fps MJPEG (текст)",
+      "key_prefix": "mjpeg_fps_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "MJPG",
+        "DATACHANNEL": 203,
+        "DECIMALS": 0,
+        "UNITS": "fps"
+      },
+      "group": "Станція"
+    },
+    {
+      "display_name": "Станція: fps на екрані",
+      "key_prefix": "screen_fps",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "Screen ",
+        "DATACHANNEL": 204,
+        "DECIMALS": 1,
+        "UNITS": "fps"
+      },
+      "group": "Станція"
+    },
+    {
+      "display_name": "Станція: втрачено кадрів/с",
+      "key_prefix": "dropped_fps",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "Drop ",
+        "DATACHANNEL": 208,
+        "DECIMALS": 2,
+        "UNITS": "fps"
+      },
+      "group": "Станція"
+    },
+    {
+      "display_name": "Станція: запізнілих кадрів/с",
+      "key_prefix": "late_fps",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "Late ",
+        "DATACHANNEL": 209,
+        "DECIMALS": 2,
+        "UNITS": "fps"
+      },
+      "group": "Станція"
+    },
+    {
+      "display_name": "Станція: затримка тракту",
+      "key_prefix": "latency",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "Lat ",
+        "DATACHANNEL": 207,
+        "DECIMALS": 1,
+        "UNITS": "ms"
+      },
+      "group": "Станція"
+    },
+    {
+      "display_name": "Станція: не прийшло кадрів",
+      "key_prefix": "lost_frames",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "Lost ",
+        "DATACHANNEL": 210,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Станція"
+    },
+    {
+      "display_name": "Станція: стан ФАПЧ",
+      "key_prefix": "phase_lock",
+      "template": {
+        "TYPE": "ENUM",
+        "S": 0,
+        "LABEL": "PLL ",
+        "DATACHANNEL": 206,
+        "DEFAULT": "----",
+        "CASES": [
+          {
+            "LABEL": "LOCK",
+            "OP": "EQ",
+            "VALUE": 2
+          },
+          {
+            "LABEL": "SYNC",
+            "OP": "EQ",
+            "VALUE": 1
+          }
+        ],
+        "UNITS": ""
+      },
+      "group": "Станція"
     },
     {
       "display_name": "Станція: стан запису",
@@ -2692,7 +2467,98 @@
           }
         ],
         "UNITS": ""
-      }
+      },
+      "group": "Станція"
+    },
+    {
+      "display_name": "Станція: частота показів",
+      "key_prefix": "display_fps",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "Disp ",
+        "DATACHANNEL": 205,
+        "DECIMALS": 1,
+        "UNITS": "fps"
+      },
+      "group": "Станція"
+    },
+    {
+      "display_name": "Діагностика: is_change-fallback лічильник",
+      "key_prefix": "tlm_ischange_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "Q.IC",
+        "DATACHANNEL": 88,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Діагностика телеметрії"
+    },
+    {
+      "display_name": "Діагностика: soonest-fallback лічильник",
+      "key_prefix": "tlm_fallback_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "Q.FB",
+        "DATACHANNEL": 87,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Діагностика телеметрії"
+    },
+    {
+      "display_name": "Діагностика: період TOS-пакетів (текст)",
+      "key_prefix": "tos_period_value",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "TOS.MS",
+        "DATACHANNEL": 89,
+        "DECIMALS": 0,
+        "UNITS": "ms"
+      },
+      "group": "Діагностика телеметрії"
+    },
+    {
+      "display_name": "Просто текст (без каналу)",
+      "key_prefix": "custom_label",
+      "template": {
+        "TYPE": "LABEL",
+        "S": 0,
+        "LABEL": "TEXT",
+        "UNITS": ""
+      },
+      "group": "Написи й іконки"
+    },
+    {
+      "display_name": "Просто іконка (без каналу)",
+      "key_prefix": "custom_icon",
+      "template": {
+        "TYPE": "LABEL",
+        "S": 1,
+        "LABEL": "<pilot>",
+        "UNITS": ""
+      },
+      "group": "Написи й іконки"
     }
+  ],
+  "groups": [
+    "Політ",
+    "Кути й горизонт",
+    "Батарея й живлення",
+    "GPS",
+    "Пульт 1",
+    "Пульт 2",
+    "Канали ELRS",
+    "Пульти: службове",
+    "Лінк ELRS",
+    "Оптика: борт",
+    "Оптика: земля",
+    "Станція",
+    "Діагностика телеметрії",
+    "Написи й іконки"
   ]
 }

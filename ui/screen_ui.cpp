@@ -62,6 +62,29 @@ render::OverlayImage make_button(int size) {
     return img;
 }
 
+// Кнопка в натиснутому стані. Та сама форма, інший колір: бурштиновий
+// замість темного.
+//
+// Навіщо взагалі. Перехід у редактор не миттєвий — станція спершу
+// коректно закриває запис (дозапис файлу, скидання кешів на флешку), і це
+// секунди. Без відгуку виглядає так, наче клік не зарахувався: у лозі
+// видно, як користувач тисне вісім разів поспіль, хоча ПЕРШИЙ клік уже
+// був прийнятий. Кнопка, що змінила колір, відповідає на єдине питання,
+// яке в цей момент є: "воно взагалі мене почуло?"
+render::OverlayImage make_button_active(int size) {
+    render::OverlayImage img = make_button(size);
+    img.id = "ui:button_active";
+    for (size_t o = 0; o + 3 < img.rgba.size(); o += 4) {
+        if (img.rgba[o + 3] == 0) continue;                 // прозоре не чіпаємо
+        const bool bright = img.rgba[o] > 128;              // рамка й смужки
+        img.rgba[o + 0] = bright ? 255 : 200;
+        img.rgba[o + 1] = bright ? 240 : 120;
+        img.rgba[o + 2] = bright ? 190 : 20;
+        img.rgba[o + 3] = 255;
+    }
+    return img;
+}
+
 // Курсор — класична стрілка, задана малюнком, а не арифметикою.
 //
 // Спершу я малював її циклом "довжина рядка росте" — виходив трикутник
@@ -132,10 +155,15 @@ struct ScreenUi::Impl {
 
     std::vector<render::OverlayImage> images;
     static constexpr int kButton = 0;
-    static constexpr int kCursor = 1;
+    static constexpr int kButtonActive = 1;
+    static constexpr int kCursor = 2;
 
     std::atomic<int> fw{0}, fh{0};
     std::atomic<bool> editor_requested{false};
+
+    // Натиснуто — і назад уже не вимикається: станція від цієї миті
+    // закривається, і кнопка має лишатись підсвіченою до самого кінця.
+    std::atomic<bool> pressed{false};
 
     // Скільки кліків уже враховано. Порівнюємо з лічильником миші —
     // так натискання не загубиться між кадрами й не спрацює двічі.
@@ -143,6 +171,7 @@ struct ScreenUi::Impl {
 
     explicit Impl(Config c) : cfg(c) {
         images.push_back(make_button(48));
+        images.push_back(make_button_active(48));
         images.push_back(make_cursor(2));
     }
 
@@ -204,7 +233,7 @@ bool ScreenUi::acquire(render::DrawList& out) {
         out.quads.push_back(q);
     };
 
-    push(Impl::kButton, bx, by, bw, bh);
+    push(d.pressed.load() ? Impl::kButtonActive : Impl::kButton, bx, by, bw, bh);
 
     if (d.pointer) {
         const PointerState p = d.pointer->state();
@@ -228,7 +257,13 @@ bool ScreenUi::acquire(render::DrawList& out) {
                 const float py = float(p.y) / float(H);
                 if (px >= bx && px <= bx + bw && py >= by && py <= by + bh) {
                     d.editor_requested.store(true);
-                    std::fprintf(stderr, "[ui] натиснуто кнопку редактора\n");
+                    // Друкуємо лише перший: далі користувач може тиснути
+                    // скільки завгодно, і десяток однакових рядків у лозі
+                    // приховує те, що ПЕРШИЙ клік уже було прийнято.
+                    if (!d.pressed.exchange(true)) {
+                        std::fprintf(stderr, "[ui] натиснуто кнопку редактора,"
+                                             " закриваю станцію\n");
+                    }
                 }
             }
         }

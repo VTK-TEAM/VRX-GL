@@ -99,16 +99,59 @@ void ElementEditDialog::build_enum_fields() {
 
     add_section_title("Умови (перевіряються по порядку зверху вниз):");
 
-    SDL_Rect list_area{bounds.x + MARGIN, cursor_y_, bounds.w - MARGIN * 2, 0};
+    // Область під умови — усе, що лишилось до низу діалогу. Саме її
+    // висота і є те, у що список має вміститись; те, що не вміщається,
+    // прокручується колесом.
+    SDL_Rect list_area{bounds.x + MARGIN, cursor_y_, bounds.w - MARGIN * 2,
+                       (bounds.y + bounds.h - MARGIN) - cursor_y_};
+    if (list_area.h < FIELD_H) list_area.h = FIELD_H;
+    case_list_area_ = list_area;
     rebuild_case_rows(list_area);
+}
+
+// Колесо над списком умов прокручує його. Перебудова після кожного
+// кроку не марнотратство: рядків у видимій частині одиниці, а тримати
+// їх усі створеними означало б тримати клікабельними й ті, що за межами
+// діалогу.
+bool ElementEditDialog::handle_wheel(int x, int y, int delta) {
+    if (case_list_area_.w > 0 && case_scroll_max_ > 0 &&
+        x >= case_list_area_.x && x < case_list_area_.x + case_list_area_.w &&
+        y >= case_list_area_.y && y < case_list_area_.y + case_list_area_.h) {
+        case_scroll_ -= delta * FIELD_GAP;
+        if (case_scroll_ < 0) case_scroll_ = 0;
+        if (case_scroll_ > case_scroll_max_) case_scroll_ = case_scroll_max_;
+        request_rebuild();
+        return true;
+    }
+    return Panel::handle_wheel(x, y, delta);
 }
 
 void ElementEditDialog::rebuild_case_rows(SDL_Rect list_area) {
     OsdElement* el = el_;
     auto cases = el->cases();
 
-    int row_y = list_area.y;
+    // ПРОКРУТКА. Умов може бути скільки завгодно: у причин блокування арму
+    // їх тридцять, і без прокрутки список ішов за низ діалогу, а далі й за
+    // край екрана — разом із кнопкою "додати умову", тобто діалог ставав
+    // непридатним рівно на тому елементі, заради якого й потрібен.
+    //
+    // Рядки, що не потрапляють у видиму область, НЕ СТВОРЮЮТЬСЯ взагалі.
+    // Це не лише економія: віджет за межами діалогу однаково лишався б
+    // клікабельним, і натиснути невидиму кнопку "X" було б легше, ніж
+    // видиму.
+    const int content_h = (int)cases.size() * FIELD_GAP + FIELD_H;
+    case_scroll_max_ = content_h - list_area.h;
+    if (case_scroll_max_ < 0) case_scroll_max_ = 0;
+    if (case_scroll_ > case_scroll_max_) case_scroll_ = case_scroll_max_;
+    if (case_scroll_ < 0) case_scroll_ = 0;
+
+    const int top = list_area.y;
+    const int bottom = list_area.y + list_area.h;
+    auto visible = [&](int y) { return y + FIELD_H > top && y < bottom; };
+
+    int row_y = list_area.y - case_scroll_;
     for (size_t i = 0; i < cases.size(); ++i) {
+        if (!visible(row_y)) { row_y += FIELD_GAP; continue; }
         EnumOpPicker* op = add<EnumOpPicker>();
         op->bounds = SDL_Rect{list_area.x, row_y, 36, FIELD_H};
         op->op_index = static_cast<int>(cases[i].op);
@@ -119,7 +162,7 @@ void ElementEditDialog::rebuild_case_rows(SDL_Rect list_area) {
         };
 
         NumberField* val = add<NumberField>();
-        val->bounds = SDL_Rect{list_area.x + 42, row_y, 110, FIELD_H};
+        val->bounds = SDL_Rect{list_area.x + 42, row_y, 168, FIELD_H};
         val->value = cases[i].threshold;
         val->step = 0.1f;
         val->decimals = 2;
@@ -129,7 +172,7 @@ void ElementEditDialog::rebuild_case_rows(SDL_Rect list_area) {
         };
 
         TextField* lbl = add<TextField>();
-        lbl->bounds = SDL_Rect{list_area.x + 158, row_y, list_area.w - 158 - 40, FIELD_H};
+        lbl->bounds = SDL_Rect{list_area.x + 216, row_y, list_area.w - 216 - 40, FIELD_H};
         lbl->value = cases[i].label;
         lbl->on_request_focus = [this, lbl, el, idx]() {
             if (request_keyboard_) {
@@ -156,6 +199,7 @@ void ElementEditDialog::rebuild_case_rows(SDL_Rect list_area) {
         row_y += FIELD_GAP;
     }
 
+    if (!visible(row_y)) return;
     Button* add_case = add<Button>();
     add_case->bounds = SDL_Rect{list_area.x, row_y, list_area.w, FIELD_H};
     add_case->label = "+ додати умову";

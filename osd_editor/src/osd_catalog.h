@@ -18,6 +18,7 @@ namespace osdedit {
 struct CatalogEntry {
     std::string display_name;   // те, що бачить користувач у списку "+"
     std::string key_prefix;     // основа для ключа нового елемента
+    std::string group;          // до якої групи належить у меню
     nlohmann::json tpl;         // шаблон JSON (без L/T — підставляються при додаванні)
 };
 
@@ -42,18 +43,30 @@ public:
             CatalogEntry e;
             e.display_name = item.value("display_name", std::string("(без назви)"));
             e.key_prefix = item.value("key_prefix", std::string("element"));
+            e.group = item.value("group", std::string(""));
             if (!item.contains("template")) {
                 throw std::runtime_error("Запис каталогу \"" + e.display_name + "\" без \"template\"");
             }
             e.tpl = item.at("template");
             entries_.push_back(std::move(e));
         }
+
+        groups_.clear();
+        if (root.contains("groups")) {
+            for (const auto& g : root.at("groups")) groups_.push_back(g.get<std::string>());
+        }
     }
 
     const std::vector<CatalogEntry>& entries() const { return entries_; }
 
+    // Порядок груп задає САМ каталог (ключ "groups"), а не редактор:
+    // логічний порядок — властивість даних, і тримати його в коді
+    // означало б правити код щоразу, коли з'явиться нова група.
+    const std::vector<std::string>& groups() const { return groups_; }
+
 private:
     std::vector<CatalogEntry> entries_;
+    std::vector<std::string> groups_;
 };
 
 } // namespace osdedit

@@ -40,6 +40,7 @@ public:
     OsdElement* element() const { return el_; }
 
     void draw(SDL_Renderer* renderer, TTF_Font* font) override;
+    bool handle_wheel(int x, int y, int delta) override;
 
 private:
     OsdElement* el_ = nullptr;
@@ -80,6 +81,13 @@ private:
     void build_horizon_fields();
 
     void rebuild_case_rows(SDL_Rect list_area);
+
+    // Прокрутка списку умов. Живе в діалозі, а не у віджеті-списку:
+    // рядок умови це чотири різні віджети (оператор, число, текст,
+    // видалити), і ListView такого не вміє.
+    SDL_Rect case_list_area_{0, 0, 0, 0};
+    int case_scroll_ = 0;
+    int case_scroll_max_ = 0;
 };
 
 } // namespace osdedit

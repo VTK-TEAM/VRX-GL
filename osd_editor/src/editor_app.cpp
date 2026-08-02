@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "editor_app.h"
 #include "vt_telemetry_names.h"
 #include <cstdio>
@@ -461,36 +462,68 @@ void EditorApp::open_add_menu() {
     add_list_view_->bounds = SDL_Rect{area.x + 16, area.y + 52, area.w - 32, area.h - 70};
     add_list_view_->row_height = 46;
     const auto& entries = catalog_.entries();
+
+    // СПИСОК ЗА ГРУПАМИ. Півтори сотні елементів суцільним рядком — це
+    // прокрутка навмання: щоб знайти "причину блокування арму", треба або
+    // пам'ятати її назву, або перебрати все. Заголовок групи дає точку
+    // опори, а порядок груп задає сам каталог.
+    //
+    // visible_to_catalog зіставляє рядок списку з елементом каталогу:
+    // заголовки теж займають рядки, тож пряма відповідність індексів тут
+    // не працює. Для заголовка ставимо -1.
     std::vector<int> visible_to_catalog;
-    visible_to_catalog.reserve(entries.size());
+    visible_to_catalog.reserve(entries.size() + 16);
 
-    int plain_text_idx = -1;
-    for (int i = 0; i < static_cast<int>(entries.size()); ++i) {
-        const auto& entry = entries[static_cast<size_t>(i)];
-        if (entry.key_prefix == "custom_icon") {
-            continue;
-        }
-        if (entry.key_prefix == "custom_label") {
-            plain_text_idx = i;
-            continue;
-        }
-        visible_to_catalog.push_back(i);
-    }
-    if (plain_text_idx >= 0) {
-        visible_to_catalog.insert(visible_to_catalog.begin(), plain_text_idx);
-    }
-
-    for (int catalog_idx : visible_to_catalog) {
-        const auto& entry = entries[static_cast<size_t>(catalog_idx)];
+    auto add_row = [&](const CatalogEntry& e, int catalog_idx) {
         ListItem item;
-        item.text = entry.display_name;
-        item.subtitle = vt_telemetry_channel_label(entry.tpl.value("DATACHANNEL", -1));
+        item.text = e.display_name;
+        item.subtitle = vt_telemetry_channel_label(e.tpl.value("DATACHANNEL", -1));
         add_list_view_->items.push_back(item);
+        visible_to_catalog.push_back(catalog_idx);
+    };
+
+    // Простий напис — завжди першим рядком, поза групами: він потрібен
+    // найчастіше й не належить жодній телеметрії.
+    for (int i = 0; i < static_cast<int>(entries.size()); ++i) {
+        if (entries[static_cast<size_t>(i)].key_prefix == "custom_label") {
+            add_row(entries[static_cast<size_t>(i)], i);
+            break;
+        }
     }
+
+    std::vector<std::string> order = catalog_.groups();
+    if (order.empty()) {                       // каталог без "groups"
+        for (const auto& e : entries) {
+            if (!e.group.empty() &&
+                std::find(order.begin(), order.end(), e.group) == order.end()) {
+                order.push_back(e.group);
+            }
+        }
+    }
+
+    for (const std::string& g : order) {
+        bool header_added = false;
+        for (int i = 0; i < static_cast<int>(entries.size()); ++i) {
+            const auto& e = entries[static_cast<size_t>(i)];
+            if (e.group != g) continue;
+            if (e.key_prefix == "custom_icon" || e.key_prefix == "custom_label") continue;
+            if (!header_added) {
+                ListItem h;
+                h.text = g;
+                h.header = true;
+                add_list_view_->items.push_back(h);
+                visible_to_catalog.push_back(-1);
+                header_added = true;
+            }
+            add_row(e, i);
+        }
+    }
+
     add_list_view_->on_select = [this, visible_to_catalog](int idx) {
         if (idx < 0 || idx >= static_cast<int>(visible_to_catalog.size())) {
             return;
         }
+        if (visible_to_catalog[static_cast<size_t>(idx)] < 0) return;   // заголовок
         // ВАЖЛИВО: спершу закрити меню (воно виставляє mode_=IDLE), а
         // ПОТІМ додати елемент (виставляє mode_=SELECTED) — інакше
         // close_add_menu() безумовно затирає щойно встановлений
@@ -639,8 +672,30 @@ void EditorApp::render_frame() {
     if ((mode_ == Mode::SELECTED || mode_ == Mode::DRAGGING) && !selected_key_.empty()) {
         for (auto& h : last_hits_) {
             if (h.key == selected_key_) {
-                edit_button_.bounds = SDL_Rect{h.rect.x, h.rect.y + h.rect.h + 6, 90, 32};
-                delete_button_.bounds = SDL_Rect{h.rect.x + 96, h.rect.y + h.rect.h + 6, 90, 32};
+                // КНОПКИ ЗАВЖДИ В МЕЖАХ ЕКРАНА.
+                //
+                // Стояли просто під елементом. Для нижнього ряду розкладки
+                // (а там TIME, DIST, SPD, ALT — тобто половина всього) вони
+                // опинялись за краєм екрана: елемент вибирається, кнопки
+                // існують, натиснути їх нічим. Те саме збоку для елементів
+                // біля правого краю.
+                //
+                // Тепер: не влазить знизу — стають НАД елементом; не влазить
+                // справа — зсуваються вліво. Прив'язка до елемента лишається
+                // (кнопки біля того, чим керують), але край екрана її
+                // перебиває.
+                const int bw = 90, bh = 32, gap = 6;
+                int bx = h.rect.x;
+                int by = h.rect.y + h.rect.h + gap;
+                if (by + bh > window_h_) by = h.rect.y - gap - bh;
+                if (by < 0) by = 0;
+                if (by + bh > window_h_) by = window_h_ - bh;
+                const int pair_w = bw * 2 + gap;
+                if (bx + pair_w > window_w_) bx = window_w_ - pair_w;
+                if (bx < 0) bx = 0;
+
+                edit_button_.bounds = SDL_Rect{bx, by, bw, bh};
+                delete_button_.bounds = SDL_Rect{bx + bw + gap, by, bw, bh};
                 break;
             }
         }
