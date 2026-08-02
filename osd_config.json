@@ -32,6 +32,168 @@
       "TYPE": "ENUM",
       "UNITS": ""
     },
+    "arming_disable_display": {
+      "// NOTE": "ARMING_DISABLE_REASON(23). Прошивка згортає 30-бітову маску armingDisableFlags_e до ОДНІЄЇ причини — найнижчого встановленого біта, бо прапорці там перелічені за критичністю. Значення = позиція біта + 1, 0 = арму ніщо не заважає. Перелік повний, 0..30.",
+      "CASES": [
+        {
+          "LABEL": "НЕМА ГІРО",
+          "OP": "EQ",
+          "VALUE": 1
+        },
+        {
+          "LABEL": "FAILSAFE",
+          "OP": "EQ",
+          "VALUE": 2
+        },
+        {
+          "LABEL": "RX FAILSAFE",
+          "OP": "EQ",
+          "VALUE": 3
+        },
+        {
+          "LABEL": "НЕ РОЗАРМ",
+          "OP": "EQ",
+          "VALUE": 4
+        },
+        {
+          "LABEL": "BOXFAILSAFE",
+          "OP": "EQ",
+          "VALUE": 5
+        },
+        {
+          "LABEL": "RUNAWAY",
+          "OP": "EQ",
+          "VALUE": 6
+        },
+        {
+          "LABEL": "КРАШ",
+          "OP": "EQ",
+          "VALUE": 7
+        },
+        {
+          "LABEL": "ГАЗ",
+          "OP": "EQ",
+          "VALUE": 8
+        },
+        {
+          "LABEL": "КУТ",
+          "OP": "EQ",
+          "VALUE": 9
+        },
+        {
+          "LABEL": "ЗАГРУЗКА",
+          "OP": "EQ",
+          "VALUE": 10
+        },
+        {
+          "LABEL": "NOPREARM",
+          "OP": "EQ",
+          "VALUE": 11
+        },
+        {
+          "LABEL": "НАВАНТАЖ",
+          "OP": "EQ",
+          "VALUE": 12
+        },
+        {
+          "LABEL": "КАЛІБР",
+          "OP": "EQ",
+          "VALUE": 13
+        },
+        {
+          "LABEL": "CLI",
+          "OP": "EQ",
+          "VALUE": 14
+        },
+        {
+          "LABEL": "МЕНЮ",
+          "OP": "EQ",
+          "VALUE": 15
+        },
+        {
+          "LABEL": "BST",
+          "OP": "EQ",
+          "VALUE": 16
+        },
+        {
+          "LABEL": "MSP",
+          "OP": "EQ",
+          "VALUE": 17
+        },
+        {
+          "LABEL": "PARALYZE",
+          "OP": "EQ",
+          "VALUE": 18
+        },
+        {
+          "LABEL": "GPS",
+          "OP": "EQ",
+          "VALUE": 19
+        },
+        {
+          "LABEL": "RESCUE",
+          "OP": "EQ",
+          "VALUE": 20
+        },
+        {
+          "LABEL": "DSHOT TLM",
+          "OP": "EQ",
+          "VALUE": 21
+        },
+        {
+          "LABEL": "ПЕРЕЗАВАНТ",
+          "OP": "EQ",
+          "VALUE": 22
+        },
+        {
+          "LABEL": "BITBANG",
+          "OP": "EQ",
+          "VALUE": 23
+        },
+        {
+          "LABEL": "КАЛІБР ACC",
+          "OP": "EQ",
+          "VALUE": 24
+        },
+        {
+          "LABEL": "ПРОТОКОЛ",
+          "OP": "EQ",
+          "VALUE": 25
+        },
+        {
+          "LABEL": "CRASHFLIP",
+          "OP": "EQ",
+          "VALUE": 26
+        },
+        {
+          "LABEL": "ALTHOLD",
+          "OP": "EQ",
+          "VALUE": 27
+        },
+        {
+          "LABEL": "POSHOLD",
+          "OP": "EQ",
+          "VALUE": 28
+        },
+        {
+          "LABEL": "АВТОПІЛОТ",
+          "OP": "EQ",
+          "VALUE": 29
+        },
+        {
+          "LABEL": "ARM SWITCH",
+          "OP": "EQ",
+          "VALUE": 30
+        }
+      ],
+      "DATACHANNEL": 23,
+      "DEFAULT": "",
+      "L": 0.35,
+      "S": 1,
+      "T": 0.055,
+      "TYPE": "ENUM",
+      "UNITS": ""
+    },
     "attitude_horizon_display": {
       "BASE_IMAGE": "img/horizont_0.png",
       "DATACHANNEL": 13,
@@ -181,15 +343,15 @@
       "UNITS": "km/h"
     },
     "flight_time_display": {
+      "// NOTE": "FLIGHT_TIME(19) - сирі секунди з FC; FORMAT=MM:SS переводить їх у хвилини:секунди при виводі.",
       "DATACHANNEL": 19,
       "DECIMALS": 0,
+      "FORMAT": "MM:SS",
       "L": 0.5490430593490601,
       "LABEL": "TIME ",
       "S": 1,
       "T": 0.9659936428070068,
-      "UNITS": "",
-      "FORMAT": "MM:SS",
-      "// NOTE": "FLIGHT_TIME(19) - сирі секунди з FC; FORMAT=MM:SS переводить їх у хвилини:секунди при виводі."
+      "UNITS": ""
     },
     "h265_fps_display": {
       "DATACHANNEL": 202,
@@ -229,6 +391,15 @@
       "T": 0.309,
       "UNITS": "ms"
     },
+    "line_loss_display": {
+      "DATACHANNEL": 201,
+      "DECIMALS": 1,
+      "L": 0.880382776260376,
+      "LABEL": "LOSS",
+      "S": 1,
+      "T": 0.01381509006023407,
+      "UNITS": "dB"
+    },
     "lost_frames_display": {
       "// NOTE": "LOCAL_LOST_FRAMES(210) — кадри, які мали прийти й не прийшли: діри в приході, більші за півтора періоди. КІЛЬКІСТЮ, а не темпом: питання до цього числа — скільки всього загубилось за політ. Діра, довша за signal_timeout_ms (3 с), сюди не входить — то втрата сигналу, а не кадрів.",
       "DATACHANNEL": 210,
@@ -238,15 +409,6 @@
       "S": 0,
       "T": 0.405,
       "UNITS": ""
-    },
-    "line_loss_display": {
-      "DATACHANNEL": 201,
-      "DECIMALS": 1,
-      "L": 0.880382776260376,
-      "LABEL": "LOSS",
-      "S": 1,
-      "T": 0.01381509006023407,
-      "UNITS": "dB"
     },
     "mjpeg_fps_display": {
       "DATACHANNEL": 203,

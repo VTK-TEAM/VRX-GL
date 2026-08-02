@@ -1,5 +1,11 @@
 #pragma once
 
+// Заголовок користується uint8_t, тож включає його сам: досі це
+// працювало лише тому, що його завжди включали після когось, хто
+// вже підтягнув <cstdint>. Перший же самостійний споживач (стенд
+// перевірки імен каналів) на цьому й спіткнувся.
+#include <cstdint>
+
 // Дзеркало Core/VT_TLM/telemetry_index.h з прошивки UNI_DLOF_FIMWARES
 // (POINT/STATION, STM32). ТРИМАТИ РУЧНИМИ В СИНХРОНІ з прошивкою — ID тут
 // мають збігатись 1:1 з тим, що шле VT_ethernet_pipe/telemetry_sync_cls,
@@ -130,6 +136,36 @@ typedef enum {
     VT_TLM_TLM_QUEUE_IS_CHANGE_COUNT   = 88, // Скільки разів через м'якший "is_change"-fallback
     VT_TLM_TOS_RX_PERIOD_MS            = 89, // Реально виміряний період вхідних TOS-пакетів від Betaflight, мс
 
+    // ── 90..107: ДРУГИЙ ПУЛЬТ ───────────────────────────────────────────
+    //
+    // Станція підтримує два передавачі одночасно. Канали дзеркалять
+    // RC_CH1-18 один в один: та сама структура, той самий діапазон
+    // значень, різниця лише в тому, чий стік крутять.
+    //
+    // Навіщо окремий блок, а не "активний пульт" одним набором. Пульти
+    // можуть працювати РАЗОМ — інструктор і учень, оператор і стрілець, —
+    // і в такій схемі питання "чиє це положення" важливіше за саме
+    // положення. Один набір із перемикачем джерела відповісти на нього не
+    // може в принципі.
+    VT_TLM_RC2_CH1                     = 90,
+    VT_TLM_RC2_CH2                     = 91,
+    VT_TLM_RC2_CH3                     = 92,
+    VT_TLM_RC2_CH4                     = 93,
+    VT_TLM_RC2_CH5                     = 94,
+    VT_TLM_RC2_CH6                     = 95,
+    VT_TLM_RC2_CH7                     = 96,
+    VT_TLM_RC2_CH8                     = 97,
+    VT_TLM_RC2_CH9                     = 98,
+    VT_TLM_RC2_CH10                    = 99,
+    VT_TLM_RC2_CH11                    = 100,
+    VT_TLM_RC2_CH12                    = 101,
+    VT_TLM_RC2_CH13                    = 102,
+    VT_TLM_RC2_CH14                    = 103,
+    VT_TLM_RC2_CH15                    = 104,
+    VT_TLM_RC2_CH16                    = 105,
+    VT_TLM_RC2_CH17                    = 106,
+    VT_TLM_RC2_CH18                    = 107,
+
 } VT_telemetry_index_e;
 
 // Той самий запас, що і TELEMETRY_CAPACITY на STM (Core/VT_TLM/telemetry_storage_cls.h).
@@ -159,16 +195,47 @@ constexpr int VT_TLM_GPS_FIX_TYPE_2D   = 2;
 constexpr int VT_TLM_GPS_FIX_TYPE_3D   = 3;
 
 // ─── tosTelemetryArmingDisableReason_e (VT_TLM_ARMING_DISABLE_REASON, id 23) ─
-// OK=0, далі 1..30 — 1:1 з бітовими позиціями armingDisableFlags_e
-// (fc/runtime_config.h) з офсетом +1, найнижчий встановлений біт виграє.
-// Тут ВІДОМІ лише крайні значення — повний список 1..29 не надано,
-// уточнити перед тим, як робити ENUM_SWITCH на всі причини блокування арму.
-constexpr int VT_TLM_ARMING_DISABLE_REASON_OK          = 0;
-constexpr int VT_TLM_ARMING_DISABLE_REASON_NO_GYRO     = 1;
-constexpr int VT_TLM_ARMING_DISABLE_REASON_FAILSAFE    = 2;
-constexpr int VT_TLM_ARMING_DISABLE_REASON_RX_FAILSAFE = 3;
-// ... 4..29 поки не задокументовано (звір з armingDisableFlags_e при потребі) ...
-constexpr int VT_TLM_ARMING_DISABLE_REASON_ARM_SWITCH  = 30;
+//
+// ПОВНИЙ перелік, 1:1 з прошивкою. Раніше тут були лише крайні значення й
+// чесна помітка "4..29 не задокументовано" — тому ENUM_SWITCH на причини
+// блокування арму зробити було не можна: пілот бачив би число замість
+// причини.
+//
+// Прошивка бере armingDisableFlags_e (30-бітова маска, причин може бути
+// кілька одночасно) і згортає її до ОДНІЄЇ — найнижчого встановленого
+// біта, бо прапорці там перелічені за критичністю. Значення тут — це
+// позиція біта плюс один; нуль означає, що арму ніщо не заважає.
+constexpr int VT_TLM_ARMING_DISABLE_REASON_OK                 =  0;
+constexpr int VT_TLM_ARMING_DISABLE_REASON_NO_GYRO            =  1;
+constexpr int VT_TLM_ARMING_DISABLE_REASON_FAILSAFE           =  2;
+constexpr int VT_TLM_ARMING_DISABLE_REASON_RX_FAILSAFE        =  3;
+constexpr int VT_TLM_ARMING_DISABLE_REASON_NOT_DISARMED       =  4;
+constexpr int VT_TLM_ARMING_DISABLE_REASON_BOXFAILSAFE        =  5;
+constexpr int VT_TLM_ARMING_DISABLE_REASON_RUNAWAY_TAKEOFF    =  6;
+constexpr int VT_TLM_ARMING_DISABLE_REASON_CRASH_DETECTED     =  7;
+constexpr int VT_TLM_ARMING_DISABLE_REASON_THROTTLE           =  8;
+constexpr int VT_TLM_ARMING_DISABLE_REASON_ANGLE              =  9;
+constexpr int VT_TLM_ARMING_DISABLE_REASON_BOOT_GRACE_TIME    = 10;
+constexpr int VT_TLM_ARMING_DISABLE_REASON_NOPREARM           = 11;
+constexpr int VT_TLM_ARMING_DISABLE_REASON_LOAD               = 12;
+constexpr int VT_TLM_ARMING_DISABLE_REASON_CALIBRATING        = 13;
+constexpr int VT_TLM_ARMING_DISABLE_REASON_CLI                = 14;
+constexpr int VT_TLM_ARMING_DISABLE_REASON_CMS_MENU           = 15;
+constexpr int VT_TLM_ARMING_DISABLE_REASON_BST                = 16;
+constexpr int VT_TLM_ARMING_DISABLE_REASON_MSP                = 17;
+constexpr int VT_TLM_ARMING_DISABLE_REASON_PARALYZE           = 18;
+constexpr int VT_TLM_ARMING_DISABLE_REASON_GPS                = 19;
+constexpr int VT_TLM_ARMING_DISABLE_REASON_RESC               = 20;
+constexpr int VT_TLM_ARMING_DISABLE_REASON_DSHOT_TELEM        = 21;
+constexpr int VT_TLM_ARMING_DISABLE_REASON_REBOOT_REQUIRED    = 22;
+constexpr int VT_TLM_ARMING_DISABLE_REASON_DSHOT_BITBANG      = 23;
+constexpr int VT_TLM_ARMING_DISABLE_REASON_ACC_CALIBRATION    = 24;
+constexpr int VT_TLM_ARMING_DISABLE_REASON_MOTOR_PROTOCOL     = 25;
+constexpr int VT_TLM_ARMING_DISABLE_REASON_CRASHFLIP          = 26;
+constexpr int VT_TLM_ARMING_DISABLE_REASON_ALTHOLD            = 27;
+constexpr int VT_TLM_ARMING_DISABLE_REASON_POSHOLD            = 28;
+constexpr int VT_TLM_ARMING_DISABLE_REASON_AUTOPILOT          = 29;
+constexpr int VT_TLM_ARMING_DISABLE_REASON_ARM_SWITCH         = 30;
 
 // ─── КЕРУВАННЯ РОЗКЛАДКОЮ (150..159) ────────────────────────────────────
 //

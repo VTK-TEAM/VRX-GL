@@ -38,6 +38,8 @@ add_executable(vrx_gl
     control/camera_api.cpp
     control/phase_controller.cpp
     control/layout_control.cpp
+    ui/pointer.cpp
+    ui/screen_ui.cpp
     diag/link_monitor.cpp
     record/storage.cpp
     record/recorder.cpp
@@ -87,7 +89,53 @@ target_compile_options(vrx_gl PRIVATE
 # XFCE не виконує кліком ні .desktop у папці, ні шелл-скрипти — обидва
 # відкриваються як текст. Двійковий файл виконує.
 add_executable(vrx_launcher scripts/launcher.c)
+
+# Наглядач: вирішує, що зараз на екрані — станція чи редактор.
+# Екрана сам не тримає, тож може бути єдиним, що стоїть в
+# автозапуску. Протокол зі станцією — код виходу.
+add_executable(vrx_supervisor supervisor/supervisor.c)
 set_target_properties(vrx_launcher PROPERTIES
     OUTPUT_NAME "ЗАПУСТИТИ VRX-GL"
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
+
+# ---------------------------------------------------------------------
+# Редактор розкладки OSD
+#
+# Переніс із VRX як є. Він працює З ФАЙЛАМИ ОСНОВНОГО ПРОЄКТУ —
+# osd_config.json, atlas.png, osd_glyph_info.bin, osd_icon_names.json, — і
+# читає ті самі заголовки телеметрії, що й станція. Саме тому він тут, а
+# не окремим репозиторієм: розійтись їм не можна.
+#
+# Збирається окремою ціллю: станції SDL не потрібен, а редактору не
+# потрібні ні DRM, ні GStreamer.
+pkg_check_modules(SDL2 sdl2)
+pkg_check_modules(SDL2_IMAGE SDL2_image)
+pkg_check_modules(SDL2_TTF SDL2_ttf)
+
+if(SDL2_FOUND AND SDL2_IMAGE_FOUND AND SDL2_TTF_FOUND)
+    add_executable(osd_editor
+        osd_editor/src/main.cpp
+        osd_editor/src/editor_app.cpp
+        osd_editor/src/edit_dialog.cpp
+        osd_editor/src/widgets.cpp
+        osd_editor/src/canvas_renderer.cpp
+        osd/telemetry/vt_telemetry_listener.cpp
+    )
+    target_include_directories(osd_editor PRIVATE
+        ${CMAKE_SOURCE_DIR}/osd/telemetry
+        ${CMAKE_SOURCE_DIR}/osd
+        ${SDL2_INCLUDE_DIRS}
+        ${SDL2_IMAGE_INCLUDE_DIRS}
+        ${SDL2_TTF_INCLUDE_DIRS}
+    )
+    target_link_libraries(osd_editor PRIVATE
+        ${SDL2_LIBRARIES}
+        ${SDL2_IMAGE_LIBRARIES}
+        ${SDL2_TTF_LIBRARIES}
+        Threads::Threads
+    )
+    target_compile_options(osd_editor PRIVATE -Wall -Wextra)
+else()
+    message(STATUS "SDL2 не знайдено — osd_editor не збирається (станції він не потрібен)")
+endif()

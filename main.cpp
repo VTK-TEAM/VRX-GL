@@ -34,6 +34,8 @@
 #include "render/gl_renderer.hpp"
 #include "source/h265_source.hpp"
 #include "source/mjpeg_source.hpp"
+#include "ui/pointer.hpp"
+#include "ui/screen_ui.hpp"
 
 #include <gst/gst.h>
 
@@ -49,6 +51,12 @@
 namespace {
 
 std::atomic<bool> g_stop{false};
+
+// Вийти, щоб наглядач запустив редактор. Окремий код виходу — це
+// весь протокол між станцією і тим, хто нею керує: без сокетів,
+// файлів-прапорців і сигналів.
+bool g_editor = false;
+constexpr int kExitRunEditor = 10;
 void on_signal(int) { g_stop.store(true); }
 
 bool lightdm_active() {
@@ -242,6 +250,18 @@ int main(int argc, char** argv) {
         osd.reset();
     }
 
+    // ЕКРАННЕ КЕРУВАННЯ: курсор і кнопка переходу в редактор.
+    //
+    // Миша читається напряму з /dev/input — X на станції немає, брати її
+    // більше нізвідки. Кнопка живе окремим оверлеєм, а не в OSD: вміст
+    // OSD задає користувач тим самим редактором, у який вона веде, і
+    // випадково пересунути чи видалити її не має бути можливості.
+    vrx::ui::Pointer pointer;
+    pointer.start();
+    auto screen_ui = std::make_shared<vrx::ui::ScreenUi>(vrx::ui::ScreenUi::Config{});
+    screen_ui->attach(&pointer);
+    renderer.add_overlay(screen_ui);
+
     // Фазове автопідстроювання. Веде ЧАСТОТУ камери так, щоб прихід
     // кадру стояв трохи раніше за опит рендерера — настільки раніше,
     // наскільки дістає виміряний джитер, і не більше. Обидві величини
@@ -359,6 +379,18 @@ int main(int argc, char** argv) {
     auto last = t0;
     while (!g_stop.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+        // ПЕРЕХІД У РЕДАКТОР. Станція виходить сама, з окремим кодом —
+        // а хто саме запустить редактор і поверне станцію назад, вирішує
+        // наглядач (scripts/run.sh). Тут ми не запускаємо нічого: поки
+        // цей процес живий, він тримає DRM master, і редактор однаково не
+        // отримав би екрана.
+        if (screen_ui->take_editor_request()) {
+            std::printf("Перехід у редактор розкладки.\n");
+            g_editor = true;
+            g_stop.store(true);
+            break;
+        }
 
         auto now = std::chrono::steady_clock::now();
         if (now - last < std::chrono::seconds(2)) continue;
@@ -539,5 +571,9 @@ int main(int argc, char** argv) {
     VRX_PM_REPORT();
 
     display.close();
+    if (g_editor) {
+        std::printf("Вихід для запуску редактора (код %d).\n", kExitRunEditor);
+        return kExitRunEditor;
+    }
     return 0;
 }

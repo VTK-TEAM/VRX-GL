@@ -94,6 +94,25 @@ inline const char* vt_telemetry_channel_name(int id) {
         case VT_TLM_RC_CH17: return "RC_CH17";
         case VT_TLM_RC_CH18: return "RC_CH18";
 
+        case VT_TLM_RC2_CH1: return "RC2_CH1";
+        case VT_TLM_RC2_CH2: return "RC2_CH2";
+        case VT_TLM_RC2_CH3: return "RC2_CH3";
+        case VT_TLM_RC2_CH4: return "RC2_CH4";
+        case VT_TLM_RC2_CH5: return "RC2_CH5";
+        case VT_TLM_RC2_CH6: return "RC2_CH6";
+        case VT_TLM_RC2_CH7: return "RC2_CH7";
+        case VT_TLM_RC2_CH8: return "RC2_CH8";
+        case VT_TLM_RC2_CH9: return "RC2_CH9";
+        case VT_TLM_RC2_CH10: return "RC2_CH10";
+        case VT_TLM_RC2_CH11: return "RC2_CH11";
+        case VT_TLM_RC2_CH12: return "RC2_CH12";
+        case VT_TLM_RC2_CH13: return "RC2_CH13";
+        case VT_TLM_RC2_CH14: return "RC2_CH14";
+        case VT_TLM_RC2_CH15: return "RC2_CH15";
+        case VT_TLM_RC2_CH16: return "RC2_CH16";
+        case VT_TLM_RC2_CH17: return "RC2_CH17";
+        case VT_TLM_RC2_CH18: return "RC2_CH18";
+
         case VT_TLM_ERLS_CH1: return "ERLS_CH1";
         case VT_TLM_ERLS_CH2: return "ERLS_CH2";
         case VT_TLM_ERLS_CH3: return "ERLS_CH3";
