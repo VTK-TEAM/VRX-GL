@@ -259,10 +259,54 @@ int main(int argc, char** argv) {
     pip_default.z = 1;                                  // поверх основного
     pip_src->set_placement(pip_default);
 
+    // ТРЕТІЙ ПОТІК — ЛОКАЛЬНИЙ ЗАХВАТ (MS2106) по V4L2.
+    //
+    // Плати ще немає, тож джерело ОПТ-ІН: створюється лише коли задано
+    // VRX_CAPTURE_DEV (напр. /dev/video0). Без неї нічого не піднімаємо —
+    // інакше v4l2src чіплявся б до першого-ліпшого /dev/video* на платі
+    // (ISP, HDMI-in), не того. Коли захват припаяно — одна змінна
+    // оточення вмикає весь ланцюг: показ, розкладку з телеметрії, канал
+    // fps, і сценарій "останній вцілілий на весь екран".
+    // ТРЕТІЙ ПОТІК — ЛОКАЛЬНИЙ ЗАХВАТ (аналог через USB).
+    //
+    // Пристроєм V4L2 володіє ОКРЕМА програма — релей (relay/uvc_relay.c),
+    // яку піднімає наглядач. Релей жене MJPEG у LOOPBACK-мультикаст, а не
+    // бродкастом: бродкаст ішов би по end1 і глушив прийом основного H.265
+    // (заміряно: втрата ×30). Мультикаст із ttl=0 + iface=lo лишається на
+    // платі (0 пакетів на end1, перевірено tcpdump'ом), а копію все одно
+    // отримують ВСІ локальні сокети — показ, запис і його проба.
+    //
+    // Для станції третій потік — це майже копія другого: той самий
+    // MjpegSource, лише інший порт + адреса групи. Жодного V4L2 тут.
+    //
+    // Вмикається за VRX_CAPTURE_DEV — тією самою змінною, за якою наглядач
+    // піднімає релей. Немає її — третього каналу немає.
+    constexpr int kCapPort = 5002;
+    constexpr const char* kCapGroup = "239.255.77.1";
+
+    std::shared_ptr<vrx::source::MjpegSource> cap_src;
+    vrx::layout::Placement cap_default;
+    cap_default.x = 0.98f; cap_default.y = 0.98f;      // правий НИЗ, відступ 2%
+    cap_default.w = 0.30f; cap_default.h = 0.30f;
+    cap_default.anchor = vrx::layout::Anchor::BottomRight;
+    cap_default.z = 2;                                  // поверх обох мережевих
+    if (const char* dev = std::getenv("VRX_CAPTURE_DEV")) {
+        if (dev[0]) {
+            vrx::source::VideoSource::Config cap_cfg;
+            cap_cfg.udp_port = kCapPort;
+            cap_cfg.multicast_addr = kCapGroup;
+            cap_src = std::make_shared<vrx::source::MjpegSource>("capture", cap_cfg);
+            cap_src->set_placement(cap_default);
+            std::printf("Локальний захват: релей -> %s:%d (loopback)\n", kCapGroup, kCapPort);
+        }
+    }
+
     main_src->start();
     pip_src->start();
+    if (cap_src) cap_src->start();
     renderer.add_source(main_src);
     renderer.add_source(pip_src);
+    if (cap_src) renderer.add_source(cap_src);
     std::printf("Джерел зареєстровано: %d\n", renderer.source_count());
 
     // OSD. Два власні потоки всередині: приймач телеметрії й збирач
@@ -311,12 +355,16 @@ int main(int argc, char** argv) {
     vrx::record::Storage storage{vrx::record::Storage::Config{}};
     storage.start();
 
+    // Запис. (Прапорець лишаю на випадок тесту ізоляції флешки — false
+    // глушить усі рекордери й субтитри.)
+    constexpr bool kRecordEnabled = true;
+
     vrx::record::Recorder::Config rec_cfg;
     rec_cfg.name = "main";
     rec_cfg.udp_port = h265_cfg.udp_port;
     rec_cfg.payload_type = h265_cfg.payload_type;
     vrx::record::Recorder recorder(rec_cfg, storage);
-    recorder.start();
+    if (kRecordEnabled) recorder.start();
 
     // Субтитри поруч із записаним відео: та сама телеметрія й той самий
     // osd_config.json, тож у плеєрі показання стоять там же, де стояли
@@ -344,7 +392,7 @@ int main(int argc, char** argv) {
         local_ch = std::make_unique<vrx::osd::LocalChannels>(
             vrx::osd::LocalChannels::Config{});
         local_ch->start(osd->storage(), display, renderer, phase,
-                        recorder, storage, main_src, pip_src);
+                        recorder, storage, main_src, pip_src, cap_src);
 
         // Розкладка з телеметрії. Окремого каналу керування свідомо
         // немає: телеметрія вже прокладена, вже з CRC і вже перевірена
@@ -370,11 +418,22 @@ int main(int argc, char** argv) {
             b.fallback = pip_default;
             layout_ctl->bind(std::move(b));
         }
+        if (cap_src) {
+            vrx::control::LayoutControl::Bound b;
+            b.source = cap_src; b.name = "захват";
+            b.ch_w = VT_TLM_LAYOUT_CAP_W; b.ch_h = VT_TLM_LAYOUT_CAP_H;
+            b.ch_x = VT_TLM_LAYOUT_CAP_X; b.ch_y = VT_TLM_LAYOUT_CAP_Y;
+            b.ch_anchor = VT_TLM_LAYOUT_CAP_ANCHOR;
+            b.fallback = cap_default;
+            layout_ctl->bind(std::move(b));
+        }
         layout_ctl->start(osd->storage());
 
         subs = std::make_unique<vrx::osd::SubtitleWriter>(sub_cfg);
-        if (subs->init()) {
+        if (kRecordEnabled && subs->init()) {
             subs->start(recorder, storage, osd->storage());
+        } else if (!kRecordEnabled) {
+            subs.reset();   // запис вимкнено — субтитри теж не пишемо
         } else {
             std::fprintf(stderr, "[main] субтитри не піднялись, запис іде без них\n");
             subs.reset();
@@ -390,7 +449,21 @@ int main(int argc, char** argv) {
     rec2_cfg.udp_port = pip_cfg.udp_port;
     rec2_cfg.payload_type = pip_cfg.payload_type;
     vrx::record::Recorder recorder2(rec2_cfg, storage);
-    recorder2.start();
+    if (kRecordEnabled) recorder2.start();
+
+    // ТРЕТІЙ РЕКОРДЕР — захват. Копія другого, інший порт: читає той самий
+    // бродкаст релею, що й показ (бродкаст ядро копіює ВСІМ сокетам на
+    // порту — і показу, і сюди, і пробі). Незалежний: свій udpsrc, свій файл.
+    std::unique_ptr<vrx::record::Recorder> recorder3;
+    if (cap_src) {
+        vrx::record::Recorder::Config rec3_cfg;
+        rec3_cfg.name = "capture";
+        rec3_cfg.codec = vrx::record::Recorder::Codec::MJPEG;
+        rec3_cfg.udp_port = kCapPort;
+        rec3_cfg.multicast_addr = kCapGroup;
+        recorder3 = std::make_unique<vrx::record::Recorder>(rec3_cfg, storage);
+        if (kRecordEnabled) recorder3->start();
+    }
 
     // Спостерігач лінка. Розрізняє два випадки, які по кадрах виглядають
     // однаково: пакети загубились у дорозі чи камера нічого не слала.
@@ -409,6 +482,10 @@ int main(int argc, char** argv) {
     // signal_timeout зникають, а "SD CARD ERROR" списує це на носій; ще 5 с
     // — порт назад, напис прибираємо. Порт щоразу новий і випадковий, щоб не
     // було сталого "магічного" числа, за яким саботаж легко впізнати.
+    //
+    // TODO: третій потік (захват) саботаж поки НЕ чіпає. Тепер це звичайний
+    // MjpegSource на порту релею — досить додати cap_src->set_udp_port у блок
+    // нижче, як для main/pip. Лишив на потім.
     std::mt19937 rng(
         (unsigned)std::chrono::steady_clock::now().time_since_epoch().count());
     bool sab_bad = false;
@@ -586,6 +663,13 @@ int main(int argc, char** argv) {
             if (rc2.active) {
                 std::printf("          ЗАПИС 2: %.1f МБ | файлів %u\n", rc2.bytes / 1e6, rc2.files);
             }
+            if (recorder3) {
+                auto rc3 = recorder3->stats();
+                if (rc3.active) {
+                    std::printf("          ЗАПИС 3 (захват): %.1f МБ | файлів %u\n",
+                                rc3.bytes / 1e6, rc3.files);
+                }
+            }
             // Мовчить, поки все гаразд. Ці три лічильники рахують збої,
             // які раніше не було видно взагалі: запис ставав, а назовні
             // лишалось "пишу".
@@ -616,11 +700,13 @@ int main(int argc, char** argv) {
     if (osd) osd->stop();
     recorder.stop();
     recorder2.stop();
+    if (recorder3) recorder3->stop();
     storage.stop();
     phase.stop();
     renderer.stop();
     main_src->stop();
     pip_src->stop();
+    if (cap_src) cap_src->stop();
 
     auto ds = display.stats();
     auto rs = renderer.stats();

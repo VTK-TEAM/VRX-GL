@@ -4,6 +4,7 @@
 
 #include <gst/gst.h>
 
+#include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -52,6 +53,18 @@ struct Recorder::Impl {
     int eff_port() const {
         const int p = port_override.load(std::memory_order_relaxed);
         return p < 0 ? cfg.udp_port : p;
+    }
+
+    // Елемент udpsrc для пайплайну. Для мультикаст-групи (внутрішній
+    // стрімер захвату) додаємо address + iface=lo, щоб приймати саме її
+    // з loopback; інакше — звичайний порт.
+    std::string udpsrc_prefix() const {
+        std::string s = "udpsrc";
+        if (!cfg.multicast_addr.empty()) {
+            s += " address=" + cfg.multicast_addr + " multicast-iface=lo";
+        }
+        s += " port=" + std::to_string(eff_port());
+        return s;
     }
 
     // Лічильники веде пад-проба, тобто потік GStreamer.
@@ -119,6 +132,21 @@ struct Recorder::Impl {
             ::close(probe_fd);
             probe_fd = -1;
             return false;
+        }
+
+        // Мультикаст (внутрішній стрімер захвату): проба мусить ПРИЄДНАТИСЬ
+        // до групи на loopback, інакше датаграм не побачить. Без цього
+        // сигнал завжди читався б як "немає", і файл не створювався б.
+        if (!cfg.multicast_addr.empty()) {
+            ip_mreq mreq{};
+            mreq.imr_multiaddr.s_addr = ::inet_addr(cfg.multicast_addr.c_str());
+            mreq.imr_interface.s_addr = ::inet_addr("127.0.0.1");
+            if (::setsockopt(probe_fd, IPPROTO_IP, IP_ADD_MEMBERSHIP,
+                             &mreq, sizeof(mreq)) != 0) {
+                std::fprintf(stderr, "[запис %s] проба не приєдналась до групи %s: %s\n",
+                             cfg.name.c_str(), cfg.multicast_addr.c_str(),
+                             std::strerror(errno));
+            }
         }
         return true;
     }
@@ -265,13 +293,13 @@ struct Recorder::Impl {
             // потрібен не лише для меж кадрів — без коректних image/jpeg
             // на буферах muxer мовчки не запише жодного кадру.
             std::snprintf(desc, sizeof(desc),
-                "udpsrc port=%d "
+                "%s "
                 "! jpegparse name=parse "
                 "! queue name=buf leaky=downstream max-size-time=%llu "
                 "max-size-bytes=%d max-size-buffers=%d "
                 "! matroskamux name=mux streamable=true "
                 "! filesink name=sink location=\"%s\" sync=false async=false",
-                eff_port(), (unsigned long long)cfg.queue_ms * 1000000ULL,
+                udpsrc_prefix().c_str(), (unsigned long long)cfg.queue_ms * 1000000ULL,
                 cfg.queue_bytes, cfg.queue_buffers, path.c_str());
         } else {
         std::snprintf(desc, sizeof(desc),

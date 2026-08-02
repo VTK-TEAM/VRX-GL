@@ -23,6 +23,7 @@ struct LocalChannels::Impl {
     const record::Storage* drive = nullptr;
     std::shared_ptr<source::FrameSource> h265;
     std::shared_ptr<source::FrameSource> mjpeg;
+    std::shared_ptr<source::FrameSource> capture;   // локальний захват MS2106
 
     std::thread th;
     std::atomic<bool> running{false};
@@ -131,6 +132,12 @@ struct LocalChannels::Impl {
             const auto s = mjpeg->stats();
             if (s.produced_hz > 0.0) {
                 storage->set_value(VT_TLM_LOCAL_MJPEG_FPS, (float)s.produced_hz);
+            }
+        }
+        if (capture) {
+            const auto s = capture->stats();
+            if (s.produced_hz > 0.0) {
+                storage->set_value(VT_TLM_LOCAL_CAPTURE_FPS, (float)s.produced_hz);
             }
         }
 
@@ -280,7 +287,8 @@ bool LocalChannels::start(VtTelemetryStorage& storage,
                           const record::Recorder& rec,
                           const record::Storage& drive,
                           std::shared_ptr<source::FrameSource> h265,
-                          std::shared_ptr<source::FrameSource> mjpeg) {
+                          std::shared_ptr<source::FrameSource> mjpeg,
+                          std::shared_ptr<source::FrameSource> capture) {
     if (impl_->running.load()) return true;
     impl_->storage = &storage;
     impl_->display = &display;
@@ -290,6 +298,7 @@ bool LocalChannels::start(VtTelemetryStorage& storage,
     impl_->drive = &drive;
     impl_->h265 = std::move(h265);
     impl_->mjpeg = std::move(mjpeg);
+    impl_->capture = std::move(capture);
 
     impl_->running.store(true);
     impl_->th = std::thread([this] { impl_->loop(); });

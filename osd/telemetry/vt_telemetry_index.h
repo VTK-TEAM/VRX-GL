@@ -237,7 +237,7 @@ constexpr int VT_TLM_ARMING_DISABLE_REASON_POSHOLD            = 28;
 constexpr int VT_TLM_ARMING_DISABLE_REASON_AUTOPILOT          = 29;
 constexpr int VT_TLM_ARMING_DISABLE_REASON_ARM_SWITCH         = 30;
 
-// ─── КЕРУВАННЯ РОЗКЛАДКОЮ (150..159) ────────────────────────────────────
+// ─── КЕРУВАННЯ РОЗКЛАДКОЮ (150..164) ────────────────────────────────────
 //
 // Єдиний блок каналів, який station СЛУХАЄ як команду, а не як показання.
 // Окремого протоколу для цього свідомо немає: телеметрія вже прокладена,
@@ -273,6 +273,13 @@ constexpr uint8_t VT_TLM_LAYOUT_PIP_H       = 156;
 constexpr uint8_t VT_TLM_LAYOUT_PIP_X       = 157;
 constexpr uint8_t VT_TLM_LAYOUT_PIP_Y       = 158;
 constexpr uint8_t VT_TLM_LAYOUT_PIP_ANCHOR  = 159;
+// Третій потік — локальний захват із плати відеозахвату (MS2106),
+// V4L2-джерело, не мережеве. Керується так само, як два вищі.
+constexpr uint8_t VT_TLM_LAYOUT_CAP_W       = 160;
+constexpr uint8_t VT_TLM_LAYOUT_CAP_H       = 161;
+constexpr uint8_t VT_TLM_LAYOUT_CAP_X       = 162;
+constexpr uint8_t VT_TLM_LAYOUT_CAP_Y       = 163;
+constexpr uint8_t VT_TLM_LAYOUT_CAP_ANCHOR  = 164;
 
 // ─── VRX-локальні (не мережеві) канали ──────────────────────────────────
 // НЕ надсилаються прошивкою і ніколи не будуть — прошивка нумерує 0..89
@@ -318,3 +325,4 @@ constexpr uint8_t VT_TLM_LOCAL_LOST_FRAMES     = 210; // кадрів, які м
 constexpr uint8_t VT_TLM_LOCAL_CLOCK           = 211; // секунд від опівночі, локальний час
 constexpr uint8_t VT_TLM_LOCAL_DATE            = 212; // дата як YYMMDD (260802 = 2 серпня 2026)
 constexpr uint8_t VT_TLM_LOCAL_DRIVE_FREE      = 213; // вільно на носії, ГБ
+constexpr uint8_t VT_TLM_LOCAL_CAPTURE_FPS     = 214; // fps локального захвату (MS2106), реально декодований

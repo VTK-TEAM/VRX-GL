@@ -160,6 +160,11 @@ public:
 
     virtual SourceStats stats() const = 0;
 
+    // Чи є ЗАРАЗ сигнал (кадр приходив не давніше за signal_timeout).
+    // Потрібне сценарію "останній вцілілий потік — на весь екран":
+    // розкладка має знати, скільки джерел живі прямо зараз.
+    virtual bool has_signal() const = 0;
+
 protected:
     FrameSource() = default;
 };

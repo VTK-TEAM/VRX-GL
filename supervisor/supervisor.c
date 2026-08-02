@@ -64,12 +64,22 @@
 static volatile sig_atomic_t g_stop = 0;
 static volatile pid_t g_child = 0;
 
+// РЕЛЕЙ ЗАХВАТУ — окремий, ПАРАЛЕЛЬНИЙ процес. Володіє USB-камерою
+// (V4L2 single-consumer) і жене MJPEG у loopback; станція читає його як
+// звичайну мережеву камеру. Наглядач тримає його живим так само, як
+// станцію, але НЕЗАЛЕЖНО: релей падає — станція працює далі, і навпаки.
+static volatile pid_t g_relay = 0;
+static char* g_relay_argv[8] = {0};   // NULL[0] = релей не налаштований
+static long g_relay_started = 0;
+static int g_relay_fails = 0;
+
 static void on_signal(int sig) {
     g_stop = 1;
-    // Дитину глушимо тим самим сигналом: станція вміє коректно закритись
-    // по SIGTERM — дописати файл запису, повернути камері нейтральний
-    // тримінг, розібрати кільце буферів.
+    // Обидві дитини глушимо тим самим сигналом: станція вміє коректно
+    // закритись по SIGTERM (дописати запис, повернути тримінг), релей —
+    // закрити пристрій і сокет.
     if (g_child > 0) kill(g_child, sig);
+    if (g_relay > 0) kill(g_relay, sig);
 }
 
 static long now_ms(void) {
@@ -104,8 +114,44 @@ static int find_root(char* out, size_t n) {
     return 0;
 }
 
+// Піднімає релей захвату у ФОНІ (не чекаємо його — він живе паралельно
+// станції). Нічого не робить, якщо релей не налаштований (немає камери).
+static void start_relay(void) {
+    if (g_stop || !g_relay_argv[0]) return;
+    fprintf(stderr, "[наглядач] запускаю релей захвату\n");
+    fflush(stderr);
+    const pid_t pid = fork();
+    if (pid < 0) {
+        fprintf(stderr, "[наглядач] fork релею не вдався: %s\n", strerror(errno));
+        return;
+    }
+    if (pid == 0) {
+        setpgid(0, 0);
+        execv(g_relay_argv[0], g_relay_argv);
+        fprintf(stderr, "[наглядач] релей не запустився: %s\n", strerror(errno));
+        _exit(127);
+    }
+    g_relay = pid;
+    g_relay_started = now_ms();
+}
+
+// Релей помер — піднімаємо назад. Невелика фіксована пауза, щоб зламаний
+// бінар не крутився надто швидко; "справжня" смерть тут рідкість, бо
+// залізо (unplug, зависання) релей ретраїть сам усередині, не виходячи.
+static void restart_relay(void) {
+    if (g_stop || !g_relay_argv[0]) return;
+    const long lived = now_ms() - g_relay_started;
+    fprintf(stderr, "[наглядач] релей вийшов (прожив %ld мс), піднімаю\n", lived);
+    for (long s = 0; s < 500 && !g_stop; s += 100) sleep_ms(100);
+    start_relay();
+}
+
 // Запускає програму й чекає. Повертає код виходу, або -1 якщо процес
 // убито сигналом (це не збій станції, це нас зупиняють).
+//
+// Чекає ПОЖИНАЮЧИ БУДЬ-ЯКУ дитину: поки блокуємось на станції/редакторі,
+// може вмерти релей — тоді піднімаємо його й чекаємо далі. Станція й
+// релей незалежні, і смерть одного не має чіпати іншого.
 static int run_and_wait(const char* what, char* const argv[], char* const envp_extra[]) {
     fprintf(stderr, "[наглядач] запускаю %s\n", what);
     fflush(stderr);
@@ -128,8 +174,20 @@ static int run_and_wait(const char* what, char* const argv[], char* const envp_e
 
     g_child = pid;
     int status = 0;
-    while (waitpid(pid, &status, 0) < 0) {
-        if (errno != EINTR) break;
+    for (;;) {
+        int st = 0;
+        const pid_t got = waitpid(-1, &st, 0);
+        if (got < 0) {
+            if (errno == EINTR) continue;
+            break;                          // дітей не лишилось
+        }
+        if (g_relay > 0 && got == g_relay) {
+            g_relay = 0;
+            restart_relay();                // релей помер — незалежно від станції
+            continue;
+        }
+        if (got == pid) { status = st; break; }
+        // якась інша дитина — ігноруємо
     }
     g_child = 0;
 
@@ -178,6 +236,30 @@ int main(int argc, char** argv) {
     char station[PATH_MAX], editor[PATH_MAX];
     snprintf(station, sizeof(station), "%s/build/vrx_gl", root);
     snprintf(editor, sizeof(editor), "%s/build/osd_editor", root);
+
+    // РЕЛЕЙ ЗАХВАТУ. Вмикається, лише коли задано VRX_CAPTURE_DEV — та сама
+    // змінна, за якою станція читає третій потік. Шле в LOOPBACK-мультикаст
+    // (ttl=0, iface=lo у релеї): НЕ виходить за плату, тож не глушить прийом
+    // основного H.265 на end1, але копію отримують усі локальні сокети
+    // (показ + рекордер + проба). Адреса/порт збігаються з kCapGroup/kCapPort.
+    static char relay_bin[PATH_MAX], relay_dev[64], relay_w[16], relay_h[16], relay_fps[16];
+    static char relay_dst[] = "udp://239.255.77.1:5002";
+    const char* cap_dev = getenv("VRX_CAPTURE_DEV");
+    if (cap_dev && cap_dev[0]) {
+        const char* w = getenv("VRX_CAPTURE_W");
+        const char* h = getenv("VRX_CAPTURE_H");
+        const char* f = getenv("VRX_CAPTURE_FPS");
+        snprintf(relay_bin, sizeof(relay_bin), "%s/build/uvc_relay", root);
+        snprintf(relay_dev, sizeof(relay_dev), "%s", cap_dev);
+        snprintf(relay_w, sizeof(relay_w), "%s", (w && w[0]) ? w : "720");
+        snprintf(relay_h, sizeof(relay_h), "%s", (h && h[0]) ? h : "480");
+        snprintf(relay_fps, sizeof(relay_fps), "%s", (f && f[0]) ? f : "25");
+        g_relay_argv[0] = relay_bin; g_relay_argv[1] = relay_dev;
+        g_relay_argv[2] = relay_w;   g_relay_argv[3] = relay_h;
+        g_relay_argv[4] = relay_fps; g_relay_argv[5] = relay_dst;
+        g_relay_argv[6] = NULL;
+        start_relay();
+    }
 
     int fail_streak = 0;
 

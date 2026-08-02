@@ -79,6 +79,19 @@ struct LayoutControl::Impl {
     }
 
     void tick() {
+        // СЦЕНАРІЙ "ОСТАННІЙ ВЦІЛІЛИЙ". Спершу рахуємо, скільки джерел
+        // мають сигнал ПРЯМО ЗАРАЗ, і хто саме єдиний. Робиться раз на
+        // такт, до застосування розкладок.
+        int with_signal = 0;
+        int solo_idx = -1;
+        for (size_t i = 0; i < bounds.size(); ++i) {
+            if (bounds[i].source && bounds[i].source->has_signal()) {
+                with_signal++;
+                solo_idx = (int)i;
+            }
+        }
+        const bool solo_mode = cfg.solo_fullscreen && with_signal == 1;
+
         for (size_t i = 0; i < bounds.size(); ++i) {
             const Bound& b = bounds[i];
             layout::Placement p = b.fallback;
@@ -94,13 +107,25 @@ struct LayoutControl::Impl {
             // придатного вигляду, а не сподіваємось на відправника.
             p = layout::sanitize(p);
 
+            // Єдиний вцілілий потік — на весь екран, поверх розкладки.
+            // z лишаємо з fallback, щоб порядок був осмислений, якщо друге
+            // джерело саме зараз оживає між двома тактами.
+            const bool is_solo = solo_mode && (int)i == solo_idx;
+            if (is_solo) {
+                p.x = 0.5f; p.y = 0.5f;
+                p.w = 1.0f; p.h = 1.0f;
+                p.anchor = layout::Anchor::Center;
+                p.enabled = true;
+            }
+
             if (same(p, applied[i])) continue;
             applied[i] = p;
             if (b.source) b.source->set_placement(p);
 
             std::fprintf(stderr,
-                "[розкладка] %s: коробка %.3fx%.3f, якір %s у (%.3f, %.3f)\n",
-                b.name.c_str(), p.w, p.h, anchor_name(p.anchor), p.x, p.y);
+                "[розкладка] %s: %s коробка %.3fx%.3f, якір %s у (%.3f, %.3f)\n",
+                b.name.c_str(), is_solo ? "САМ НА ЕКРАНІ —" : "",
+                p.w, p.h, anchor_name(p.anchor), p.x, p.y);
         }
     }
 

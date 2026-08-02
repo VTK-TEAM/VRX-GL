@@ -416,13 +416,7 @@ struct VideoSource::Impl {
 
     // Збирає опис із гачків нащадка. Сама база про кодеки не знає нічого.
     std::string describe() const {
-        int port = port_override.load(std::memory_order_relaxed);
-        if (port < 0) port = cfg.udp_port;
-        std::string s = "udpsrc port=" + std::to_string(port);
-
-        const std::string c = owner->caps();
-        if (!c.empty()) s += " caps=\"" + c + "\"";
-
+        std::string s = owner->source_element();
         s += " ! " + owner->parse_chain();
 
         // Без черги перед appsink. Вона стояла з max-size-buffers=1,
@@ -666,6 +660,24 @@ void VideoSource::set_udp_port(int port) {
 const char* VideoSource::name() const { return impl_->name.c_str(); }
 
 const VideoSource::Config& VideoSource::config() const { return impl_->cfg; }
+
+int VideoSource::effective_udp_port() const {
+    const int p = impl_->port_override.load(std::memory_order_relaxed);
+    return p < 0 ? impl_->cfg.udp_port : p;
+}
+
+// Дефолт: мережеве джерело (udpsrc). Для мультикаст-групи (потік релею
+// захвату з loopback) додаємо address + iface=lo.
+std::string VideoSource::source_element() const {
+    std::string s = "udpsrc";
+    if (!impl_->cfg.multicast_addr.empty()) {
+        s += " address=" + impl_->cfg.multicast_addr + " multicast-iface=lo";
+    }
+    s += " port=" + std::to_string(effective_udp_port());
+    const std::string c = caps();
+    if (!c.empty()) s += " caps=\"" + c + "\"";
+    return s;
+}
 
 bool VideoSource::start() {
     Impl& d = *impl_;

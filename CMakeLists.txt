@@ -104,6 +104,11 @@ add_executable(vrx_launcher scripts/launcher.c)
 # Екрана сам не тримає, тож може бути єдиним, що стоїть в
 # автозапуску. Протокол зі станцією — код виходу.
 add_executable(vrx_supervisor supervisor/supervisor.c)
+
+# Релей захвату: окрема автономна програма. Володіє USB-камерою (V4L2) і
+# жене MJPEG бродкастом; станція читає його як звичайну мережеву камеру.
+# Чистий V4L2 + сокети, без жодних залежностей проєкту.
+add_executable(uvc_relay relay/uvc_relay.c)
 set_target_properties(vrx_launcher PROPERTIES
     OUTPUT_NAME "ЗАПУСТИТИ VRX-GL"
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}

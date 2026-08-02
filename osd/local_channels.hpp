@@ -83,7 +83,8 @@ public:
                const record::Recorder& rec,
                const record::Storage& drive,
                std::shared_ptr<source::FrameSource> h265,
-               std::shared_ptr<source::FrameSource> mjpeg);
+               std::shared_ptr<source::FrameSource> mjpeg,
+               std::shared_ptr<source::FrameSource> capture = nullptr);
 
     void stop();
 
