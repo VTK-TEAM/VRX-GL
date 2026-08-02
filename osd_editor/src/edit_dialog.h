@@ -71,6 +71,7 @@ private:
                                   float min_v, float max_v, int decimals,
                                   std::function<void(float)> commit, float big_step = -1.f);
     void add_readonly_row(const std::string& label, const std::string& value);
+    void add_toggle_row(const std::string& label, bool value, std::function<void(bool)> commit);
     void add_section_title(const std::string& text);
 
     void build_common_size_row();

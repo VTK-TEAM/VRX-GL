@@ -54,6 +54,31 @@ void ElementEditDialog::add_readonly_row(const std::string& label, const std::st
     cursor_y_ += READONLY_ROW_GAP;
 }
 
+// Перемикач зроблено кнопкою, а не новим віджетом-галочкою: стан
+// читається з самого напису ("так"/"ні" плюс колір), а нового класу з
+// власним малюванням і потраплянням миші тут не окупалось би — це поки
+// єдине двійкове поле в усьому редакторі.
+void ElementEditDialog::add_toggle_row(const std::string& label, bool value,
+                                       std::function<void(bool)> commit) {
+    if (!row_visible(FIELD_H)) { cursor_y_ += FIELD_GAP; return; }
+
+    UiLabel* l = add<UiLabel>();
+    l->bounds = SDL_Rect{bounds.x + MARGIN, cursor_y_ - 20, bounds.w - MARGIN * 2, 18};
+    l->text = label;
+    l->color = ui_color::TEXT_MUTED;
+
+    Button* b = add<Button>();
+    b->bounds = SDL_Rect{bounds.x + MARGIN, cursor_y_, bounds.w - MARGIN * 2, FIELD_H};
+    b->label = value ? "так — ховати елемент цілком" : "ні — показувати прочерки";
+    b->bg_color = value ? ui_color::SUCCESS : ui_color::BG_LIGHT;
+    b->text_color = value ? SDL_Color{15, 15, 15, 255} : ui_color::TEXT;
+    b->on_click = [this, value, commit]() {
+        commit(!value);
+        request_rebuild();
+    };
+    cursor_y_ += FIELD_GAP;
+}
+
 void ElementEditDialog::add_section_title(const std::string& text) {
     UiLabel* l = add<UiLabel>();
     l->bounds = SDL_Rect{bounds.x + MARGIN, cursor_y_, bounds.w - MARGIN * 2, 24};
@@ -147,6 +172,10 @@ void ElementEditDialog::build_value_fields() {
         add_number_field("Знаків після коми (DECIMALS)", static_cast<float>(el->decimals()), 1.f, 0.f, 6.f, 0,
                          [el](float v) { el->set_decimals(static_cast<int>(v)); });
     }
+
+    add_toggle_row("Ховати, коли канал мовчить (HIDE_IF_NO_DATA)",
+                   el->hide_if_no_data(),
+                   [el](bool v) { el->set_hide_if_no_data(v); });
 
     // Годинник і дата станції — єдине місце, де їх можна виставити.
     const int ch = el->data_channel();

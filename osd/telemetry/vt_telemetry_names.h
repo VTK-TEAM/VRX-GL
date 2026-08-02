@@ -76,6 +76,7 @@ inline const char* vt_telemetry_channel_name(int id) {
         case VT_TLM_LOCAL_LOST_FRAMES: return "LOCAL_LOST_FRAMES";
         case VT_TLM_LOCAL_CLOCK: return "LOCAL_CLOCK";
         case VT_TLM_LOCAL_DATE: return "LOCAL_DATE";
+    case VT_TLM_LOCAL_DRIVE_FREE: return "LOCAL_DRIVE_FREE";
 
         case VT_TLM_RC_CH1: return "RC_CH1";
         case VT_TLM_RC_CH2: return "RC_CH2";

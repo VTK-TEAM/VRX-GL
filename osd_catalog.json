@@ -2382,6 +2382,20 @@
       "group": "Станція"
     },
     {
+      "display_name": "Станція: вільно на носії",
+      "key_prefix": "drive_free",
+      "group": "Станція",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 1,
+        "LABEL": "",
+        "DATACHANNEL": 213,
+        "DECIMALS": 1,
+        "UNITS": "GB",
+        "HIDE_IF_NO_DATA": true
+      }
+    },
+    {
       "display_name": "Станція: годинник (HH:MM)",
       "key_prefix": "clock",
       "group": "Станція",

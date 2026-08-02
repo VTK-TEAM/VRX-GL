@@ -118,6 +118,16 @@ public:
         json_["DECIMALS"] = v;
     }
 
+    // ХОВАТИ, КОЛИ КАНАЛ МОВЧИТЬ ("HIDE_IF_NO_DATA").
+    //
+    // Звичайна поведінка станції — прочерки на місці значення: воно мало
+    // б бути, але не дійшло, і про це треба знати. Але є канали, для яких
+    // мовчання означає не втрату, а відсутність самого предмета — вільне
+    // місце на носії, якого немає. Такий рядок краще прибрати з екрана,
+    // ніж лишати прочерки, які виглядають як несправність.
+    bool hide_if_no_data() const { return json_.value("HIDE_IF_NO_DATA", false); }
+    void set_hide_if_no_data(bool v) { json_["HIDE_IF_NO_DATA"] = v; }
+
     std::string meta() const { return json_.value("META", std::string("")); }
 
     // --- ENUM_SWITCH ---

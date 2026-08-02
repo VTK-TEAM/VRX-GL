@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 #include <ctime>
 #include "editor_app.h"
 #include "vt_telemetry_names.h"
@@ -418,6 +419,15 @@ void EditorApp::update_drag(int mouse_x, int mouse_y) {
     // set_position() і так клемпить у 0..1, тож рахуємо напряму.
     float nx = static_cast<float>((mouse_x - drag_offset_x_) - cr.x) / static_cast<float>(cr.w);
     float ny = static_cast<float>((mouse_y - drag_offset_y_) - cr.y) / static_cast<float>(cr.h);
+
+    // ПРИВʼЯЗКА ДО СІТКИ В 1%. Позиція нормована, тож крок однаковий по
+    // обох осях у частках екрана — а не в пікселях, які на 1920 і на 1366
+    // різні. Без неї два елементи в один стовпчик мишею не поставити:
+    // піксель канви це десь 0.0007 частки, і "рівно" виходило лише
+    // випадково. 1% на FullHD — 19 пікселів по горизонталі; дрібніше
+    // мишею однаково не поціляють, а рядок гліфів заввишки вдвічі більший.
+    nx = std::round(nx * 100.f) / 100.f;
+    ny = std::round(ny * 100.f) / 100.f;
     el->set_position(nx, ny);
 }
 

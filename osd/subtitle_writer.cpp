@@ -191,7 +191,8 @@ struct SubtitleWriter::Impl {
                            VT_TLM_LOCAL_H265_SHOWN_FPS, VT_TLM_LOCAL_DISPLAY_FPS,
                            VT_TLM_LOCAL_PHASE_LOCK, VT_TLM_LOCAL_LATENCY_MS,
                            VT_TLM_LOCAL_DROPPED_FPS, VT_TLM_LOCAL_LATE_FPS,
-                           VT_TLM_LOCAL_LOST_FRAMES}) {
+                           VT_TLM_LOCAL_LOST_FRAMES, VT_TLM_LOCAL_CLOCK,
+                           VT_TLM_LOCAL_DATE, VT_TLM_LOCAL_DRIVE_FREE}) {
             debug_channels.push_back({vt_telemetry_channel_name(ch), ch});
         }
         std::fprintf(stderr, "[субтитри] дебажних каналів %zu\n", debug_channels.size());

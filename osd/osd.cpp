@@ -186,6 +186,7 @@ struct Osd::Impl {
                 el.units = val.value("UNITS", "");
                 el.decimals = val.value("DECIMALS", 0);
                 el.value_format = val.value("FORMAT", "");
+                el.hide_if_no_data = val.value("HIDE_IF_NO_DATA", false);
 
                 const std::string meta = val.value("META", "");
                 if (meta == "RATE_HZ") el.channel_meta = OsdChannelMeta::RATE_HZ;
@@ -577,6 +578,16 @@ struct Osd::Impl {
         for (const auto& el : elements) {
             float x = el.l;
             const float y = el.t;
+
+            // ХОВАТИ, КОЛИ КАНАЛ МОВЧИТЬ — до розбору типу, а не всередині
+            // нього. Ховати треба ВЕСЬ елемент, разом із підписом: підпис
+            // без значення це "Носій:" у порожнечу, тобто рівно та сама
+            // ознака несправності, від якої прапорець і рятує. Тут же це
+            // працює однаково для VALUE, ENUM_SWITCH, BAR і HORIZON.
+            if (el.hide_if_no_data && el.data_channel >= 0) {
+                float probe = 0.f;
+                if (!fetch_value(el, &probe)) continue;
+            }
 
             switch (el.type) {
             case OsdElementType::LABEL:

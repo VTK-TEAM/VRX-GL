@@ -317,3 +317,4 @@ constexpr uint8_t VT_TLM_LOCAL_LOST_FRAMES     = 210; // кадрів, які м
 // заразом дає безкоштовне сортування.
 constexpr uint8_t VT_TLM_LOCAL_CLOCK           = 211; // секунд від опівночі, локальний час
 constexpr uint8_t VT_TLM_LOCAL_DATE            = 212; // дата як YYMMDD (260802 = 2 серпня 2026)
+constexpr uint8_t VT_TLM_LOCAL_DRIVE_FREE      = 213; // вільно на носії, ГБ
