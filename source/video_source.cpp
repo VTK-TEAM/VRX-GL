@@ -819,6 +819,12 @@ void VideoSource::decode_latency(double* mn, double* avg, double* mx) const {
 }
 
 bool VideoSource::has_signal() const { return impl_->signal_ok(); }
+
+float VideoSource::frame_aspect() const {
+    const int w = impl_->fw.load(std::memory_order_relaxed);
+    const int h = impl_->fh.load(std::memory_order_relaxed);
+    return (w > 0 && h > 0) ? float(w) / float(h) : 0.f;
+}
 int VideoSource::frame_width() const { return impl_->fw.load(std::memory_order_relaxed); }
 int VideoSource::frame_height() const { return impl_->fh.load(std::memory_order_relaxed); }
 

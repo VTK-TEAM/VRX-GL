@@ -121,15 +121,18 @@ struct Pointer::Impl {
         auto next_scan = std::chrono::steady_clock::now() + std::chrono::seconds(1);
 
         while (running.load(std::memory_order_relaxed)) {
-            // Періодичне досканування: гаряче підключення миші й
-            // від'єднання (мертві fd прибираються нижче за POLLHUP).
-            const auto now_tp = std::chrono::steady_clock::now();
-            if (now_tp >= next_scan) {
-                next_scan = now_tp + std::chrono::seconds(1);
-                if (scan_once(false) > 0) rebuild_pfds();
-            }
-
+            // Досканування — ЛИШЕ КОЛИ МИШІ НЕМАЄ. scan_once() відкриває й
+            // опитує ioctl'ами всі /dev/input/* — це десятки мілісекунд, і
+            // на цей час потік НЕ ЧИТАЄ подій: курсор завмирав рівно на
+            // секунду (період скану), а кліки прилітали пачкою після.
+            // Поки миша працює, її від'єднання ловить POLLHUP нижче, тож
+            // сканувати нема чого — і читання подій ніщо не перериває.
             if (pfds.empty()) {
+                const auto now_tp = std::chrono::steady_clock::now();
+                if (now_tp >= next_scan) {
+                    next_scan = now_tp + std::chrono::seconds(1);
+                    if (scan_once(false) > 0) rebuild_pfds();
+                }
                 std::this_thread::sleep_for(std::chrono::milliseconds(200));
                 continue;
             }
@@ -152,8 +155,9 @@ struct Pointer::Impl {
                 continue;
             }
 
-            int dx = 0, dy = 0;
+            int dx = 0, dy = 0, dwheel = 0;
             bool btn_changed = false, btn_down = false;
+            bool rbtn_changed = false, rbtn_down = false;
 
             for (auto& p : pfds) {
                 if (!(p.revents & POLLIN)) continue;
@@ -164,16 +168,21 @@ struct Pointer::Impl {
                     if (ev[i].type == EV_REL) {
                         if (ev[i].code == REL_X) dx += ev[i].value;
                         else if (ev[i].code == REL_Y) dy += ev[i].value;
+                        else if (ev[i].code == REL_WHEEL) dwheel += ev[i].value;
                     } else if (ev[i].type == EV_KEY && ev[i].code == BTN_LEFT) {
                         btn_changed = true;
                         btn_down = ev[i].value != 0;
+                    } else if (ev[i].type == EV_KEY && ev[i].code == BTN_RIGHT) {
+                        rbtn_changed = true;
+                        rbtn_down = ev[i].value != 0;
                     }
                 }
             }
 
-            if (!dx && !dy && !btn_changed) continue;
+            if (!dx && !dy && !dwheel && !btn_changed && !rbtn_changed) continue;
 
             std::lock_guard<std::mutex> lk(mtx);
+            st.wheel += dwheel;
             if (w > 0 && h > 0) {
                 st.x += (int)(dx * cfg.speed);
                 st.y += (int)(dy * cfg.speed);
@@ -187,6 +196,10 @@ struct Pointer::Impl {
                 // подвійне спрацювання на одному кліку — класика.
                 if (btn_down && !st.left) st.clicks++;
                 st.left = btn_down;
+            }
+            if (rbtn_changed) {
+                if (rbtn_down && !st.right) st.rclicks++;
+                st.right = rbtn_down;
             }
         }
     }

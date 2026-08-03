@@ -165,6 +165,10 @@ public:
     // розкладка має знати, скільки джерел живі прямо зараз.
     virtual bool has_signal() const = 0;
 
+    // Пропорція ВИДИМОГО кадру (ширина/висота). 0, якщо ще невідома.
+    // Потрібна редактору екранів: аспект-лок вікна й hit-тест курсора.
+    virtual float frame_aspect() const { return 0.f; }
+
 protected:
     FrameSource() = default;
 };

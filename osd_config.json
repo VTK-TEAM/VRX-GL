@@ -250,7 +250,7 @@
       "L": 0.0,
       "LABEL": "<fpv_battery>",
       "S": 1,
-      "T": 0.0,
+      "T": 0.03999999910593033,
       "UNITS": "V"
     },
     "drone_current_display": {
@@ -260,7 +260,7 @@
       "L": 0.0,
       "LABEL": "<fpv_current>",
       "S": 1,
-      "T": 0.029999999329447746,
+      "T": 0.07000000029802322,
       "UNITS": "A"
     },
     "dropped_fps_display": {
@@ -297,7 +297,7 @@
       "L": 0.0,
       "LABEL": "<current_amperage>",
       "S": 1,
-      "T": 0.05999999865889549,
+      "T": 0.10000000149011612,
       "TYPE": "VALUE",
       "UNITS": "G"
     },

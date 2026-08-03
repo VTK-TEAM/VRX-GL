@@ -14,3 +14,8 @@ tools/provision_key
 # python bytecode
 tools/__pycache__/
 *.pyc
+
+# альтернативні каталоги збірки
+build-*/
+# рантайм-стан пресетів екранів (код генерує дефолти)
+screen*.json

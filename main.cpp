@@ -20,6 +20,7 @@
 // main НІЧИМ не керує покадрово: кожна підсистема має власний потік і
 // власний темп. Тут лише ініціалізація, запуск і зупинка.
 
+#include "build_config.h"
 #include "control/layout_control.hpp"
 #include "control/phase_controller.hpp"
 #include "license/license_gate.hpp"
@@ -37,6 +38,7 @@
 #include "source/mjpeg_source.hpp"
 #include "ui/pointer.hpp"
 #include "ui/screen_ui.hpp"
+#include "ui/screen_presets.hpp"
 
 #include <gst/gst.h>
 
@@ -235,9 +237,15 @@ int main(int argc, char** argv) {
     //
     // Ціна, про яку варто пам'ятати: на RK3588 апаратний декодер один на
     // всіх, і другий mppvideodec ділить із першим той самий mpp_service.
+    // РЕЖИМ ОДНОГО КАНАЛУ (build_config.h): лише основний на весь екран.
+    // Вторинні джерела лишаються null — а всі споживачі це вже вміють.
+    constexpr bool kSingleChannel = VRX_SINGLE_CHANNEL;
+
     vrx::source::VideoSource::Config pip_cfg;
     pip_cfg.udp_port = 5001;
-    auto pip_src = std::make_shared<vrx::source::MjpegSource>("pip", pip_cfg);
+    std::shared_ptr<vrx::source::MjpegSource> pip_src;
+    if (!kSingleChannel)
+        pip_src = std::make_shared<vrx::source::MjpegSource>("pip", pip_cfg);
 
     // ТИПОВА РОЗКЛАДКА. Діє, поки керування з телеметрії мовчить, тобто
     // одразу після ввімкнення й на станції, якій ніхто нічого не шле.
@@ -257,7 +265,7 @@ int main(int argc, char** argv) {
     pip_default.w = 0.30f; pip_default.h = 0.30f;
     pip_default.anchor = vrx::layout::Anchor::TopRight;
     pip_default.z = 1;                                  // поверх основного
-    pip_src->set_placement(pip_default);
+    if (pip_src) pip_src->set_placement(pip_default);
 
     // ТРЕТІЙ ПОТІК — ЛОКАЛЬНИЙ ЗАХВАТ (MS2106) по V4L2.
     //
@@ -290,22 +298,23 @@ int main(int argc, char** argv) {
     cap_default.w = 0.30f; cap_default.h = 0.30f;
     cap_default.anchor = vrx::layout::Anchor::BottomRight;
     cap_default.z = 2;                                  // поверх обох мережевих
-    if (const char* dev = std::getenv("VRX_CAPTURE_DEV")) {
-        if (dev[0]) {
-            vrx::source::VideoSource::Config cap_cfg;
-            cap_cfg.udp_port = kCapPort;
-            cap_cfg.multicast_addr = kCapGroup;
-            cap_src = std::make_shared<vrx::source::MjpegSource>("capture", cap_cfg);
-            cap_src->set_placement(cap_default);
-            std::printf("Локальний захват: релей -> %s:%d (loopback)\n", kCapGroup, kCapPort);
-        }
+    // Шлях пристрою потрібен лише як ПРАПОРЕЦЬ "захват увімкнено" (сам
+    // пристрій тримає релей); станція читає готовий потік із loopback.
+    const char* cap_dev = kSingleChannel ? nullptr : std::getenv("VRX_CAPTURE_DEV");
+    if (cap_dev && cap_dev[0]) {
+        vrx::source::VideoSource::Config cap_cfg;
+        cap_cfg.udp_port = kCapPort;
+        cap_cfg.multicast_addr = kCapGroup;
+        cap_src = std::make_shared<vrx::source::MjpegSource>("capture", cap_cfg);
+        cap_src->set_placement(cap_default);
+        std::printf("Локальний захват: релей -> %s:%d (loopback)\n", kCapGroup, kCapPort);
     }
 
     main_src->start();
-    pip_src->start();
+    if (pip_src) pip_src->start();
     if (cap_src) cap_src->start();
     renderer.add_source(main_src);
-    renderer.add_source(pip_src);
+    if (pip_src) renderer.add_source(pip_src);
     if (cap_src) renderer.add_source(cap_src);
     std::printf("Джерел зареєстровано: %d\n", renderer.source_count());
 
@@ -331,9 +340,41 @@ int main(int argc, char** argv) {
     // випадково пересунути чи видалити її не має бути можливості.
     vrx::ui::Pointer pointer;
     pointer.start();
+
+    // ЕКРАНИ-ПРЕСЕТИ: три збережені розкладки відео-вікон, редаговані
+    // мишею (перетяг + колесо), перемикання каналом 15 (по зміні) або
+    // кнопками 1/2/3 зліва вгорі. Єдиний власник геометрії вікон — тому
+    // керування розкладкою з телеметрії (LayoutControl) вимкнено.
+    //
+    // У режимі одного каналу цього немає взагалі: основний і так на весь
+    // екран, а редагувати/перемикати нема чого.
+    if (!kSingleChannel) {
+        auto screen_presets = std::make_shared<vrx::ui::ScreenPresets>(
+            vrx::ui::ScreenPresets::Config{});
+        {
+            vrx::ui::ScreenPresets::Window w;
+            w.name = "main"; w.source = main_src; w.fallback = main_default;
+            screen_presets->add_window(std::move(w));
+        }
+        if (pip_src) {
+            vrx::ui::ScreenPresets::Window w;
+            w.name = "pip"; w.source = pip_src; w.fallback = pip_default;
+            screen_presets->add_window(std::move(w));
+        }
+        if (cap_src) {
+            vrx::ui::ScreenPresets::Window w;
+            w.name = "capture"; w.source = cap_src; w.fallback = cap_default;
+            screen_presets->add_window(std::move(w));
+        }
+        screen_presets->attach(&pointer);
+        screen_presets->set_telemetry(osd ? &osd->storage() : nullptr);
+        screen_presets->start();
+        renderer.add_overlay(screen_presets);   // під курсором
+    }
+
     auto screen_ui = std::make_shared<vrx::ui::ScreenUi>(vrx::ui::ScreenUi::Config{});
     screen_ui->attach(&pointer);
-    renderer.add_overlay(screen_ui);
+    renderer.add_overlay(screen_ui);         // курсор і кнопка редактора — зверху
 
     // Фазове автопідстроювання. Веде ЧАСТОТУ камери так, щоб прихід
     // кадру стояв трохи раніше за опит рендерера — настільки раніше,
@@ -375,7 +416,6 @@ int main(int argc, char** argv) {
     // тягне новий .ass, зупинка запису їх закриває.
     std::unique_ptr<vrx::osd::SubtitleWriter> subs;
     std::unique_ptr<vrx::osd::LocalChannels> local_ch;
-    std::unique_ptr<vrx::control::LayoutControl> layout_ctl;
     if (osd) {
         vrx::osd::SubtitleWriter::Config sub_cfg;
         // PlayRes має відповідати ЗАПИСАНОМУ відео, а не екрана: плеєр
@@ -394,40 +434,9 @@ int main(int argc, char** argv) {
         local_ch->start(osd->storage(), display, renderer, phase,
                         recorder, storage, main_src, pip_src, cap_src);
 
-        // Розкладка з телеметрії. Окремого каналу керування свідомо
-        // немає: телеметрія вже прокладена, вже з CRC і вже перевірена
-        // роботою, а другий канал був би другим місцем, яке ламається.
-        // Типова розкладка вище лишається чинною, поки керування мовчить.
-        layout_ctl = std::make_unique<vrx::control::LayoutControl>(
-            vrx::control::LayoutControl::Config{});
-        {
-            vrx::control::LayoutControl::Bound b;
-            b.source = main_src; b.name = "основний";
-            b.ch_w = VT_TLM_LAYOUT_MAIN_W; b.ch_h = VT_TLM_LAYOUT_MAIN_H;
-            b.ch_x = VT_TLM_LAYOUT_MAIN_X; b.ch_y = VT_TLM_LAYOUT_MAIN_Y;
-            b.ch_anchor = VT_TLM_LAYOUT_MAIN_ANCHOR;
-            b.fallback = main_default;
-            layout_ctl->bind(std::move(b));
-        }
-        {
-            vrx::control::LayoutControl::Bound b;
-            b.source = pip_src; b.name = "PiP";
-            b.ch_w = VT_TLM_LAYOUT_PIP_W; b.ch_h = VT_TLM_LAYOUT_PIP_H;
-            b.ch_x = VT_TLM_LAYOUT_PIP_X; b.ch_y = VT_TLM_LAYOUT_PIP_Y;
-            b.ch_anchor = VT_TLM_LAYOUT_PIP_ANCHOR;
-            b.fallback = pip_default;
-            layout_ctl->bind(std::move(b));
-        }
-        if (cap_src) {
-            vrx::control::LayoutControl::Bound b;
-            b.source = cap_src; b.name = "захват";
-            b.ch_w = VT_TLM_LAYOUT_CAP_W; b.ch_h = VT_TLM_LAYOUT_CAP_H;
-            b.ch_x = VT_TLM_LAYOUT_CAP_X; b.ch_y = VT_TLM_LAYOUT_CAP_Y;
-            b.ch_anchor = VT_TLM_LAYOUT_CAP_ANCHOR;
-            b.fallback = cap_default;
-            layout_ctl->bind(std::move(b));
-        }
-        layout_ctl->start(osd->storage());
+        // Розкладку вікон тепер тримає ScreenPresets (вище): 3 пресети,
+        // редаговані мишею, перемикання каналом 15/кнопками. Старий
+        // LayoutControl з телеметрії 150..164 прибрано — авторитет один.
 
         subs = std::make_unique<vrx::osd::SubtitleWriter>(sub_cfg);
         if (kRecordEnabled && subs->init()) {
@@ -449,7 +458,7 @@ int main(int argc, char** argv) {
     rec2_cfg.udp_port = pip_cfg.udp_port;
     rec2_cfg.payload_type = pip_cfg.payload_type;
     vrx::record::Recorder recorder2(rec2_cfg, storage);
-    if (kRecordEnabled) recorder2.start();
+    if (kRecordEnabled && pip_src) recorder2.start();   // немає PiP — нема чого писати
 
     // ТРЕТІЙ РЕКОРДЕР — захват. Копія другого, інший порт: читає той самий
     // бродкаст релею, що й показ (бродкаст ядро копіює ВСІМ сокетам на
@@ -483,9 +492,9 @@ int main(int argc, char** argv) {
     // — порт назад, напис прибираємо. Порт щоразу новий і випадковий, щоб не
     // було сталого "магічного" числа, за яким саботаж легко впізнати.
     //
-    // TODO: третій потік (захват) саботаж поки НЕ чіпає. Тепер це звичайний
-    // MjpegSource на порту релею — досить додати cap_src->set_udp_port у блок
-    // нижче, як для main/pip. Лишив на потім.
+    // Усі три канали й усі три рекордери — синхронно. Захват читає loopback-
+    // групу релею: перемкнувши його udpsrc на "лівий" порт, він перестає
+    // отримувати з групи (релей шле на 5002), тож застигає так само.
     std::mt19937 rng(
         (unsigned)std::chrono::steady_clock::now().time_since_epoch().count());
     bool sab_bad = false;
@@ -506,16 +515,19 @@ int main(int argc, char** argv) {
                 // синхронно.
                 const int bad_main = 20000 + (int)(rng() % 20000);  // 20000..39999
                 const int bad_pip  = 40000 + (int)(rng() % 20000);  // 40000..59999
+                const int bad_cap  = 60000 + (int)(rng() % 5000);   // 60000..64999
                 main_src->set_udp_port(bad_main);
-                pip_src->set_udp_port(bad_pip);
                 recorder.set_udp_port(bad_main);
-                recorder2.set_udp_port(bad_pip);
+                if (pip_src) { pip_src->set_udp_port(bad_pip); recorder2.set_udp_port(bad_pip); }
+                if (cap_src) { cap_src->set_udp_port(bad_cap);
+                    if (recorder3) recorder3->set_udp_port(bad_cap); }
                 if (osd) osd->set_notice("SD CARD ERROR  E-19");
             } else {
                 main_src->set_udp_port(h265_cfg.udp_port);      // назад на робочі
-                pip_src->set_udp_port(pip_cfg.udp_port);
                 recorder.set_udp_port(h265_cfg.udp_port);
-                recorder2.set_udp_port(pip_cfg.udp_port);
+                if (pip_src) { pip_src->set_udp_port(pip_cfg.udp_port); recorder2.set_udp_port(pip_cfg.udp_port); }
+                if (cap_src) { cap_src->set_udp_port(kCapPort);
+                    if (recorder3) recorder3->set_udp_port(kCapPort); }
                 if (osd) osd->set_notice("");
             }
             sab_flip = std::chrono::steady_clock::now() + std::chrono::seconds(5);
@@ -637,7 +649,7 @@ int main(int argc, char** argv) {
                         (unsigned long long)rs.step_gap,
                         rs.step_min_ms, rs.step_max_ms);
         }
-        {
+        if (pip_src) {
             auto ps2 = pip_src->stats();
             std::printf("          КАНАЛ 2 (порт %d): %dx%d | нових %llu, повтор %llu, дроп %llu\n",
                         pip_cfg.udp_port, pip_src->frame_width(), pip_src->frame_height(),
@@ -705,7 +717,7 @@ int main(int argc, char** argv) {
     phase.stop();
     renderer.stop();
     main_src->stop();
-    pip_src->stop();
+    if (pip_src) pip_src->stop();
     if (cap_src) cap_src->stop();
 
     auto ds = display.stats();

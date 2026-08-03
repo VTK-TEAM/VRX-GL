@@ -45,6 +45,7 @@ add_executable(vrx_gl
     control/layout_control.cpp
     ui/pointer.cpp
     ui/screen_ui.cpp
+    ui/screen_presets.cpp
     diag/link_monitor.cpp
     record/storage.cpp
     record/recorder.cpp
