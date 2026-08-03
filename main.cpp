@@ -407,6 +407,33 @@ int main(int argc, char** argv) {
     vrx::record::Recorder recorder(rec_cfg, storage);
     if (kRecordEnabled) recorder.start();
 
+    // Кожен канал пишеться СВОЇМ рекордером у свій файл: окремий потік,
+    // окремий пайплайн, окремий udpsrc. Один канал може зникнути, а
+    // другий продовжить писати, не помітивши. Створюємо їх ТУТ, до
+    // local-каналів: індикатор запису (канал 200) має бачити всі три, бо
+    // "пише" — це коли пише хоч один, а не лише основний.
+    vrx::record::Recorder::Config rec2_cfg;
+    rec2_cfg.name = "pip";
+    rec2_cfg.codec = vrx::record::Recorder::Codec::MJPEG;
+    rec2_cfg.udp_port = pip_cfg.udp_port;
+    rec2_cfg.payload_type = pip_cfg.payload_type;
+    vrx::record::Recorder recorder2(rec2_cfg, storage);
+    if (kRecordEnabled && pip_src) recorder2.start();   // немає PiP — нема чого писати
+
+    // ТРЕТІЙ РЕКОРДЕР — захват. Копія другого, інший порт: читає той самий
+    // бродкаст релею, що й показ (бродкаст ядро копіює ВСІМ сокетам на
+    // порту — і показу, і сюди, і пробі). Незалежний: свій udpsrc, свій файл.
+    std::unique_ptr<vrx::record::Recorder> recorder3;
+    if (cap_src) {
+        vrx::record::Recorder::Config rec3_cfg;
+        rec3_cfg.name = "capture";
+        rec3_cfg.codec = vrx::record::Recorder::Codec::MJPEG;
+        rec3_cfg.udp_port = kCapPort;
+        rec3_cfg.multicast_addr = kCapGroup;
+        recorder3 = std::make_unique<vrx::record::Recorder>(rec3_cfg, storage);
+        if (kRecordEnabled) recorder3->start();
+    }
+
     // Субтитри поруч із записаним відео: та сама телеметрія й той самий
     // osd_config.json, тож у плеєрі показання стоять там же, де стояли
     // на екрані. Власний потік — усе, що чіпає знімний носій, живе
@@ -432,7 +459,8 @@ int main(int argc, char** argv) {
         local_ch = std::make_unique<vrx::osd::LocalChannels>(
             vrx::osd::LocalChannels::Config{});
         local_ch->start(osd->storage(), display, renderer, phase,
-                        recorder, storage, main_src, pip_src, cap_src);
+                        recorder, storage, main_src, pip_src, cap_src,
+                        &recorder2, recorder3.get());
 
         // Розкладку вікон тепер тримає ScreenPresets (вище): 3 пресети,
         // редаговані мишею, перемикання каналом 15/кнопками. Старий
@@ -447,31 +475,6 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "[main] субтитри не піднялись, запис іде без них\n");
             subs.reset();
         }
-    }
-
-    // Кожен канал пишеться СВОЇМ рекордером у свій файл: окремий потік,
-    // окремий пайплайн, окремий udpsrc. Один канал може зникнути, а
-    // другий продовжить писати, не помітивши.
-    vrx::record::Recorder::Config rec2_cfg;
-    rec2_cfg.name = "pip";
-    rec2_cfg.codec = vrx::record::Recorder::Codec::MJPEG;
-    rec2_cfg.udp_port = pip_cfg.udp_port;
-    rec2_cfg.payload_type = pip_cfg.payload_type;
-    vrx::record::Recorder recorder2(rec2_cfg, storage);
-    if (kRecordEnabled && pip_src) recorder2.start();   // немає PiP — нема чого писати
-
-    // ТРЕТІЙ РЕКОРДЕР — захват. Копія другого, інший порт: читає той самий
-    // бродкаст релею, що й показ (бродкаст ядро копіює ВСІМ сокетам на
-    // порту — і показу, і сюди, і пробі). Незалежний: свій udpsrc, свій файл.
-    std::unique_ptr<vrx::record::Recorder> recorder3;
-    if (cap_src) {
-        vrx::record::Recorder::Config rec3_cfg;
-        rec3_cfg.name = "capture";
-        rec3_cfg.codec = vrx::record::Recorder::Codec::MJPEG;
-        rec3_cfg.udp_port = kCapPort;
-        rec3_cfg.multicast_addr = kCapGroup;
-        recorder3 = std::make_unique<vrx::record::Recorder>(rec3_cfg, storage);
-        if (kRecordEnabled) recorder3->start();
     }
 
     // Спостерігач лінка. Розрізняє два випадки, які по кадрах виглядають

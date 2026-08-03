@@ -20,6 +20,8 @@ struct LocalChannels::Impl {
     const render::GlRenderer* renderer = nullptr;
     const control::PhaseController* phase = nullptr;
     const record::Recorder* rec = nullptr;
+    const record::Recorder* rec_pip = nullptr;   // вторинні — для індикатора 200
+    const record::Recorder* rec_cap = nullptr;
     const record::Storage* drive = nullptr;
     std::shared_ptr<source::FrameSource> h265;
     std::shared_ptr<source::FrameSource> mjpeg;
@@ -78,9 +80,15 @@ struct LocalChannels::Impl {
         // розрізняє їх через ENUM_SWITCH.
         {
             const auto ds = drive->state();
+            // "Пише" — це коли активний БУДЬ-ЯКИЙ рекордер, а не лише
+            // основний: основне джерело може бути вимкнене, а захват іти,
+            // і пілот має бачити, що на носій щось лягає.
+            const bool any_rec = rec->stats().active
+                || (rec_pip && rec_pip->stats().active)
+                || (rec_cap && rec_cap->stats().active);
             int state = 2;
-            if (!ds.usable()) state = 0;
-            else if (rec->stats().active) state = 1;
+            if (any_rec) state = 1;          // пише хоч один
+            else if (!ds.usable()) state = 0; // носія немає й ніхто не пише
             storage->set_value(VT_TLM_LOCAL_RECORDING_STATE, (float)state);
 
             // --- 213: скільки ще влізе на носій, ГіБ ---
@@ -288,13 +296,17 @@ bool LocalChannels::start(VtTelemetryStorage& storage,
                           const record::Storage& drive,
                           std::shared_ptr<source::FrameSource> h265,
                           std::shared_ptr<source::FrameSource> mjpeg,
-                          std::shared_ptr<source::FrameSource> capture) {
+                          std::shared_ptr<source::FrameSource> capture,
+                          const record::Recorder* rec_pip,
+                          const record::Recorder* rec_cap) {
     if (impl_->running.load()) return true;
     impl_->storage = &storage;
     impl_->display = &display;
     impl_->renderer = &renderer;
     impl_->phase = &phase;
     impl_->rec = &rec;
+    impl_->rec_pip = rec_pip;
+    impl_->rec_cap = rec_cap;
     impl_->drive = &drive;
     impl_->h265 = std::move(h265);
     impl_->mjpeg = std::move(mjpeg);

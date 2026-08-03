@@ -50,6 +50,7 @@ add_executable(vrx_gl
     record/storage.cpp
     record/recorder.cpp
     osd/osd.cpp
+    osd/osd_version.cpp
     osd/subtitle_writer.cpp
     osd/local_channels.cpp
     osd/stb_image_impl.cpp
@@ -62,6 +63,7 @@ add_executable(vrx_gl
 
 target_include_directories(vrx_gl PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_BINARY_DIR}          # тут лежить згенерований version.h
     ${DRM_INCLUDE_DIRS}
     ${GBM_INCLUDE_DIRS}
     ${EGL_INCLUDE_DIRS}
@@ -95,6 +97,40 @@ target_compile_options(vrx_gl PRIVATE
     ${GLES2_CFLAGS_OTHER}
     ${GST_CFLAGS_OTHER}
 )
+
+# РЕЖИМ ОДНОГО КАНАЛУ — компіляційний, а не рантаймний. Той самий бінарник
+# vrx_gl, лише обрізаний: вторинні канали (PiP, захват), їхні рекордери й
+# система екранів-пресетів НЕ збираються й увімкнути їх нема як. Це збірка
+# під простий приймач — конфігурується один раз на девайс, і оновлення
+# лишається таким же, поки не переконфігурувати.
+#
+#   cmake -B build -DVRX_SINGLE_CHANNEL=ON      # однканальний девайс
+#   cmake -B build -DVRX_SINGLE_CHANNEL=OFF     # назад у повний
+#
+# Оголошено ТУТ, до цілі версії: генератор дописує 'S' у кінець версії під
+# однканальну збірку (V01.2767.0003S), тож мусить знати режим.
+option(VRX_SINGLE_CHANNEL "Однканальний режим (лише основний потік)" OFF)
+
+# ВЕРСІЯ ЗБІРКИ — Vyy.xxxx.bbbb(S), генерується на КОЖЕН білд.
+#   yy   стала (version/major.txt), xxxx днів від 2019-01-05,
+#   bbbb лічильник білдів (version/build_counter.txt, ++ щобілд),
+#   S    лише під VRX_SINGLE_CHANNEL — однканальна збірка.
+# Пише build/version.h (для бінарника) і version/version.txt (для
+# оновлювача). Ціль ALL і без OUTPUT — тобто завжди «застаріла» й біжить
+# щобілд; add_dependencies гарантує, що вона відпрацює до компіляції
+# osd_version.cpp, єдиного, хто version.h включає.
+add_custom_target(vrx_version ALL
+    BYPRODUCTS ${CMAKE_BINARY_DIR}/version.h
+    COMMAND bash ${CMAKE_SOURCE_DIR}/scripts/gen_version.sh
+            ${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR}/version.h $<BOOL:${VRX_SINGLE_CHANNEL}>
+    COMMENT "Версія збірки (Vyy.xxxx.bbbb)"
+    VERBATIM)
+add_dependencies(vrx_gl vrx_version)
+
+if(VRX_SINGLE_CHANNEL)
+    target_compile_definitions(vrx_gl PRIVATE VRX_SINGLE_CHANNEL=1)
+    message(STATUS "VRX: ОДНОКАНАЛЬНИЙ режим збірки — лише основний потік")
+endif()
 
 # Запускач для подвійного кліку. Двійковий навмисно: файловий менеджер
 # XFCE не виконує кліком ні .desktop у папці, ні шелл-скрипти — обидва

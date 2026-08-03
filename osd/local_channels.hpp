@@ -22,6 +22,8 @@
 // Канали (vt_telemetry_index.h, локальні >= 200):
 //
 //     200  RECORDING_STATE   0 немає носія / 1 пише / 2 носій є, не пише
+//                            "пише" = активний БУДЬ-ЯКИЙ рекордер (осн.,
+//                            PiP чи захват), а не лише основний
 //     201  LINE_LOSS         SFP_TX_POINT − SFP_RX_STATION, дБ
 //     202  H265_FPS          прийнято й декодовано основним каналом
 //     203  MJPEG_FPS         те саме для другого каналу
@@ -84,7 +86,12 @@ public:
                const record::Storage& drive,
                std::shared_ptr<source::FrameSource> h265,
                std::shared_ptr<source::FrameSource> mjpeg,
-               std::shared_ptr<source::FrameSource> capture = nullptr);
+               std::shared_ptr<source::FrameSource> capture = nullptr,
+               // Вторинні рекордери. Індикатор запису (200) показує "пише",
+               // якщо активний хоч один із трьох — інакше при вимкненому
+               // основному пілот бачив би "не пише", хоча захват іде.
+               const record::Recorder* rec_pip = nullptr,
+               const record::Recorder* rec_cap = nullptr);
 
     void stop();
 

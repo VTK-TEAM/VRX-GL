@@ -83,14 +83,25 @@ bool EditorApp::init_sdl() {
         SDL_SetWindowInputFocus(window_);
     }
 
-    renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    // СОФТВЕРНИЙ РЕНДЕРЕР НАВМИСНО. Редактор — конфіг-інструмент, не гра,
+    // і йому потрібні ПРАВИЛЬНІ кольори, а не швидкість. Акселерований
+    // бекенд на релізній машині (libmali GLES2 під голим X) плутав порядок
+    // каналів — картинка виходила з переставленими R/G. Софт рендерить
+    // блітами поверхонь, формат яких SDL знає точно, тож кольори однакові
+    // на будь-якому драйвері. Кадрів тут одиниці на дію — швидкості
+    // вистачає з головою. Акселерований лишаємо запасним, якщо софту раптом
+    // немає (не має статись).
+    renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_SOFTWARE);
     if (!renderer_) {
-        renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_SOFTWARE);
+        renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_ACCELERATED);
     }
     if (!renderer_) {
         std::fprintf(stderr, "SDL_CreateRenderer: %s\n", SDL_GetError());
         return false;
     }
+    SDL_RendererInfo ri;
+    if (SDL_GetRendererInfo(renderer_, &ri) == 0)
+        std::fprintf(stderr, "[редактор] рендерер: %s\n", ri.name);
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
 
     // UI-шрифт: спершу пробуємо той самий Inter, яким атлас-білдер

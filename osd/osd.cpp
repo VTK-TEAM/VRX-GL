@@ -12,6 +12,11 @@
 #include <fstream>
 
 namespace vrx::osd {
+
+// Рядок версії збірки. Означений в osd_version.cpp — єдиному файлі, що
+// включає згенерований version.h (щоб не перекомпілювати весь OSD щобілд).
+const char* build_version();
+
 namespace {
 
 // Ті самі константи, що в білдері атласу. Розмір кодується в старших
@@ -662,6 +667,32 @@ struct Osd::Impl {
                 if (sx < 0.f) sx = 0.f;
                 emit_label_or_icon(dl, msg, sx, 0.66f, kNoticeSize, fw, fh);
             }
+        }
+
+        // ВЕРСІЯ ЗБІРКИ — внизу справа, найдрібнішим розміром. НЕ через
+        // канал: рядок хардкодиться прямо в список квадів, тому в жодних
+        // osd-логах його немає. Ширину міряємо пробним проходом і
+        // притискаємо до правого краю; висоту гліфа беремо з '0' цього ж
+        // розміру, щоб сісти рівно на нижній край.
+        {
+            constexpr int kVerSize = 0;                // XS, найдрібніший
+            constexpr float kMargin = 0.004f;          // щоб не впритул до краю
+            const std::string ver = build_version();
+
+            render::DrawList probe;
+            const float w = emit_text(probe, ver, 0.f, 0.f, kVerSize, fw, fh);
+
+            float gh = 0.f;
+            if (const OsdGlyphInfo* g0 =
+                    find_glyph(static_cast<uint32_t>('0') + kVerSize * SIZE_STEP)) {
+                gh = g0->height * atlas_h * glyph_scale / fh;
+            }
+
+            float vx = 1.0f - w - kMargin;
+            if (vx < 0.f) vx = 0.f;
+            float vy = 1.0f - gh - kMargin;
+            if (vy < 0.f) vy = 0.f;
+            emit_text(dl, ver, vx, vy, kVerSize, fw, fh);
         }
 
         const double ms = (now_ns() - t0) / 1e6;

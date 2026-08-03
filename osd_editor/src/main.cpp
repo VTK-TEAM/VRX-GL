@@ -1,11 +1,11 @@
 // main.cpp — точка входу osd_editor.
 //
-// ЗАПУСК: cd ~/VRX && ./build/osd_editor [шлях_до_фото_фону.jpg]
+// ЗАПУСК: cd <корінь> && ./build/osd_editor   (без аргументів)
 //
-// atlas.png / osd_glyph_info.bin / osd_config.json / osd_catalog.json —
-// ЗАВЖДИ відносні шляхи від поточної директорії (CWD), той самий
-// принцип, що й у osd_atlas_builder.cpp: файли шукаються там, звідки
-// запущено бінарник, а НЕ там, де він фізично лежить на диску.
+// УСІ ресурси — atlas.png, osd_glyph_info.bin, osd_config.json,
+// osd_catalog.json і background.jpg — відносні шляхи від ПАПКИ ЗАПУСКУ
+// (CWD), а не від місця бінарника. Той самий принцип, що й у станції:
+// один каталог розгортання, усе поруч, жодних аргументів.
 #include "editor_app.h"
 #include <cstdio>
 #include <cstdlib>
@@ -47,6 +47,7 @@ void ensure_lightdm_running() {
 } // namespace
 
 int main(int argc, char** argv) {
+    (void)argc; (void)argv;   // аргументів немає — усе з папки запуску
     // ГРАФІЧНУ СЕСІЮ ПІДНІМАЄМО ЛИШЕ ДЛЯ X11.
     //
     // Раніше вона піднімалась завжди й безумовно — редактор жив на
@@ -73,18 +74,14 @@ int main(int argc, char** argv) {
         ensure_lightdm_running();
     }
 
-    std::string background_path = "osd_editor/src/background.jpg";
-    if (argc > 1) {
-        background_path = argv[1];
-    }
-
+    // Фон — background.jpg з папки запуску. Немає його — редактор працює
+    // без фону (суцільний колір), layout однаково редагується.
     osdedit::EditorApp app;
-    if (!app.init(background_path)) {
+    if (!app.init("background.jpg")) {
         std::fprintf(stderr,
             "\nНе вдалося запустити редактор.\n"
-            "Перевір, що поточна директорія — ~/VRX і в ній є:\n"
-            "  atlas.png, osd_glyph_info.bin, osd_config.json, osd_catalog.json\n"
-            "Приклад запуску: cd ~/VRX && ./build/osd_editor мій_політ.jpg\n");
+            "Перевір, що поточна директорія — корінь розгортання і в ній є:\n"
+            "  atlas.png, osd_glyph_info.bin, osd_config.json, osd_catalog.json\n");
         return 1;
     }
     app.run();

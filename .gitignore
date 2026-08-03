@@ -11,6 +11,10 @@ tools/vendor_ed25519_public.pem
 # провізійний SSH-ключ (приватний) — не комітити
 tools/provision_key
 
+# секретний ключ HMAC для підпису оновлень — тільки локально, НІКОЛИ в git
+# (той самий, що на станції в /etc/vrx-update.key)
+tools/update/vrx-update.key
+
 # python bytecode
 tools/__pycache__/
 *.pyc
@@ -19,3 +23,8 @@ tools/__pycache__/
 build-*/
 # рантайм-стан пресетів екранів (код генерує дефолти)
 screen*.json
+
+# версія збірки: лічильник і згенерований рядок — локальний стан машини
+# збірки (як build/). major.txt НАВПАКИ комітиться — він сталий і руками.
+version/build_counter.txt
+version/version.txt
