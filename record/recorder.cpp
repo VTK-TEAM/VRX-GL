@@ -5,6 +5,8 @@
 #include <gst/gst.h>
 
 #include <arpa/inet.h>
+#include <fcntl.h>
+#include <linux/falloc.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -70,6 +72,30 @@ struct Recorder::Impl {
     // Лічильники веде пад-проба, тобто потік GStreamer.
     std::atomic<uint64_t> file_bytes{0};
     std::atomic<int64_t> last_buffer_ms{0};
+
+    // РЕЗЕРВУВАННЯ МІСЦЯ ПІД ФАЙЛ: другий дескриптор того самого файлу,
+    // відкритий лише заради fallocate. Пише в файл, як і раніше, filesink
+    // своїм власним.
+    //
+    // Це не оптимізація, а умова того, що запис ВСТИГАЄ. Три канали
+    // пишуть одночасно, і на FAT кластери трьох файлів лягають упереміш
+    // по 32 КБ. Розкидане так записування дає ~3-4 МБ/с проти 13.8 МБ/с
+    // суцільного (заміряно на робочій флешці) — МЕНШЕ за потік даних
+    // ~4.2 МБ/с. Наслідок заміряно теж: брудні сторінки ростуть
+    // необмежено, syncfs у Storage не завершується десятки секунд і
+    // довше, а зупинка станції (перехід у редактор) чекала 3+ хвилини,
+    // поки ядро дожене чергу. З резервом суцільними шматками ті самі три
+    // потоки дають ~15 МБ/с — утричі вище за потік, і черга не росте.
+    //
+    // Саме KEEP_SIZE, а не звичайний режим: розмір файлу завжди дорівнює
+    // реально записаному, тож висмикнута флешка показує чесний файл без
+    // хвоста нулів (індексу в mkv немає — streamable). Зайві кластери за
+    // межею розміру ядро звільняє саме при закритті. Якщо ФС резервувати
+    // не вміє або місце скінчилось — пишемо без резерву, як раніше.
+    static constexpr uint64_t kReserveChunk    = 64ull * 1024 * 1024;
+    static constexpr uint64_t kReserveHeadroom = 16ull * 1024 * 1024;
+    int resv_fd = -1;
+    uint64_t reserved = 0;
 
     // Поки не пройшов перший опорний кадр, буфери відкидаються.
     std::atomic<bool> seen_keyframe{false};
@@ -275,6 +301,26 @@ struct Recorder::Impl {
         return GST_PAD_PROBE_OK;
     }
 
+    // Тримає резерв попереду записаного. Викликається щотіку циклу;
+    // поки запас не з'їдено — коштує атомарне читання й порівняння.
+    // Розмір беремо з лічильника проби, а не зі stat(): stat на щойно
+    // висмикнутій флешці висить у D-стані секунди (див. on_bytes).
+    void reserve_more() {
+        if (resv_fd < 0) return;
+        const uint64_t written = file_bytes.load(std::memory_order_relaxed);
+        if (reserved > written + kReserveHeadroom) return;
+
+        const uint64_t want = reserved + kReserveChunk;
+        if (::fallocate(resv_fd, FALLOC_FL_KEEP_SIZE, 0, (off_t)want) != 0) {
+            std::fprintf(stderr, "[запис %s] резерв не вдався (%s) — пишу без нього\n",
+                         cfg.name.c_str(), std::strerror(errno));
+            ::close(resv_fd);
+            resv_fd = -1;
+            return;
+        }
+        reserved = want;
+    }
+
     bool open_file() {
         const int64_t open_t0 = now_ms();
 
@@ -354,6 +400,17 @@ struct Recorder::Impl {
             std::fprintf(stderr, "[запис %s] не запустився\n", cfg.name.c_str());
             close_file(false, "пайплайн не запустився");
             return false;
+        }
+
+        // Резерв відкриваємо ПІСЛЯ старту пайплайна: filesink створює
+        // файл із O_TRUNC, і зроблене раніше резервування він би зніс.
+        resv_fd = ::open(path.c_str(), O_WRONLY | O_CLOEXEC);
+        reserved = 0;
+        if (resv_fd < 0) {
+            std::fprintf(stderr, "[запис %s] резерв: не відкрив файл (%s)\n",
+                         cfg.name.c_str(), std::strerror(errno));
+        } else {
+            reserve_more();
         }
 
         {
@@ -450,6 +507,12 @@ struct Recorder::Impl {
         gst_object_unref(pipeline);
         pipeline = nullptr;
 
+        // Резерв просто закриваємо: незаписані кластери за межею розміру
+        // ядро звільняє саме. ftruncate тут вимагав би fstat — звернення
+        // до носія рівно тоді, коли він може бути вже висмикнутий.
+        if (resv_fd >= 0) { ::close(resv_fd); resv_fd = -1; }
+        reserved = 0;
+
         const uint64_t wrote = file_bytes.load(std::memory_order_relaxed);
 
         // Кадрів так і не було — лишився самий заголовок муксера.
@@ -518,6 +581,7 @@ struct Recorder::Impl {
                 open_probe();
             }
             poll_probe();
+            reserve_more();     // тримаємо резерв попереду записаного
 
             const DriveState drive = storage.state();
 

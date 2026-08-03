@@ -114,6 +114,47 @@ static int find_root(char* out, size_t n) {
     return 0;
 }
 
+// ЗАПИСУВАННЯ НА НОСІЙ — БЕЗПЕРЕРВНО, А НЕ РИВКАМИ.
+//
+// Типові пороги ядра налаштовані під десктоп: почати фонове записування
+// лише коли брудних сторінок назбиралось ~10% RAM, а за віком — аж через
+// 30 секунд. Для стрім-запису на флешку це означало: дані копичаться в
+// пам'яті сотнями мегабайтів, syncfs у станції потім проштовхує їх одним
+// ривком десятки секунд, а зупинка станції (перехід у редактор) чекає,
+// поки потік у непереривному D-стані досидить у тому syncfs до кінця.
+// Заміряно на живій станції: 3 хв 9 с від кнопки до редактора; після
+// цього налаштування — 6 с.
+//
+// Ставимо: почати писати вже з 8 МБ бруду, вік сторінки до записування
+// 3 с, записувач прокидається 10 разів на секунду. Разом із резервуванням
+// місця в рекордері (fallocate, див. record/recorder.cpp) це тримає чергу
+// на рівні секунд, і гарантія "±5 с при висмикуванні" стає чесною.
+//
+// Чому тут, а не в /etc/sysctl.d: у системний розділ оновлення з флешки
+// не пише, а наглядач їде звичайним VRX-update і стартує першим, під
+// root. Значення глобальні для системи, але системний диск тут майже не
+// пише (логи на zram), тож зачепити нікого.
+static void tune_writeback(void) {
+    static const struct { const char* path; const char* val; } knobs[] = {
+        { "/proc/sys/vm/dirty_background_bytes",  "8388608" },
+        { "/proc/sys/vm/dirty_expire_centisecs",  "300" },
+        { "/proc/sys/vm/dirty_writeback_centisecs", "100" },
+    };
+    for (size_t i = 0; i < sizeof(knobs) / sizeof(knobs[0]); ++i) {
+        FILE* f = fopen(knobs[i].path, "w");
+        if (!f) {
+            fprintf(stderr, "[наглядач] не відкрив %s: %s\n",
+                    knobs[i].path, strerror(errno));
+            continue;
+        }
+        if (fputs(knobs[i].val, f) < 0) {
+            fprintf(stderr, "[наглядач] не записав %s: %s\n",
+                    knobs[i].path, strerror(errno));
+        }
+        fclose(f);
+    }
+}
+
 // Піднімає релей захвату у ФОНІ (не чекаємо його — він живе паралельно
 // станції). Нічого не робить, якщо релей не налаштований (немає камери).
 static void start_relay(void) {
@@ -232,6 +273,8 @@ int main(int argc, char** argv) {
         return 1;
     }
     fprintf(stderr, "[наглядач] корінь проєкту: %s\n", root);
+
+    tune_writeback();
 
     char station[PATH_MAX], editor[PATH_MAX];
     snprintf(station, sizeof(station), "%s/build/vrx_gl", root);
