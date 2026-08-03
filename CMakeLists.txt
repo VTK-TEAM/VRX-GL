@@ -132,11 +132,6 @@ if(VRX_SINGLE_CHANNEL)
     message(STATUS "VRX: ОДНОКАНАЛЬНИЙ режим збірки — лише основний потік")
 endif()
 
-# Запускач для подвійного кліку. Двійковий навмисно: файловий менеджер
-# XFCE не виконує кліком ні .desktop у папці, ні шелл-скрипти — обидва
-# відкриваються як текст. Двійковий файл виконує.
-add_executable(vrx_launcher scripts/launcher.c)
-
 # Наглядач: вирішує, що зараз на екрані — станція чи редактор.
 # Екрана сам не тримає, тож може бути єдиним, що стоїть в
 # автозапуску. Протокол зі станцією — код виходу.
@@ -146,11 +141,6 @@ add_executable(vrx_supervisor supervisor/supervisor.c)
 # жене MJPEG бродкастом; станція читає його як звичайну мережеву камеру.
 # Чистий V4L2 + сокети, без жодних залежностей проєкту.
 add_executable(uvc_relay relay/uvc_relay.c)
-set_target_properties(vrx_launcher PROPERTIES
-    OUTPUT_NAME "ЗАПУСТИТИ VRX-GL"
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-)
-
 # ---------------------------------------------------------------------
 # Редактор розкладки OSD
 #

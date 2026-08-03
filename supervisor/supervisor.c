@@ -281,10 +281,51 @@ int main(int argc, char** argv) {
             //
             // vt7 і :1 задані явно: наглядач може працювати з systemd, де
             // ні термінала, ні "поточної" консолі не існує.
-            char* ed_argv[] = {
-                (char*)"/usr/bin/xinit", editor, (char*)"--",
-                (char*)":1", (char*)"-nolisten", (char*)"tcp", (char*)"vt7", NULL
-            };
+            //
+            // -configdir <корінь>/xorg.conf.d — СВІЙ X-КОНФІГ, а не системний.
+            //
+            // Вендорський /etc/X11/xorg.conf.d вмикає glamor, а той поверх
+            // пропрієтарного libmali міняє місцями червоний із синім: у
+            // редакторі кнопка "+ додати" ставала червоною, "Вихід" синім.
+            // Своп сидить нижче за X-пам'ять, на копії текстури в буфер
+            // сканування, тому в самому редакторі виправити його неможливо.
+            //
+            // Конфіг береться з КОРЕНЯ СТАНЦІЇ, а не з /etc, свідомо: у
+            // системний розділ оновлення з флешки не пише (абсолютні шляхи
+            // і ".." воно відкидає навмисно), а корінь станції — пише. Тож
+            // фікс доїжджає до вже зашитих станцій звичайним VRX-update,
+            // без жодного лазіння в образ.
+            //
+            // Прапорець безумовний і не має стану, який може розійтись, але
+            // сам файл перевіряємо: станція зі старим оновленням його ще не
+            // має, і X із -configdir на порожнє місце підняв би 640x480
+            // замість екрана. Немає файла — йдемо як раніше, з системним
+            // конфігом: кольори будуть свопнуті, зате редактор працює.
+            //
+            // Пристрої вводу від цього не губляться: -configdir заміняє лише
+            // /etc/X11/xorg.conf.d, а правила libinput лежать у
+            // /usr/share/X11/xorg.conf.d і читаються далі.
+            char confdir[PATH_MAX], conffile[PATH_MAX];
+            snprintf(confdir, sizeof(confdir), "%s/xorg.conf.d", root);
+            snprintf(conffile, sizeof(conffile), "%s/20-modesetting.conf", confdir);
+
+            char* ed_argv[10];
+            int n = 0;
+            ed_argv[n++] = (char*)"/usr/bin/xinit";
+            ed_argv[n++] = editor;
+            ed_argv[n++] = (char*)"--";
+            ed_argv[n++] = (char*)":1";
+            ed_argv[n++] = (char*)"-nolisten";
+            ed_argv[n++] = (char*)"tcp";
+            ed_argv[n++] = (char*)"vt7";
+            if (access(conffile, R_OK) == 0) {
+                ed_argv[n++] = (char*)"-configdir";
+                ed_argv[n++] = confdir;
+            } else {
+                fprintf(stderr, "[наглядач] немає %s — X піде з системним"
+                                " конфігом (кольори можуть бути свопнуті)\n", conffile);
+            }
+            ed_argv[n] = NULL;
             char* ed_env[] = { (char*)"VRX_EDITOR_FULLSCREEN=1", NULL };
             run_and_wait("редактор розкладки", ed_argv, ed_env);
             // Чим би він не закінчився — вертаємо станцію. Редактор, що
