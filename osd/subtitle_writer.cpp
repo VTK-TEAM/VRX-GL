@@ -33,6 +33,53 @@ std::string format_ass_time(double seconds) {
     return buf;
 }
 
+// ЧАС І ДАТА — ЛЮДЯНО, А НЕ ЧИСЛОМ.
+//
+// У телеметрії вони їдуть звичайними числами: час доби — секундами від
+// опівночі, дата — як YYMMDD, політний час — секундами. Надруковані через
+// "%.*f" вони перетворюються на 7325, 260804 і 125 — при розборі польоту
+// такий рядок не читається взагалі, і саме це виглядало як "рандомні
+// цифри".
+//
+// Формат вирішує САМ КАНАЛ, а не розкладка. Причина в тому, що дебажний
+// дамп розкладки не має зовсім — він перебирає всі канали поспіль, — а
+// читати його треба так само. Прив'язка до розкладки лікувала б лише
+// половину файлів.
+//
+// Повертає false, якщо канал не часовий АБО число не схоже на час: тоді
+// друкуємо як було. Мовчки підмінити зіпсоване значення красивим
+// "00:00:00" гірше, ніж показати його як є — при розборі саме такі
+// аномалії й шукають.
+bool format_time_channel(int channel, float raw, char* out, size_t n) {
+    const long v = (long)(raw + 0.5f);
+    switch (channel) {
+        case VT_TLM_FLIGHT_TIME: {              // накопичено в армі, секунди
+            if (v < 0) return false;
+            if (v >= 3600) {
+                std::snprintf(out, n, "%ld:%02ld:%02ld", v / 3600, (v / 60) % 60, v % 60);
+            } else {
+                std::snprintf(out, n, "%02ld:%02ld", v / 60, v % 60);
+            }
+            return true;
+        }
+        case VT_TLM_LOCAL_CLOCK: {              // секунд від опівночі
+            if (v < 0 || v >= 86400) return false;
+            std::snprintf(out, n, "%02ld:%02ld:%02ld", v / 3600, (v / 60) % 60, v % 60);
+            return true;
+        }
+        case VT_TLM_LOCAL_DATE: {               // YYMMDD, 260804 = 4 серпня 2026
+            const int yy = (int)(v / 10000);
+            const int mm = (int)((v / 100) % 100);
+            const int dd = (int)(v % 100);
+            if (v < 0 || yy > 99 || mm < 1 || mm > 12 || dd < 1 || dd > 31) return false;
+            std::snprintf(out, n, "20%02d-%02d-%02d", yy, mm, dd);
+            return true;
+        }
+        default:
+            return false;
+    }
+}
+
 // Шлях субтитрів із шляху відео: міняємо ".mkv" на суфікс. Якщо
 // розширення інше — просто дописуємо, щоб не втратити файл через
 // несподіване ім'я.
@@ -262,8 +309,11 @@ struct SubtitleWriter::Impl {
 
     // --- знімки ---
 
-    std::string value_of(const Element& e, bool* has) {
+    // is_time — значення надруковано як час/дата. Тоді одиниці до нього
+    // не дописуються: "02:02:05 с" читається як помилка, а не як час.
+    std::string value_of(const Element& e, bool* has, bool* is_time) {
         *has = false;
+        *is_time = false;
         if (e.channel < 0) return {};
 
         float raw = 0.f;
@@ -273,10 +323,15 @@ struct SubtitleWriter::Impl {
 
         *has = true;
         char buf[32];
+        // Явний формат розкладки має перевагу: його виставив користувач
+        // редактором, і перебивати його "розумнішим" виглядом не можна.
         if (e.value_format == "MM:SS") {
             long total = (long)(raw + 0.5f);
             if (total < 0) total = 0;
             std::snprintf(buf, sizeof(buf), "%02ld:%02ld", total / 60, total % 60);
+            *is_time = true;
+        } else if (format_time_channel(e.channel, raw, buf, sizeof(buf))) {
+            *is_time = true;
         } else {
             std::snprintf(buf, sizeof(buf), "%.*f", e.decimals, raw);
         }
@@ -287,14 +342,15 @@ struct SubtitleWriter::Impl {
         if (!layout_out.is_open()) return;
 
         for (const Element& e : elements) {
-            bool has = false;
-            const std::string value = trim_copy(strip_icon_tokens(value_of(e, &has)));
+            bool has = false, is_time = false;
+            const std::string value =
+                trim_copy(strip_icon_tokens(value_of(e, &has, &is_time)));
 
             std::ostringstream text;
             if (!e.label.empty()) text << e.label;
             if (!e.label.empty() && has && !value.empty()) text << ": ";
             if (has) text << value;
-            if (!e.units.empty()) text << e.units;
+            if (!e.units.empty() && !is_time) text << e.units;
 
             const std::string line = ass_escape(trim_copy(text.str()));
             if (line.empty()) continue;
@@ -317,9 +373,15 @@ struct SubtitleWriter::Impl {
             float raw = 0.f;
             uint32_t age = 0;
             char buf[128];
+            char val[32];
             if (storage->get_value((uint8_t)c.channel, &raw, &age)) {
-                std::snprintf(buf, sizeof(buf), "%3d %-24s %10.2f  %ums",
-                              c.channel, c.label.c_str(), raw, age);
+                if (format_time_channel(c.channel, raw, val, sizeof(val))) {
+                    std::snprintf(buf, sizeof(buf), "%3d %-24s %10s  %ums",
+                                  c.channel, c.label.c_str(), val, age);
+                } else {
+                    std::snprintf(buf, sizeof(buf), "%3d %-24s %10.2f  %ums",
+                                  c.channel, c.label.c_str(), raw, age);
+                }
             } else {
                 std::snprintf(buf, sizeof(buf), "%3d %-24s %10s",
                               c.channel, c.label.c_str(), "-");
