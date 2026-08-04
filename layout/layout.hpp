@@ -73,6 +73,18 @@ constexpr AnchorFactor anchor_factor(Anchor a) {
 // безглуздо, тобто добра межа для "щось не так".
 constexpr float kMinSize = 0.05f;
 
+// СТЕЛЯ РОЗМІРУ — ДВІ ПЛОЩІ ЕКРАНА, а не одна.
+//
+// Коробка більша за екран не є помилкою: це збільшення. Пілот наближає
+// основний канал, щоб роздивитись деталь, і засуває зайве за край —
+// показується та частина, яка лишилась на екрані. Доти стеля стояла на
+// 1.0, і збільшити картинку було неможливо в принципі.
+//
+// Дві, а не безмежність: при більшому зумі на екрані лишається менше
+// чверті кадру, і зорієнтуватись у ньому вже не виходить — а промахнутись
+// колесом на кілька клацань легко.
+constexpr float kMaxSize = 2.0f;
+
 struct Placement {
     // ТОЧКА, ДО ЯКОЇ КРІПИТЬСЯ ЯКІР, у частках екрана від верхнього
     // лівого кута. Не кут прямокутника: до чого саме прикладається ця
@@ -156,8 +168,8 @@ inline Placement fit_source(const Placement& r, float src_aspect, float screen_a
 inline Placement sanitize(Placement p) {
     if (!(p.w > kMinSize)) p.w = kMinSize;    // не (p.w <= kMin): ловить і NaN
     if (!(p.h > kMinSize)) p.h = kMinSize;
-    if (p.w > 1.0f) p.w = 1.0f;
-    if (p.h > 1.0f) p.h = 1.0f;
+    if (p.w > kMaxSize) p.w = kMaxSize;
+    if (p.h > kMaxSize) p.h = kMaxSize;
     if (!(p.x > -10.0f) || !(p.x < 10.0f)) p.x = 0.5f;   // NaN або дичина
     if (!(p.y > -10.0f) || !(p.y < 10.0f)) p.y = 0.5f;
     return p;

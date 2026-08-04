@@ -158,6 +158,7 @@ struct Pointer::Impl {
             int dx = 0, dy = 0, dwheel = 0;
             bool btn_changed = false, btn_down = false;
             bool rbtn_changed = false, rbtn_down = false;
+            bool mbtn_changed = false, mbtn_down = false;
 
             for (auto& p : pfds) {
                 if (!(p.revents & POLLIN)) continue;
@@ -175,11 +176,15 @@ struct Pointer::Impl {
                     } else if (ev[i].type == EV_KEY && ev[i].code == BTN_RIGHT) {
                         rbtn_changed = true;
                         rbtn_down = ev[i].value != 0;
+                    } else if (ev[i].type == EV_KEY && ev[i].code == BTN_MIDDLE) {
+                        mbtn_changed = true;
+                        mbtn_down = ev[i].value != 0;
                     }
                 }
             }
 
-            if (!dx && !dy && !dwheel && !btn_changed && !rbtn_changed) continue;
+            if (!dx && !dy && !dwheel && !btn_changed && !rbtn_changed
+                && !mbtn_changed) continue;
 
             std::lock_guard<std::mutex> lk(mtx);
             st.wheel += dwheel;
@@ -200,6 +205,10 @@ struct Pointer::Impl {
             if (rbtn_changed) {
                 if (rbtn_down && !st.right) st.rclicks++;
                 st.right = rbtn_down;
+            }
+            if (mbtn_changed) {
+                if (mbtn_down && !st.middle) st.mclicks++;
+                st.middle = mbtn_down;
             }
         }
     }

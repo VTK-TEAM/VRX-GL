@@ -127,6 +127,7 @@ struct ScreenPresets::Impl {
     // --- стан вводу (лише потік показу) ---
     uint64_t seen_clicks = 0;
     uint64_t seen_rclicks = 0;
+    uint64_t seen_mclicks = 0;
     int64_t seen_wheel = 0;
     bool was_left = false;
     int drag_win = -1;
@@ -224,16 +225,44 @@ struct ScreenPresets::Impl {
         return best;
     }
 
-    // Зсунути вікно так, щоб його прямокутник лишався в межах екрана
-    // (в екранних координатах, через move() з інверсією Y).
+    // Не дати вікну ПОВНІСТЮ піти за екран.
+    //
+    // Раніше прямокутник тримався в межах екрана цілком, і засунути його
+    // частину за край було неможливо. Це заважає рівно там, де воно
+    // потрібне: збільшену картинку доводиться зсувати, щоб дивитись на її
+    // край, а вікно, яке заступає потрібне, — прибирати вбік.
+    //
+    // Тепер за край можна засунути до kOffscreen від розміру вікна, і на
+    // екрані лишається принаймні решта. Межа саме на розмір ВІКНА, а не
+    // екрана: інакше велике вікно ховалося б повністю, а маленьке не
+    // зсувалося б майже нікуди.
+    static constexpr float kOffscreen = 0.70f;   // 70% дозволено за краєм
     void clamp_on_screen(size_t i) {
         Rect r = rect_of(i);
+        // Скільки має лишитись видимим по кожній осі.
+        const float keep_x = r.w * (1.f - kOffscreen);
+        const float keep_y = r.h * (1.f - kOffscreen);
+
         float dsx = 0.f, dsy = 0.f;
-        if (r.x < 0.f) dsx = -r.x;
-        else if (r.x + r.w > 1.f) dsx = 1.f - (r.x + r.w);
-        if (r.y < 0.f) dsy = -r.y;
-        else if (r.y + r.h > 1.f) dsy = 1.f - (r.y + r.h);
+        if (r.x + r.w < keep_x)      dsx = keep_x - (r.x + r.w);  // пішло вліво
+        else if (r.x > 1.f - keep_x) dsx = (1.f - keep_x) - r.x;  // пішло вправо
+        if (r.y + r.h < keep_y)      dsy = keep_y - (r.y + r.h);  // пішло вгору
+        else if (r.y > 1.f - keep_y) dsy = (1.f - keep_y) - r.y;  // пішло вниз
         move(i, dsx, dsy);
+    }
+
+    // Розгорнути вікно рівно по краях екрана: коробка на всю площу,
+    // прикріплена центром. Картинка вписується в неї за пропорцією, тож
+    // упирається в краї тією віссю, якою дозволяє кадр.
+    //
+    // Це опорна точка для всього іншого: після довгого совання й зуму
+    // повернутись до чогось передбачуваного інакше нічим.
+    void fill_screen(size_t i) {
+        layout::Placement& pl = presets[active][i];
+        pl.x = 0.5f; pl.y = 0.5f;
+        pl.w = 1.0f; pl.h = 1.0f;
+        pl.anchor = layout::Anchor::Center;
+        pl = layout::sanitize(pl);
     }
 
     void mark_dirty() {
@@ -398,10 +427,14 @@ bool ScreenPresets::acquire(render::DrawList& out) {
                 layout::Placement& pl = d.presets[d.active][wi];
                 float f = std::pow(1.0f + d.cfg.wheel_step, (float)dwheel);
                 pl.w *= f; pl.h *= f;
-                Impl::Rect r = d.rect_of(wi);            // не більше екрана
+                // Стеля — kMaxSize площ екрана (див. layout.hpp). Міряємо
+                // по ВПИСАНІЙ картинці, а не по коробці: коробка може бути
+                // якої завгодно пропорції, а видно саме картинку, і
+                // обмежувати треба те, що видно.
+                Impl::Rect r = d.rect_of(wi);
                 float s = 1.f;
-                if (r.w > 1.f) s = std::min(s, 1.f / r.w);
-                if (r.h > 1.f) s = std::min(s, 1.f / r.h);
+                if (r.w > layout::kMaxSize) s = std::min(s, layout::kMaxSize / r.w);
+                if (r.h > layout::kMaxSize) s = std::min(s, layout::kMaxSize / r.h);
                 pl.w *= s; pl.h *= s;
                 pl = layout::sanitize(pl);
                 Impl::Rect r1 = d.rect_of(wi);           // тримати центр
@@ -422,6 +455,24 @@ bool ScreenPresets::acquire(render::DrawList& out) {
                                  d.presets[d.active][wi].z);
                 } else {
                     d.selected = -1;                     // клац на іншому/порожньому — зняти
+                }
+            }
+
+            // --- 6) натиснуте колесо: розгорнути по краях екрана ---
+            //
+            // Береться вікно ПІД КУРСОРОМ, а не обране: після того як
+            // вікно засунули за край, влучити по ньому мишею буває нічим —
+            // на екрані лишилась третина, і та може бути під іншим. Клац
+            // колесом по видимій частині повертає його на всю площу.
+            if (p.mclicks > d.seen_mclicks) {
+                d.seen_mclicks = p.mclicks;
+                const int wi = on_button ? -1 : d.window_at(cx, cy);
+                if (wi >= 0) {
+                    d.fill_screen((size_t)wi);
+                    d.selected = wi;
+                    d.mark_dirty(); d.apply_pending = true;
+                    std::fprintf(stderr, "[екрани] '%s' -> на весь екран\n",
+                                 d.windows[wi].name.c_str());
                 }
             }
         }
