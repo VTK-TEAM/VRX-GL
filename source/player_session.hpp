@@ -16,6 +16,7 @@
 #include "source/playback_source.hpp"
 
 #include <atomic>
+#include <mutex>
 #include <memory>
 #include <string>
 
@@ -41,6 +42,21 @@ public:
     // записі, а не помилка.
     FrameSource* channel(int i);
     const char* channel_name(int i) const;
+
+    // НАМІРИ ВІД МИШІ.
+    //
+    // Перемотка перезбирає до трьох пайплайнів GStreamer — заміряно 34..74
+    // мс, при розгортці 17 мс. Виконувати це прямо з обробки миші означало
+    // б щоразу губити три-чотири кадри, а перетяг повзунка перетворювати на
+    // низку пропусків.
+    //
+    // Тому назовні лишається лише намір, а виконує його потік годинника.
+    // Побічно це прибирає й гонку за індексом сеансу: живий журнал
+    // перечитує той самий потік, і більше ніхто до ix_ не торкається.
+    void request_open(const std::string& journal_path);
+    void request_seek(int64_t t_us);
+    void request_jump(int64_t delta_us);
+    void request_step(int dir);
 
     // ГОДИННИК СЕАНСУ. Кличеться раз на кадр показу, звідти й міра часу:
     // позиція посувається на стільки, скільки минуло, помножене на
@@ -108,11 +124,20 @@ private:
     int64_t last_tick_ns_ = 0;
     int64_t last_reload_ns_ = 0;
 
+    std::mutex req_mtx_;
+    std::string req_open_;
+    bool have_open_ = false;
+    int64_t req_seek_ = 0;
+    bool have_seek_ = false;
+    int64_t req_jump_ = 0;
+    int req_step_ = 0;
+
     osd::TelemetryReader tlm_;
     VtTelemetryStorage tlm_store_;
     bool tlm_ok_ = false;
 
     void push_target();
+    void process_requests();        // виконати накопичені наміри
     void adopt();                 // перенести знімки з ix_ у атомарні поля
 };
 

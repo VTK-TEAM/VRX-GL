@@ -123,7 +123,58 @@ void PlayerSession::push_target() {
     for (auto& c : ch_) if (c) c->set_target(position_us_);
 }
 
+void PlayerSession::request_open(const std::string& journal_path) {
+    std::lock_guard<std::mutex> lk(req_mtx_);
+    req_open_ = journal_path;
+    have_open_ = true;
+}
+
+void PlayerSession::request_seek(int64_t t_us) {
+    std::lock_guard<std::mutex> lk(req_mtx_);
+    req_seek_ = t_us;
+    have_seek_ = true;
+    req_jump_ = 0;              // явна ціль скасовує накопичені стрибки
+}
+
+void PlayerSession::request_jump(int64_t delta_us) {
+    std::lock_guard<std::mutex> lk(req_mtx_);
+    req_jump_ += delta_us;      // натиснули двічі — стрибок подвійний
+}
+
+void PlayerSession::request_step(int dir) {
+    std::lock_guard<std::mutex> lk(req_mtx_);
+    req_step_ += dir > 0 ? 1 : -1;
+}
+
+void PlayerSession::process_requests() {
+    std::string op;
+    bool do_open = false, do_seek = false;
+    int64_t sk = 0, jp = 0;
+    int st = 0;
+    {
+        std::lock_guard<std::mutex> lk(req_mtx_);
+        if (have_open_) { op = req_open_; do_open = true; have_open_ = false; }
+        if (have_seek_) { sk = req_seek_; do_seek = true; have_seek_ = false; }
+        jp = req_jump_; req_jump_ = 0;
+        st = req_step_; req_step_ = 0;
+    }
+
+    if (do_open) open(op, 0);
+    if (!open_) return;
+
+    // Порядок навмисний: спершу явна ціль, потім відносні зміщення від неї.
+    if (do_seek) seek(sk);
+    if (jp != 0) seek(position_us_ + jp);
+
+    // Крок ставить паузу сам: натискають його саме тоді, коли хочуть
+    // роздивитись, і змушувати спершу зупиняти — зайвий рух.
+    if (st != 0 && speed_ > 0.0) speed_ = 0.0;
+    for (; st > 0; --st) step(1);
+    for (; st < 0; ++st) step(-1);
+}
+
 void PlayerSession::tick() {
+    process_requests();
     if (!open_) return;          // закритий плеєр часу не рахує
 
     struct timespec ts;

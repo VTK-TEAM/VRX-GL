@@ -247,6 +247,7 @@ struct PlayerUi::Impl {
     int scroll = 0;
     int64_t seen_wheel = 0;
     int64_t shot_flash_ns[kRoles] = {0, 0};
+    bool was_open[kRoles] = {false, false};
     double resume_speed[kRoles] = {1.0, 1.0};   // куди повертатись із паузи
     char speed_lbl[kRoles][8] = {};             // підпис швидкості, живе між кадрами
     bool was_left = false;
@@ -382,7 +383,13 @@ void PlayerUi::draw_list(int role, render::DrawList& out, float sa) {
     if (d.sessions_cb && (d.list_at_ns == 0 || now - d.list_at_ns > 2000000000LL)) {
         d.list_at_ns = now;
         d.list = d.sessions_cb();
-        if (d.scroll > (int)d.list.size() - 1) d.scroll = 0;
+        // Межа саме n-vis, а не n-1: читаємо list[i + scroll], де i < vis,
+        // тож надто велике scroll вивело б індекс за межі вектора. Ловилось
+        // би це лише тоді, коли сеансів було більше, ніж влазить, і перелік
+        // потім скоротився.
+        const int fit0 = (int)(d.cfg.list_fill / d.cfg.list_row);
+        const int room = (int)d.list.size() - (fit0 > 0 ? fit0 : 1);
+        if (d.scroll > room) d.scroll = room > 0 ? room : 0;
     }
 
     const float th = d.cfg.list_text;
@@ -423,8 +430,7 @@ void PlayerUi::draw_list(int role, render::DrawList& out, float sa) {
                     const auto& b = d.list[i + d.scroll];
                     std::fprintf(stderr, "[плеєр] екран %d -> сеанс %s\n",
                                  role, b.id.c_str());
-                    d.player[role]->open(b.journal, 0);
-                    if (d.opened_cb) d.opened_cb(role);
+                    d.player[role]->request_open(b.journal);
                     break;
                 }
             }
@@ -480,6 +486,14 @@ bool PlayerUi::acquire(int role, render::DrawList& out) {
 
     auto& pl = *d.player[role];
 
+    // Сеанс відкриває потік годинника, і момент цей нам не підвладний —
+    // тому ловимо його ПЕРЕХОДОМ, а не в місці натискання.
+    const bool now_open = pl.length_us() > 0;
+    if (now_open != d.was_open[role]) {
+        d.was_open[role] = now_open;
+        if (now_open && d.opened_cb) d.opened_cb(role);
+    }
+
     const int Wp0 = d.rw[role].load(std::memory_order_relaxed);
     const int Hp0 = d.rh[role].load(std::memory_order_relaxed);
     const float sa0 = (Wp0 > 0 && Hp0 > 0) ? float(Hp0) / float(Wp0) : 0.5625f;
@@ -526,7 +540,7 @@ bool PlayerUi::acquire(int role, render::DrawList& out) {
                 // зрушила: кожна перемотка піднімає пайплайни трьох
                 // каналів наново, і робити це шістдесят разів на секунду
                 // означало б не давати їм навіть стартувати.
-                if (llabs(want - pl.position_us()) > 400000) pl.seek(want);
+                if (llabs(want - pl.position_us()) > 400000) pl.request_seek(want);
             }
             d.was_left = p.left;
             if (p.clicks > d.seen_clicks) d.seen_clicks = p.clicks;
@@ -591,15 +605,12 @@ bool PlayerUi::acquire(int role, render::DrawList& out) {
                     continue;
                 d.seen_btn_clicks = p.clicks;
                 switch (b.kind) {
-                    case kJump: pl.jump((int64_t)b.arg); break;
+                    case kJump: pl.request_jump((int64_t)b.arg); break;
                     case kStep:
-                        // Крок має сенс лише на паузі; сам ставить її, щоб
-                        // не доводилось спершу зупиняти, потім крокувати.
-                        if (pl.speed() > 0.0) {
-                            d.resume_speed[role] = pl.speed();
-                            pl.set_speed(0.0);
-                        }
-                        pl.step(b.arg < 0 ? -1 : 1);
+                        // Паузу ставить сам сеанс, коли виконує крок; тут
+                        // лише запам'ятовуємо, куди повертатись.
+                        if (pl.speed() > 0.0) d.resume_speed[role] = pl.speed();
+                        pl.request_step(b.arg < 0 ? -1 : 1);
                         break;
                     case kPlay:
                         if (pl.speed() > 0.0) {
