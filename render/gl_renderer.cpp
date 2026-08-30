@@ -57,7 +57,16 @@ PFNGLEGLIMAGETARGETTEXTURE2DOESPROC                 glEGLImageTargetTexture2DOES
 struct GlRenderer::Impl {
     Config cfg;
     display::Display* dpy = nullptr;
+
+    // Стан ОСНОВНОГО виводу. Лишається окремим полем, бо від нього
+    // залежить такт: період розгортки, дедлайн опиту, вимір фази.
     display::OutputState info{};
+
+    // Стан кожного екрана й номер конфігурації, на якому ми його бачили.
+    // Другий екран міняється незалежно від першого — своя гаряча заміна,
+    // свій generation.
+    std::map<int, display::OutputState> infos;
+    std::map<int, uint32_t> gens;
 
     struct gbm_device* gbm = nullptr;   // належить дисплею, ми лише беремо для EGL
 
@@ -81,6 +90,7 @@ struct GlRenderer::Impl {
         EGLImageKHR image = EGL_NO_IMAGE_KHR;
         GLuint rb = 0;          // renderbuffer поверх тієї ж пам'яті
         GLuint fbo = 0;
+        int screen = -1;        // чиє це кільце — щоб скидати поштучно
     };
     std::map<int, GlTarget> gl_targets;
 
@@ -276,21 +286,38 @@ struct GlRenderer::Impl {
             return 0;
         }
 
+        g.screen = t.screen;
         gl_targets[t.frame.fd[0]] = g;
         return g.fbo;
     }
 
-    // Викидається цілком при зміні конфігурації виводу: буфери під цими
-    // обгортками дисплей уже знищив.
-    void drop_gl_targets() {
-        for (auto& kv : gl_targets) {
-            GlTarget& g = kv.second;
-            if (g.fbo) glDeleteFramebuffers(1, &g.fbo);
-            if (g.rb) glDeleteRenderbuffers(1, &g.rb);
-            if (g.image != EGL_NO_IMAGE_KHR && eglDestroyImageKHR_) {
-                eglDestroyImageKHR_(egl, g.image);
+    void free_gl_target(GlTarget& g) {
+        if (g.fbo) glDeleteFramebuffers(1, &g.fbo);
+        if (g.rb) glDeleteRenderbuffers(1, &g.rb);
+        if (g.image != EGL_NO_IMAGE_KHR && eglDestroyImageKHR_) {
+            eglDestroyImageKHR_(egl, g.image);
+        }
+        g = GlTarget{};
+    }
+
+    // Обгортки ОДНОГО екрана: його буфери дисплей щойно знищив.
+    //
+    // Поштучно, а не цілком: зміна на додатковому екрані не має коштувати
+    // основному перебудови всіх обгорток — це зайвий пропущений кадр рівно
+    // ні за що.
+    void drop_gl_targets(int screen) {
+        for (auto it = gl_targets.begin(); it != gl_targets.end(); ) {
+            if (it->second.screen == screen) {
+                free_gl_target(it->second);
+                it = gl_targets.erase(it);
+            } else {
+                ++it;
             }
         }
+    }
+
+    void drop_gl_targets() {
+        for (auto& kv : gl_targets) free_gl_target(kv.second);
         gl_targets.clear();
     }
 
@@ -374,7 +401,20 @@ struct GlRenderer::Impl {
     // не малюємо: програма одна, а дрони різні, і будь-яка заставка
     // припускала б знання про конкретну конфігурацію, якого в програми
     // немає.
-    bool collect_items(int screen, std::vector<Item>& items, int64_t& primary_produced) {
+    // ЗАБРАНИЙ КАДР. Джерело питається РІВНО РАЗ на цикл, а малюється
+    // стільки разів, скільки екранів.
+    //
+    // Це не оптимізація, а вимога контракту джерел (frame_source.hpp):
+    // звільнення кадру неявне, "наступний acquire() означає, що з
+    // попереднім закінчено". Два виклики за цикл зламали б інваріант —
+    // другий звільнив би кадр, який перший екран ще малює. Заразом це
+    // гарантує, що обидва екрани показують ОДИН І ТОЙ САМИЙ кадр.
+    struct Grab {
+        source::FrameSource* src = nullptr;
+        source::SourceFrame f;
+    };
+
+    bool collect_frames(std::vector<Grab>& grabs, int64_t& primary_produced) {
         std::vector<std::shared_ptr<source::FrameSource>> snap;
         {
             std::lock_guard<std::mutex> lk(src_mtx);
@@ -382,8 +422,7 @@ struct GlRenderer::Impl {
         }
         if (snap.empty()) return false;
 
-        const float screen_aspect = float(info.width) / float(info.height);
-        items.reserve(snap.size());
+        grabs.reserve(snap.size());
 #if VRX_MEASURE
         std::vector<std::pair<int, int64_t>> pm_now;
 #endif
@@ -398,16 +437,7 @@ struct GlRenderer::Impl {
             if (!src->acquire(f)) continue;
             if (!f.valid()) continue;
             if (f.image.fd[0] < 0) continue;      // кадру як буфера немає
-
-            // ДЕ малювати — питання екрана, а не джерела. Немає запису в
-            // сцені (ані власного, ані замовчування) — значить на цьому
-            // екрані цього джерела просто немає.
-            layout::Placement where;
-            if (!scene.get(screen, src.get(), &where)) continue;
-            if (!where.enabled) continue;
-
-            const float a = f.aspect();
-            if (a <= 0.0f) continue;
+            if (f.aspect() <= 0.0f) continue;
 
             // ФАЗУ МІРЯЄМО ЛИШЕ ПО ПЕРШОМУ ДЖЕРЕЛУ.
             //
@@ -425,9 +455,9 @@ struct GlRenderer::Impl {
             pm_now.push_back({VRX_PM_CHANNEL(src->name()), f.produced_ns});
 #endif
 
-            items.push_back({layout::fit_source(where, a, screen_aspect), f});
+            grabs.push_back({src.get(), f});
         }
-        if (items.empty()) return false;
+        if (grabs.empty()) return false;
 
 #if VRX_MEASURE
         {
@@ -436,12 +466,37 @@ struct GlRenderer::Impl {
         }
 #endif
 
+        return true;
+    }
+
+    // Що з ЗАБРАНИХ кадрів і де показувати на ЦЬОМУ екрані.
+    //
+    // Пропорція екрана й розкладка тут різні для кожного виводу, тому
+    // вписування рахується окремо, хоч кадри й ті самі.
+    void build_items(int screen, const display::OutputState& oi,
+                     const std::vector<Grab>& grabs, std::vector<Item>& items) {
+        if (oi.width <= 0 || oi.height <= 0) return;
+        const float screen_aspect = float(oi.width) / float(oi.height);
+        items.reserve(grabs.size());
+
+        for (const Grab& g : grabs) {
+            // Немає запису в сцені (ані власного, ані замовчування) —
+            // значить на цьому екрані цього джерела просто немає.
+            layout::Placement where;
+            if (!scene.get(screen, g.src, &where)) continue;
+            if (!where.enabled) continue;
+
+            const float a = g.f.aspect();
+            if (a <= 0.0f) continue;
+
+            items.push_back({layout::fit_source(where, a, screen_aspect), g.f});
+        }
+
         // Порядок за z: менше — далі. Джерел одиниці, тож stable_sort
         // дешевший за будь-яку хитрість і зберігає порядок реєстрації
         // для однакових z.
         std::stable_sort(items.begin(), items.end(),
                          [](const Item& a, const Item& b) { return a.p.z < b.p.z; });
-        return true;
     }
 
     void draw_sources(const std::vector<Item>& items) {
@@ -492,7 +547,8 @@ struct GlRenderer::Impl {
         if (rel / 1e6 > poll_offset_ms) st.late++;
     }
 
-    void draw_frame(int screen) {
+    void draw_screen(int screen, const display::OutputState& oi,
+                     const std::vector<Grab>& grabs, bool with_overlays) {
         if (cfg.colortest) { draw_colortest(); return; }
 
         // Чистимо ЗАВЖДИ. Під кадром, що не покрив увесь екран, інакше
@@ -518,32 +574,22 @@ struct GlRenderer::Impl {
         //
         // Джерела й оверлеї незалежні за задумом — рендерер знає лише
         // інтерфейси, — і єдине, що їх пов'язувало, це був цей `return`.
-        std::vector<Item> items;
-        int64_t primary_produced = 0;
-        collect_items(screen, items, primary_produced);
-
-        const int64_t vbl = last_present_ns.load(std::memory_order_relaxed);
-        phase.sample(primary_produced, vbl, period_ns);
-        count_late(primary_produced, vbl);
-
-        // Наступне підтвердження flip'а стосуватиметься саме цього кадру —
-        // звідси й наскрізна затримка. НУЛЬ означає "кадру немає", і
-        // обробник розгортки на нього не реагує.
-        //
-        // Раніше при відсутності кадру сюди не доходило взагалі, і в полі
-        // лишалась мітка ОСТАННЬОГО показаного кадру. Обробник розгортки
-        // чесно рахував по ній крок зйомки — виходило 0 мс, тобто
-        // "повтор", і так на кожній розгортці, поки камери немає. За
-        // прогін із камерою, вимкненою чверть часу, це дало 4432 фальшиві
-        // повтори: показувати в ті моменти було нічого.
-        inflight_produced_ns.store(primary_produced, std::memory_order_relaxed);
-
         // Порожній список — draw_sources() просто нічого не намалює, і на
         // екрані лишиться чистий фон під ОСД. Заглушки тут свідомо немає:
         // програма одна, а дрони різні, і рамка чи напис припускали б
         // знання про конкретну конфігурацію.
+        std::vector<Item> items;
+        build_items(screen, oi, grabs, items);
         draw_sources(items);
-        draw_overlays();
+
+        // ОВЕРЛЕЇ — ЛИШЕ НА ОСНОВНОМУ.
+        //
+        // Курсор і кнопка редактора за ТЗ живуть тільки там, а OSD на
+        // додатковому вимикається окремим перемикачем (крок 4). До того
+        // ж збирач OSD рахує розмір гліфів під ОДИН екран, і малювати
+        // його список на екрані іншої висоти означало б показувати
+        // телеметрію в чужому масштабі.
+        if (with_overlays) draw_overlays();
     }
 
     // Оверлеї малюються ПІСЛЯ джерел, тобто поверх відео, і завжди зі
@@ -813,6 +859,56 @@ struct GlRenderer::Impl {
                          [this] { return !running.load(std::memory_order_relaxed); });
     }
 
+    // Малює вже забрані кадри на всіх виводах, окрім основного.
+    //
+    // Пропуск екрана тут нічого не ламає: у нього просто лишиться
+    // попередній кадр. Саме тому додатковий і не має права затримати
+    // основний — його робота вся необов'язкова.
+    void draw_extra_screens(const std::vector<Grab>& grabs, int primary_screen) {
+        const int n = dpy->screen_count();
+        for (int sc = 0; sc < n; ++sc) {
+            if (sc == primary_screen) continue;
+
+            display::Target t;
+            if (!dpy->acquire(sc, t)) continue;   // немає виводу або буфери зайняті
+
+            // Своя гаряча заміна: додатковий міняється незалежно від
+            // основного, і обгортки над його буферами треба скидати саме
+            // за його номером конфігурації.
+            auto gi = gens.find(sc);
+            if (gi == gens.end() || gi->second != t.generation) {
+                drop_gl_targets(sc);
+                infos[sc] = dpy->state(sc);
+                gens[sc] = t.generation;
+                std::fprintf(stderr, "[gl] додатковий екран %d: %s\n",
+                             sc, infos[sc].name.c_str());
+            }
+
+            const display::OutputState& oi = infos[sc];
+            if (oi.width <= 0 || oi.height <= 0) { dpy->present(t); continue; }
+
+            const GLuint fbo2 = fbo_for(t);
+            if (!fbo2) { dpy->present(t); continue; }
+
+            glBindFramebuffer(GL_FRAMEBUFFER, fbo2);
+            glViewport(0, 0, oi.width, oi.height);
+            draw_screen(sc, oi, grabs, /*with_overlays=*/false);
+
+            // Чекаємо GPU так само, як для основного: без цього на екран
+            // поїхав би недомальований буфер.
+            if (have_fence && eglCreateSyncKHR_) {
+                EGLSyncKHR sy = eglCreateSyncKHR_(egl, EGL_SYNC_FENCE_KHR, nullptr);
+                glFlush();
+                eglClientWaitSyncKHR_(egl, sy, 0, EGL_FOREVER_KHR);
+                eglDestroySyncKHR_(egl, sy);
+            } else {
+                glFinish();
+            }
+
+            dpy->present(t);
+        }
+    }
+
     void loop() {
         if (!eglMakeCurrent(egl, EGL_NO_SURFACE, EGL_NO_SURFACE, ctx)) {
             std::fprintf(stderr, "[gl] eglMakeCurrent у робочому потоці провалився\n");
@@ -852,13 +948,15 @@ struct GlRenderer::Impl {
             // тракт, і старі обгортки над буферами недійсні.
             if (target.generation != my_generation) {
                 if (my_generation != 0) {
-                    std::fprintf(stderr, "[gl] вивід змінився, перебудовую обгортки\n");
+                    std::fprintf(stderr, "[gl] основний вивід змінився, перебудовую обгортки\n");
                 }
-                drop_gl_targets();
+                drop_gl_targets(target.screen);
                 // Попередні виміри стосуються іншого періоду розгортки —
                 // тягнути їх у нову конфігурацію не можна.
                 phase.reset();
                 info = dpy->state();
+                infos[target.screen] = info;
+                gens[target.screen] = target.generation;
                 my_generation = target.generation;
                 period_ns = info.frame_time_ns();
                 glViewport(0, 0, info.width, info.height);
@@ -905,8 +1003,29 @@ struct GlRenderer::Impl {
 
             const double t0 = now_ms();
 
+            // ОДИН ЗАБІР КАДРІВ НА ЦИКЛ — див. коментар до Grab. Обидва
+            // екрани показують той самий кадр, просто в різних місцях.
+            std::vector<Grab> grabs;
+            int64_t primary_produced = 0;
+            collect_frames(grabs, primary_produced);
+
+            const int64_t vbl = last_present_ns.load(std::memory_order_relaxed);
+            phase.sample(primary_produced, vbl, period_ns);
+            count_late(primary_produced, vbl);
+
+            // Наступне підтвердження flip'а стосуватиметься саме цього
+            // кадру — звідси й наскрізна затримка. НУЛЬ означає "кадру
+            // немає", і обробник розгортки на нього не реагує.
+            //
+            // Раніше при відсутності кадру сюди не доходило взагалі, і в
+            // полі лишалась мітка ОСТАННЬОГО показаного кадру. Обробник
+            // чесно рахував по ній крок зйомки — виходило 0 мс, тобто
+            // "повтор", і так на кожній розгортці, поки камери немає.
+            inflight_produced_ns.store(primary_produced, std::memory_order_relaxed);
+
             glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-            draw_frame(target.screen);
+            glViewport(0, 0, info.width, info.height);
+            draw_screen(target.screen, info, grabs, /*with_overlays=*/true);
             frame_no++;
 
             // Чекаємо РЕАЛЬНОГО завершення GPU. Без цього на екран поїде
@@ -931,6 +1050,20 @@ struct GlRenderer::Impl {
                 st.last_draw_ms = dt;
                 st.avg_draw_ms = avg;
             }
+
+            // --- ДОДАТКОВІ ЕКРАНИ, У ЗАЛИШКУ ТАКТУ ---
+            //
+            // Строго ПІСЛЯ того, як основний віддано на показ. Порядок не
+            // косметичний: основний тримає затримку тракту й фазу камери,
+            // і жодна робота заради другого екрана не має стояти перед
+            // його комітом.
+            //
+            // Свого vblank'а додатковий не чекає — його розгортка чужа й
+            // з власним кварцом. Наслідок відомий і прийнятий за ТЗ: при
+            // 59.003 проти 58.976 приблизно раз на секунду його кадр
+            // повториться або пропаде. Затримки й пропуски на ньому нас
+            // не турбують.
+            draw_extra_screens(grabs, target.screen);
         }
 
         drop_gl_targets();
