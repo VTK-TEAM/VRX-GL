@@ -12,22 +12,30 @@ const PlaybackSource::Codec kCodecs[PlayerSession::kChannels] = {
 };
 }
 
-bool PlayerSession::open(const std::string& journal_path, int64_t t_us) {
-    close();
-    if (!ix_.load(journal_path)) return false;
-
+PlayerSession::PlayerSession() {
     for (int i = 0; i < kChannels; ++i) {
         PlaybackSource::Config c;
         c.channel = kNames[i];
         c.codec = kCodecs[i];
-        ch_[i] = std::make_unique<PlaybackSource>(c);
-
-        // Невдача тут — НЕ привід кидати весь сеанс: канал міг узагалі не
-        // писатись (не було сигналу, вимкнений захват), і це нормальний
-        // запис, просто з двома доріжками замість трьох.
-        if (!ch_[i]->open(ix_, t_us))
-            ch_[i].reset();
+        ch_[i] = std::make_shared<PlaybackSource>(c);
     }
+}
+
+std::shared_ptr<FrameSource> PlayerSession::source(int i) const {
+    return (i >= 0 && i < kChannels) ? ch_[i] : nullptr;
+}
+
+bool PlayerSession::open(const std::string& journal_path, int64_t t_us) {
+    for (auto& c : ch_) c->stop();
+    if (!ix_.load(journal_path)) return false;
+
+    // Невдача каналу — НЕ привід кидати сеанс: канал міг узагалі не
+    // писатись (не було сигналу, вимкнений захват), і це нормальний запис,
+    // просто з двома доріжками замість трьох. Джерело лишається на місці й
+    // просто мовчить.
+    for (int i = 0; i < kChannels; ++i)
+        ch_[i]->open(ix_, t_us);
+
     open_ = true;
     position_us_ = t_us;
     last_tick_ns_ = 0;
@@ -36,7 +44,7 @@ bool PlayerSession::open(const std::string& journal_path, int64_t t_us) {
 }
 
 void PlayerSession::close() {
-    for (auto& c : ch_) c.reset();
+    for (auto& c : ch_) c->stop();     // джерела лишаються, кадри зникають
     open_ = false;
 }
 
@@ -54,6 +62,8 @@ void PlayerSession::push_target() {
 }
 
 void PlayerSession::tick() {
+    if (!open_) return;          // закритий плеєр часу не рахує
+
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     const int64_t now = ts.tv_sec * 1000000000LL + ts.tv_nsec;

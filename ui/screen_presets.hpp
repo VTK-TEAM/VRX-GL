@@ -25,6 +25,7 @@
 #include "../source/frame_source.hpp"
 #include "pointer.hpp"
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -64,6 +65,12 @@ public:
         std::shared_ptr<source::FrameSource> source;
         layout::Placement fallback;                  // якщо файлу пресета ще немає
         int mode = kLive;                            // до якого набору належить
+
+        // ЧИЄ ЦЕ ВІКНО. -1 = спільне для обох екранів (так живуть ефірні:
+        // одне джерело, показане на обох). Плеєри ж свої на кожному екрані,
+        // і без цього поля вікна чужого плеєра вилазили б на сусідній
+        // екран, щойно той теж перейшов би в режим плеєра.
+        int role = -1;
     };
 
     explicit ScreenPresets(Config cfg);
@@ -86,6 +93,10 @@ public:
     // Активний пресет у кожного набору СВІЙ: перемикання 1/2/3 у плеєрі не
     // має чіпати розкладку ефіру, це різні задачі й різні розкладки.
     void set_mode(int role, int mode);
+
+    // Сповіщення про перемикання — кнопкою або програмно. Пресети про
+    // плеєр нічого не знають: відкрити сеанс має той, хто ним володіє.
+    void set_on_mode(std::function<void(int role, int mode)> cb);
     int mode(int role) const;
 
     bool start() override;

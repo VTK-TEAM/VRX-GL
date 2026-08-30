@@ -6,6 +6,7 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <functional>
 #include <cstdio>
 #include <ctime>
 #include <fstream>
@@ -106,6 +107,38 @@ void fill_box(render::OverlayImage& img, int size, int x0, int y0, int w, int h,
 // "субтитри".
 //
 // Яскравий — телеметрію показуємо, тьмяний — ні.
+// Кнопка плеєра. У режимі ефіру на ній трикутник "грати", у режимі
+// плеєра — квадрат "стоп", тобто повернутись до ефіру. Знак показує, що
+// СТАНЕТЬСЯ від натискання, а не що зараз, — так само як у кнопці OSD.
+render::OverlayImage make_player_button(bool playing) {
+    const int size = 48;
+    render::OverlayImage img;
+    img.id = std::string("presets:play") + (playing ? "1" : "0");
+    img.width = img.height = size;
+    img.rgba.assign((size_t)size * size * 4, 0);
+    draw_button_bg(img, false, size);
+
+    const uint8_t r = playing ? 255 : 120, g = playing ? 120 : 200, b = playing ? 90 : 130;
+    const uint8_t a = playing ? 255 : 210;
+    const int m = size / 3;                       // відступ від краю
+
+    if (playing) {
+        for (int y = m; y < size - m; ++y)
+            for (int x = m; x < size - m; ++x)
+                put(img.rgba, size, x, y, r, g, b, a);
+    } else {
+        // Трикутник вершиною вправо: висота зменшується до вершини.
+        const float h = float(size - 2 * m);
+        for (int x = m; x < size - m; ++x) {
+            const float k = float(x - m) / h;      // 0 біля основи, 1 біля вершини
+            const int half = (int)(h * 0.5f * (1.0f - k));
+            for (int y = size / 2 - half; y <= size / 2 + half; ++y)
+                put(img.rgba, size, x, y, r, g, b, a);
+        }
+    }
+    return img;
+}
+
 render::OverlayImage make_osd_button(bool on) {
     const int size = 48;
     render::OverlayImage img;
@@ -192,6 +225,7 @@ struct ScreenPresets::Impl {
     std::vector<render::OverlayImage> images;   // [d*2+active] цифри, далі solid і перемикачі
     int solid_idx = 0;
     int osd_idx = 0;       // +0 OSD вимкнено, +1 увімкнено
+    int play_idx = 0;      // +0 ефір (знак "грати"), +1 плеєр (знак "стоп")
     int btn_px = 48;
 
     // Геометрія КОЖНОГО екрана: частки рахуються від свого.
@@ -229,7 +263,15 @@ struct ScreenPresets::Impl {
     int  active_of(int role) const { return active_by[mode[role]][role]; }
 
     // Вікно належить набору, який зараз показує ця роль.
-    bool in_mode(int role, size_t i) const { return windows[i].mode == mode[role]; }
+    bool in_mode(int role, size_t i) const {
+        if (windows[i].mode != mode[role]) return false;
+        return windows[i].role < 0 || windows[i].role == role;
+    }
+
+    // Кого сповістити про перемикання режиму. Пресети самі про плеєр
+    // нічого не знають і знати не мусять: їхня справа — вікна й розкладка,
+    // а відкрити сеанс і завести декодери має той, хто ними володіє.
+    std::function<void(int role, int mode)> on_mode;
     uint32_t dirty_mask = 0;
     int64_t last_edit = 0;
 
@@ -274,6 +316,9 @@ struct ScreenPresets::Impl {
         osd_idx = (int)images.size();
         images.push_back(make_osd_button(false));
         images.push_back(make_osd_button(true));
+        play_idx = (int)images.size();
+        images.push_back(make_player_button(false));
+        images.push_back(make_player_button(true));
     }
 
     // Розкладка однієї ролі з уже розібраного json.
@@ -456,7 +501,8 @@ struct ScreenPresets::Impl {
     // кнопкою редактора, яка веде зовсім в інше місце — в окрему
     // програму (див. ScreenUi::Config::slot).
     int osd_button() const { return cfg.preset_count; }
-    int button_count() const { return cfg.preset_count + 1; }
+    int play_button() const { return cfg.preset_count + 1; }
+    int button_count() const { return cfg.preset_count + 2; }
 
     void button_rect(int role, int b, float* x, float* y, float* w, float* h) const {
         const int W = rw[role].load(), H = rh[role].load();
@@ -501,6 +547,10 @@ void ScreenPresets::add_window(Window w) { impl_->windows.push_back(std::move(w)
 void ScreenPresets::set_telemetry(VtTelemetryStorage* tlm) { impl_->tlm = tlm; }
 
 void ScreenPresets::attach_scene(render::Scene* s) { impl_->scene = s; }
+
+void ScreenPresets::set_on_mode(std::function<void(int, int)> cb) {
+    impl_->on_mode = std::move(cb);
+}
 
 void ScreenPresets::set_mode(int role, int m) {
     if (role < 0 || role >= Impl::kRoles || m < 0 || m >= kModes) return;
@@ -607,6 +657,18 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
                                      role == render::Scene::kPrimary ? "основний" : "додатковий",
                                      b + 1);
                     }
+                } else if (b == d.play_button()) {
+                    // ПЛЕЄР НА ЦЬОМУ ЕКРАНІ. Другий екран лишається на
+                    // ефірі — або має свій плеєр, це дозволено.
+                    const int m = d.mode[role] == ScreenPresets::kPlayer
+                                      ? ScreenPresets::kLive : ScreenPresets::kPlayer;
+                    d.mode[role] = m;
+                    d.selected[role] = -1;      // вибір належав іншому набору
+                    d.apply_pending = true;
+                    if (d.on_mode) d.on_mode(role, m);
+                    std::fprintf(stderr, "[екрани] %s екран -> %s\n",
+                                 role == render::Scene::kPrimary ? "основний" : "додатковий",
+                                 m == ScreenPresets::kPlayer ? "плеєр" : "ефір");
                 } else {
                     // OSD САМЕ ЦЬОГО ЕКРАНА — того, на якому кнопку
                     // натиснули. Своя кнопка на кожному, перемикати нічого
@@ -763,6 +825,9 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
         float bx, by, bw, bh;
         d.button_rect(role, d.osd_button(), &bx, &by, &bw, &bh);
         push(d.osd_idx + (d.osd_on[d.active_of(role)][role] ? 1 : 0), bx, by, bw, bh);
+
+        d.button_rect(role, d.play_button(), &bx, &by, &bw, &bh);
+        push(d.play_idx + (d.mode[role] == ScreenPresets::kPlayer ? 1 : 0), bx, by, bw, bh);
     }
     return true;
 }

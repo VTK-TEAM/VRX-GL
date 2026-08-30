@@ -32,6 +32,8 @@
 #include "osd/local_channels.hpp"
 #include "osd/telemetry/vt_telemetry_index.h"
 #include "osd/subtitle_writer.hpp"
+#include "source/player_session.hpp"
+#include "record/session_index.hpp"
 #include "render/gl_renderer.hpp"
 #include "source/h265_source.hpp"
 #include "source/mjpeg_source.hpp"
@@ -347,8 +349,18 @@ int main(int argc, char** argv) {
     //
     // У режимі одного каналу цього немає взагалі: основний і так на весь
     // екран, а редагувати/перемикати нема чого.
+    // ПЛЕЄР: свій сеанс на кожен екран.
+    //
+    // Джерела створюються ЗАРАЗ, а не в момент натискання кнопки: список
+    // джерел рендерера й список вікон пресетів щокадру читає потік показу,
+    // і дописувати в них на ходу не можна. Порожній плеєр просто не віддає
+    // кадрів, тобто нічого не коштує.
+    std::shared_ptr<vrx::source::PlayerSession> players[2];
+    for (auto& pl : players) pl = std::make_shared<vrx::source::PlayerSession>();
+
+    std::shared_ptr<vrx::ui::ScreenPresets> screen_presets;
     if (!kSingleChannel) {
-        auto screen_presets = std::make_shared<vrx::ui::ScreenPresets>(
+        screen_presets = std::make_shared<vrx::ui::ScreenPresets>(
             vrx::ui::ScreenPresets::Config{});
         {
             vrx::ui::ScreenPresets::Window w;
@@ -365,6 +377,27 @@ int main(int argc, char** argv) {
             w.name = "capture"; w.source = cap_src; w.fallback = cap_default;
             screen_presets->add_window(std::move(w));
         }
+        // Вікна плеєра — той самий механізм, лише інший набір. Розкладка
+        // спершу така сама, як в ефірі: людина одразу бачить звичну
+        // картину, а далі рухає мишею як завгодно.
+        for (int r = 0; r < 2; ++r) {
+            const vrx::layout::Placement fb[3] = {main_default, pip_default, cap_default};
+            for (int c = 0; c < vrx::source::PlayerSession::kChannels; ++c) {
+                auto src = players[r]->source(c);
+                if (!src) continue;
+                renderer.add_source(src);
+
+                vrx::ui::ScreenPresets::Window w;
+                w.name = std::string("player") + std::to_string(r) + ":" +
+                         players[r]->channel_name(c);
+                w.source = src;
+                w.fallback = fb[c];
+                w.mode = vrx::ui::ScreenPresets::kPlayer;
+                w.role = r;
+                screen_presets->add_window(std::move(w));
+            }
+        }
+
         screen_presets->attach(&pointer);
         screen_presets->attach_scene(&renderer.scene());
         screen_presets->set_telemetry(osd ? &osd->storage() : nullptr);
@@ -400,6 +433,32 @@ int main(int argc, char** argv) {
     // нічого, тож зрив носія до картинки не дістає.
     vrx::record::Storage storage{vrx::record::Storage::Config{}};
     storage.start();
+
+    // Кнопка плеєра лише перемикає режим; відкрити сеанс — справа того,
+    // хто володіє носієм і сеансами.
+    if (screen_presets) screen_presets->set_on_mode([&players, &storage](int role, int mode) {
+            if (role < 0 || role > 1) return;
+            if (mode != vrx::ui::ScreenPresets::kPlayer) {
+                players[role]->close();
+                return;
+            }
+            const auto drive = storage.state();
+            if (!drive.usable()) {
+                std::fprintf(stderr, "[плеєр] носія немає — показувати нічого\n");
+                return;
+            }
+            auto list = vrx::record::list_sessions(drive.root);
+            if (list.empty()) {
+                std::fprintf(stderr, "[плеєр] на носії немає жодного сеансу\n");
+                return;
+            }
+        // Поки що найсвіжіший. Вибір зі списку — крок 3.
+            std::fprintf(stderr, "[плеєр] екран %d -> сеанс %s (%.0f с)\n",
+                         role, list.front().id.c_str(), list.front().length_us / 1e6);
+            players[role]->open(list.front().journal, 0);
+        });
+
+
 
     // Запис. (Прапорець лишаю на випадок тесту ізоляції флешки — false
     // глушить усі рекордери й субтитри.)
@@ -459,6 +518,31 @@ int main(int argc, char** argv) {
     //
     // Синхронізується з рекордером ОСНОВНОГО каналу: новий файл запису
     // тягне новий .ass, зупинка запису їх закриває.
+    // ГОДИННИК ПЛЕЄРІВ.
+    //
+    // tick() рахує РЕАЛЬНИЙ час, що минув, тож частота виклику впливає лише
+    // на дрібність кроку позиції, а не на швидкість показу. Сто разів на
+    // секунду — з великим запасом і коштує нічого.
+    //
+    // Окремий потік, а не виклик із малювання: показ може стояти (екран
+    // від'єднали, вивід переконфігуровується), а час запису від цього
+    // зупинятись не має.
+    struct PlayerClock {
+        std::shared_ptr<vrx::source::PlayerSession>* pl;
+        std::atomic<bool> run{true};
+        std::thread th;
+        explicit PlayerClock(std::shared_ptr<vrx::source::PlayerSession>* p) : pl(p) {
+            th = std::thread([this] {
+                while (run.load(std::memory_order_relaxed)) {
+                    pl[0]->tick();
+                    pl[1]->tick();
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+            });
+        }
+        ~PlayerClock() { run.store(false); if (th.joinable()) th.join(); }
+    } player_clock(players);
+
     std::unique_ptr<vrx::osd::SubtitleWriter> subs;
     std::unique_ptr<vrx::osd::LocalChannels> local_ch;
     if (osd) {

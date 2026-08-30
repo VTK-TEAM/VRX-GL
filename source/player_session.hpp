@@ -22,8 +22,17 @@ class PlayerSession {
 public:
     static constexpr int kChannels = 3;      // основний, PiP, захват
 
+    PlayerSession();
+
     bool open(const std::string& journal_path, int64_t t_us = 0);
     void close();
+
+    // ДЖЕРЕЛА ІСНУЮТЬ ЗАВЖДИ, ще до відкриття сеансу.
+    //
+    // Інакше їх довелося б реєструвати в рендерері в момент натискання
+    // кнопки — тобто дописувати у список, який щокадру читає потік показу.
+    // Порожнє джерело просто не віддає кадрів, і рендерер його пропускає.
+    std::shared_ptr<FrameSource> source(int i) const;
 
     // Джерело каналу для рендерера. Може бути без кадрів — це провал у
     // записі, а не помилка.
@@ -52,7 +61,7 @@ public:
 
 private:
     record::SessionIndex ix_;
-    std::unique_ptr<PlaybackSource> ch_[kChannels];
+    std::shared_ptr<PlaybackSource> ch_[kChannels];
     bool open_ = false;
 
     int64_t position_us_ = 0;
