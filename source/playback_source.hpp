@@ -53,6 +53,12 @@ public:
     void stop() override;
     bool acquire(SourceFrame& out) override;
     bool has_signal() const override;
+
+    // ПРОПОРЦІЯ ОСТАННЬОГО КАДРУ. Потрібна не рендереру — той бере її з
+    // самого кадру, — а розкладці: рамку обраного вікна й межі перетягу
+    // вона рахує наперед, ще до того як кадр забрано. Без цього рамка
+    // окреслювала б цілу коробку замість вписаного в неї відео.
+    float frame_aspect() const override;
     SourceStats stats() const override;
 
     // Відкриває сеанс і стає на позицію t від його початку.

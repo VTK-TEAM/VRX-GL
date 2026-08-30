@@ -68,6 +68,7 @@ struct PlaybackSource::Impl {
     // Ціль у часі СЕАНСУ. Кадр із черги стає поточним, поки його власний
     // час не перевищує цілі.
     std::atomic<int64_t> target_us{-1};
+    std::atomic<float> aspect{0.f};      // пропорція останнього кадру
     int64_t session_start_us = 0;
 
     // Час кадру в шкалі сеансу. Якір — момент, якому відповідає PTS=0 у
@@ -156,6 +157,8 @@ struct PlaybackSource::Impl {
             ? float(GST_VIDEO_INFO_PAR_N(&vi)) / float(GST_VIDEO_INFO_PAR_D(&vi))
             : 1.0f;
         frame->produced_ns = mono_ns();
+
+        aspect.store(frame->aspect(), std::memory_order_relaxed);
 
         const int64_t pts = GST_BUFFER_PTS_IS_VALID(buf)
                                 ? (int64_t)GST_BUFFER_PTS(buf) / 1000 : 0;
@@ -308,6 +311,10 @@ bool PlaybackSource::acquire(SourceFrame& out) {
         d.st.reused++;
     }
     return true;                            // dying вмирає поза локом
+}
+
+float PlaybackSource::frame_aspect() const {
+    return impl_->aspect.load(std::memory_order_relaxed);
 }
 
 bool PlaybackSource::has_signal() const {
