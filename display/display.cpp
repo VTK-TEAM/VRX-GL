@@ -631,6 +631,11 @@ struct Display::Impl {
         int ret = drmModeAtomicCommit(fd, req, flags, &o);
         drmModeAtomicFree(req);
 
+        if (ret == 0 && allow_modeset) {
+            std::fprintf(stderr, "[дисплей] %s: modeset пройшов (fb=%u crtc=%u plane=%u)\n",
+                         o.state.connector.c_str(), fb_id, o.crtc_id, o.plane_id);
+        }
+
         if (ret != 0) {
             // Поки ми готували коміт, потік подій міг зняти вивід:
             // монітор висмикнули. Це не помилка, це гонка з гарячою
@@ -695,6 +700,13 @@ struct Display::Impl {
 
             o.st.presented++;
             o.st.last_present_ns = when_ns;
+            // ПЕРШЕ підтвердження розгортки. Саме воно відрізняє "ми
+            // віддали кадр залізу" від "залізо його показало": на мертвому
+            // лінку коміт проходить, а підтвердження не приходить ніколи.
+            if (o.st.presented == 1) {
+                std::fprintf(stderr, "[дисплей] %s: перша розгортка підтверджена\n",
+                             o.state.connector.c_str());
+            }
 
             is_primary = (o.slot_no == primary_slot);
         }
@@ -726,11 +738,34 @@ struct Display::Impl {
 
     // Знімає ОДИН вивід, лишаючи карту й решту екранів недоторканими.
     void teardown_output(Output& o) {
+        // ГАСИМО ВЕСЬ ТРАКТ, А НЕ ЛИШЕ ПЛЕЙН.
+        //
+        // Спершу тут вимикався тільки плейн, а CRTC лишався ACTIVE. Для
+        // HDMI це минало, а DP після цього не піднімався ВЗАГАЛІ: коміт із
+        // новим режимом лягав поверх уже активного CRTC, драйвер робив
+        // "швидку" зміну без повного вимкнення, і лінк не перенавчався —
+        // монітор ішов у режим економії.
+        //
+        // Ознака була однозначна й видна лише в лозі: "modeset пройшов" є,
+        // а підтвердження розгортки немає жодного. Перезапуск програми
+        // лікував саме тому, що там усе піднімалося з вимкненого стану.
         if (fd >= 0 && o.plane_id && o.plane_props.has("FB_ID")) {
             drmModeAtomicReq* req = drmModeAtomicAlloc();
             drmModeAtomicAddProperty(req, o.plane_id, o.plane_props["FB_ID"], 0);
             drmModeAtomicAddProperty(req, o.plane_id, o.plane_props["CRTC_ID"], 0);
-            drmModeAtomicCommit(fd, req, DRM_MODE_ATOMIC_ALLOW_MODESET, nullptr);
+            if (o.crtc_id && o.crtc_props.has("ACTIVE")) {
+                drmModeAtomicAddProperty(req, o.crtc_id, o.crtc_props["ACTIVE"], 0);
+                if (o.crtc_props.has("MODE_ID")) {
+                    drmModeAtomicAddProperty(req, o.crtc_id, o.crtc_props["MODE_ID"], 0);
+                }
+            }
+            if (o.connector_id && o.conn_props.has("CRTC_ID")) {
+                drmModeAtomicAddProperty(req, o.connector_id, o.conn_props["CRTC_ID"], 0);
+            }
+            if (drmModeAtomicCommit(fd, req, DRM_MODE_ATOMIC_ALLOW_MODESET, nullptr) != 0) {
+                std::fprintf(stderr, "[дисплей] %s: не вимкнувся чисто (%s)\n",
+                             o.state.connector.c_str(), std::strerror(errno));
+            }
             drmModeAtomicFree(req);
         }
         if (fd >= 0 && o.mode_blob) drmModeDestroyPropertyBlob(fd, o.mode_blob);
@@ -811,8 +846,13 @@ struct Display::Impl {
             //     буде НІКОЛИ — кабель ніхто не чіпає, — і станція
             //     лишилася б без картинки назавжди.
             {
+                // Коли вивід уже є, зондувати порожні порти часто нема
+                // потреби: підключення прилетить подією, а повний зонд на
+                // мертвому порту гальмує потік, який обробляє розгортки.
+                const int64_t every = live_count.load(std::memory_order_acquire) > 0
+                                    ? 5000000000LL : 1500000000LL;
                 const int64_t t = now_ns();
-                if (t - last_poll_ns > 2000000000LL) {
+                if (t - last_poll_ns > every) {
                     last_poll_ns = t;
                     recheck = true;
                 }
@@ -979,25 +1019,37 @@ bool Display::Impl::configure_all(bool probe_new) {
     for (int i = 0; i < res->count_connectors; ++i) {
         if (!probe_new) break;
 
-        // Дешева перевірка перед дорогою: чи взагалі є що піднімати.
-        drmModeConnector* cur = drmModeGetConnectorCurrent(fd, res->connectors[i]);
-        const bool maybe = cur && cur->connection == DRM_MODE_CONNECTED;
-        const uint32_t cid = cur ? cur->connector_id : 0;
-        if (cur) drmModeFreeConnector(cur);
-        if (!maybe || known.count(cid)) continue;
+        const uint32_t cid = res->connectors[i];
+        if (known.count(cid)) continue;          // цей вивід ми вже ведемо
 
         const auto rt = add_retry_ns.find(cid);
         if (rt != add_retry_ns.end() && rt->second > now_ns()) continue;
 
-        if (!refreshed) {
+        // ПОВНИЙ ЗОНД, А НЕ КЕШОВАНИЙ СТАТУС.
+        //
+        // Тут стояла "дешева перевірка перед дорогою" через
+        // drmModeGetConnectorCurrent, і вона утворювала замкнене коло:
+        // Current віддає КЕШОВАНИЙ статус, а оновити кеш може лише
+        // справжній зонд — який ми робили тільки тоді, коли кеш уже казав
+        // "підключено". Отже монітор, чий кеш завис на "disconnected", не
+        // повертався НІКОЛИ. Висмикування кабеля зазвичай саме породжує
+        // подію й перезонд, а вимикання ЖИВЛЕННЯ монітора — не завжди.
+        drmModeConnector* conn = drmModeGetConnector(fd, cid);
+        if (!conn) continue;
+        const bool live = conn->connection == DRM_MODE_CONNECTED && conn->count_modes > 0;
+
+        if (live && !refreshed) {
+            // Кеш EDID скидаємо лише коли справді є що піднімати: сама
+            // процедура коштує пів секунди сну на коннектор.
+            drmModeFreeConnector(conn);
             refreshing.store(true, std::memory_order_release);
             force_edid_refresh(cfg.card);
             refreshing.store(false, std::memory_order_release);
             refreshed = true;
+            conn = drmModeGetConnector(fd, cid);
+            if (!conn) continue;
         }
 
-        drmModeConnector* conn = drmModeGetConnector(fd, res->connectors[i]);
-        if (!conn) continue;
         if (conn->connection == DRM_MODE_CONNECTED && conn->count_modes > 0) {
             if (configure_one(res, conn)) {
                 added = true;
@@ -1304,53 +1356,31 @@ bool Display::Impl::configure_one(drmModeRes* res, drmModeConnector* conn) {
         return false;
     }
 
-    // РЕЖИМ СТАВИМО ОДРАЗУ, А ПЛЕЙН ГАСИМО.
+    // ПЛЕЙН ГАСИМО, А РЕЖИМ СТАВИТЬ ПЕРШИЙ КАДР.
     //
-    // Дві причини, і обидві практичні.
+    // Поки в цей вивід нічого не показали, він сканує те, що лишив
+    // попередній власник карти — X або попередня сесія.
     //
-    // Перша: поки в цей вивід нічого не показали, він сканує те, що
-    // лишив попередній власник карти — X або попередня сесія. На
-    // додатковому екрані це видно найкраще: VOP лишався ACTIVE із вікном
-    // на весь екран і НУЛЬОВОЮ адресою буфера, тобто сканував порожнечу.
+    // ТУТ СТОЯВ MODESET ІЗ ВИМКНЕНИМ ПЛЕЙНОМ — щоб опущений до 59 Гц
+    // режим стояв заздалегідь і промоція не тягла зміну режиму. Прибрано,
+    // і на те дві причини.
     //
-    // Друга, важливіша: опущені до 59 Гц режими не мають сенсу, поки їх
-    // не застосовано. Якби modeset відкладався до першого показаного
-    // кадру, то додатковий екран стояв би на своїх стокових 60 Гц — і
-    // промоція його в основні (помер HDMI) означала б зміну режиму рівно
-    // тоді, коли пілот щойно втратив монітор. Саме цього ми й уникали,
-    // опускаючи обидва.
+    // Перша: воно ЛАМАЛО DP. Активний CRTC без плейна — це тракт без
+    // жодного вмісту, і монітор такого сигналу не приймає: після
+    // перепідключення роз'єму він засинав у режим економії. А оскільки
+    // modeset вважався зробленим, справжнього — з картинкою — вже не
+    // ставалося ніколи.
     //
-    // CRTC вмикається з режимом, але БЕЗ плейна: екран чорний, розгортка
-    // вже правильна, а перший кадр буде звичайним фліпом.
+    // Друга: сама причина зникла. Трюк мав сенс, поки додатковий екран не
+    // малювався. Відколи малюються обидва, режим кожного застосовується
+    // його ж першим кадром, і промоція міняє лише РОЛЬ.
     {
         drmModeAtomicReq* req = drmModeAtomicAlloc();
-        bool done = false;
         if (req) {
-            drmModeAtomicAddProperty(req, o.crtc_id, o.crtc_props["MODE_ID"], o.mode_blob);
-            drmModeAtomicAddProperty(req, o.crtc_id, o.crtc_props["ACTIVE"], 1);
-            drmModeAtomicAddProperty(req, o.connector_id, o.conn_props["CRTC_ID"], o.crtc_id);
             drmModeAtomicAddProperty(req, o.plane_id, o.plane_props["FB_ID"], 0);
             drmModeAtomicAddProperty(req, o.plane_id, o.plane_props["CRTC_ID"], 0);
-            done = drmModeAtomicCommit(fd, req, DRM_MODE_ATOMIC_ALLOW_MODESET, nullptr) == 0;
+            drmModeAtomicCommit(fd, req, DRM_MODE_ATOMIC_ALLOW_MODESET, nullptr);
             drmModeAtomicFree(req);
-        }
-
-        if (done) {
-            // Режим уже стоїть — першому кадру modeset не потрібен.
-            o.modeset_done = true;
-        } else {
-            // Драйвер не прийняв активний CRTC без плейна. Не біда:
-            // просто гасимо плейн, а режим поставиться першим кадром.
-            std::fprintf(stderr,
-                "[дисплей] %s: CRTC без плейна не прийнято (%s) —"
-                " режим стане з першим кадром\n", cname, std::strerror(errno));
-            drmModeAtomicReq* off = drmModeAtomicAlloc();
-            if (off) {
-                drmModeAtomicAddProperty(off, o.plane_id, o.plane_props["FB_ID"], 0);
-                drmModeAtomicAddProperty(off, o.plane_id, o.plane_props["CRTC_ID"], 0);
-                drmModeAtomicCommit(fd, off, DRM_MODE_ATOMIC_ALLOW_MODESET, nullptr);
-                drmModeAtomicFree(off);
-            }
         }
     }
 

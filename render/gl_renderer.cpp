@@ -899,7 +899,11 @@ struct GlRenderer::Impl {
     // основний — його робота вся необов'язкова.
     // Розсилає оверлеям геометрію КОЖНОГО відомого екрана — але лише те,
     // чого вони ще не знають. Дешево: кілька порівнянь у map.
-    void sync_overlay_sizes() {
+    // prim — слот ОСНОВНОГО виводу, узятий щойно. Роль не можна брати з
+    // кешованого infos[]: він оновлюється лише при зміні покоління, а
+    // роль міняється БЕЗ переналаштування виводу — досить повернути
+    // HDMI, і DP стає додатковим, не змінивши в собі нічого.
+    void sync_overlay_sizes(int prim) {
         const uint32_t ep = ovl_epoch.load(std::memory_order_relaxed);
         if (ep != seen_epoch) {
             // Додали новий оверлей — він не знає нічого, тож розповідаємо
@@ -910,7 +914,7 @@ struct GlRenderer::Impl {
         for (const auto& kv : infos) {
             const display::OutputState& oi = kv.second;
             if (oi.width <= 0 || oi.height <= 0) continue;
-            const int r = Scene::role_of(oi.primary);
+            const int r = (kv.first == prim) ? Scene::kPrimary : Scene::kSecondary;
             const auto t = told_size.find(r);
             if (t != told_size.end() && t->second.first == oi.width &&
                 t->second.second == oi.height) continue;
@@ -949,10 +953,11 @@ struct GlRenderer::Impl {
 
             glBindFramebuffer(GL_FRAMEBUFFER, fbo2);
             glViewport(0, 0, oi.width, oi.height);
-            // Роль беремо зі стану виводу, а не з номера слота: слот —
-            // це просто місце в масиві, а хто зараз основний, вирішує
-            // дисплей за типом коннектора.
-            draw_screen(Scene::role_of(oi.primary), oi, grabs);
+            // Сюди потрапляє лише те, що НЕ є основним — основний слот
+            // пропущено вище. Отже роль тут завжди додаткова, і питати її
+            // в кешованого стану не треба (він якраз і брехав: роль
+            // міняється без переналаштування виводу).
+            draw_screen(Scene::kSecondary, oi, grabs);
 
             // Чекаємо GPU так само, як для основного: без цього на екран
             // поїхав би недомальований буфер.
@@ -1032,7 +1037,10 @@ struct GlRenderer::Impl {
                              have_fence ? "є" : "немає");
             }
 
-            sync_overlay_sizes();
+            // Слот основного питаємо ЩОКАДРУ: він змінюється від
+            // під'єднання кабеля, а не від наших дій.
+            const int prim_slot = dpy->primary_screen();
+            sync_overlay_sizes(prim_slot);
 
             const GLuint fbo = fbo_for(target);
             if (!fbo) {
@@ -1120,7 +1128,7 @@ struct GlRenderer::Impl {
             // 59.003 проти 58.976 приблизно раз на секунду його кадр
             // повториться або пропаде. Затримки й пропуски на ньому нас
             // не турбують.
-            draw_extra_screens(grabs, target.screen);
+            draw_extra_screens(grabs, prim_slot >= 0 ? prim_slot : target.screen);
         }
 
         drop_gl_targets();
