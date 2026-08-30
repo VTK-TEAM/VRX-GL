@@ -48,7 +48,6 @@ add_executable(vrx_gl
     diag/link_monitor.cpp
     record/storage.cpp
     record/recorder.cpp
-    record/session_mlt.cpp
     osd/osd.cpp
     osd/osd_version.cpp
     osd/subtitle_writer.cpp

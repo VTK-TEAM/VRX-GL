@@ -32,7 +32,6 @@
 #include "osd/local_channels.hpp"
 #include "osd/telemetry/vt_telemetry_index.h"
 #include "osd/subtitle_writer.hpp"
-#include "record/session_mlt.hpp"
 #include "render/gl_renderer.hpp"
 #include "source/h265_source.hpp"
 #include "source/mjpeg_source.hpp"
@@ -460,17 +459,6 @@ int main(int argc, char** argv) {
     //
     // Синхронізується з рекордером ОСНОВНОГО каналу: новий файл запису
     // тягне новий .ass, зупинка запису їх закриває.
-    // Проєкт сеансу: збирає з журналу таймлайн і кладе .mlt поруч із
-    // відео. Власний потік — переписування XML на флешці блокує, і в
-    // циклі рекордера йому не місце.
-    std::unique_ptr<vrx::record::SessionMlt> session_mlt;
-    if (kRecordEnabled) {
-        vrx::record::SessionMlt::Config mlt_cfg;
-        mlt_cfg.session = session;
-        session_mlt = std::make_unique<vrx::record::SessionMlt>(mlt_cfg, storage);
-        session_mlt->start();
-    }
-
     std::unique_ptr<vrx::osd::SubtitleWriter> subs;
     std::unique_ptr<vrx::osd::LocalChannels> local_ch;
     if (osd) {
