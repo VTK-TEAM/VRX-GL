@@ -10,11 +10,14 @@
 // зробити найскладніший файл проєкту ще складнішим.
 
 #include "render/overlay.hpp"
+#include "record/session_index.hpp"
 #include "source/player_session.hpp"
 #include "ui/pointer.hpp"
 #include "ui/screen_presets.hpp"
 
+#include <functional>
 #include <memory>
+#include <vector>
 
 namespace vrx::ui {
 
@@ -32,6 +35,13 @@ public:
         float btn_pad = 0.010f;    // поле навколо підпису всередині кнопки
         float btn_gap = 0.005f;    // між кнопками
         float row_gap = 0.008f;    // між рядами й до смуги
+
+        // Список сеансів: рядок на кожне вмикання станції. Скільки їх
+        // видно — рахується з висоти екрана, а не задано числом: обмежувати
+        // список нема чого, місце все одно порожнє.
+        float list_row = 0.030f;   // висота рядка
+        float list_text = 0.014f;  // висота цифр у рядку
+        float list_fill = 0.94f;   // яку частку висоти екрана дозволено зайняти
         float bottom = 0.0f;       // впритул до низу екрана
     };
 
@@ -41,6 +51,10 @@ public:
     void attach(Pointer* p);
     void attach_presets(ScreenPresets* sp);
     void attach_player(int role, std::shared_ptr<source::PlayerSession> s);
+
+    // Звідки брати перелік сеансів. Шар не знає ні про носій, ні про те,
+    // де він змонтований, — це справа того, хто ним володіє.
+    void set_sessions(std::function<std::vector<record::SessionBrief>()> cb);
 
     // Чи влучає точка в смугу. Потрібне пресетам: без цього перетяг
     // повзунка тягнув би заразом і вікно під ним.
@@ -54,6 +68,10 @@ public:
     bool acquire(int role, render::DrawList& out) override;
 
 private:
+    // Малює й обслуговує список сеансів. Окремо від acquire(), бо це
+    // фактично інший екран: поки сеанс не обрано, решти плеєра немає.
+    void draw_list(int role, render::DrawList& out, float sa);
+
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

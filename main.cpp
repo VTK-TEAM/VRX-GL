@@ -360,6 +360,7 @@ int main(int argc, char** argv) {
     for (auto& pl : players) pl = std::make_shared<vrx::source::PlayerSession>();
 
     std::shared_ptr<vrx::ui::ScreenPresets> screen_presets;
+    std::shared_ptr<vrx::ui::PlayerUi> player_ui;
     if (!kSingleChannel) {
         screen_presets = std::make_shared<vrx::ui::ScreenPresets>(
             vrx::ui::ScreenPresets::Config{});
@@ -408,7 +409,7 @@ int main(int argc, char** argv) {
         // Таймлайн плеєра — окремим шаром: пресети відповідають за вікна,
         // і домішувати туди керування відтворенням означало б зробити
         // найскладніший файл проєкту ще складнішим.
-        auto player_ui = std::make_shared<vrx::ui::PlayerUi>(vrx::ui::PlayerUi::Config{});
+        player_ui = std::make_shared<vrx::ui::PlayerUi>(vrx::ui::PlayerUi::Config{});
         player_ui->attach(&pointer);
         player_ui->attach_presets(screen_presets.get());
         for (int r = 0; r < 2; ++r) player_ui->attach_player(r, players[r]);
@@ -459,6 +460,14 @@ int main(int argc, char** argv) {
 
     // Кнопка плеєра лише перемикає режим; відкрити сеанс — справа того,
     // хто володіє носієм і сеансами.
+    // Звідки шар бере перелік сеансів. Сам він про носій не знає: де той
+    // змонтований і чи є взагалі — справа того, хто ним володіє.
+    if (player_ui) player_ui->set_sessions([&storage]() {
+        const auto drive = storage.state();
+        if (!drive.usable()) return std::vector<vrx::record::SessionBrief>{};
+        return vrx::record::list_sessions(drive.root);
+    });
+
     if (screen_presets) screen_presets->set_on_mode([&players, &storage](int role, int mode) {
             if (role < 0 || role > 1) return;
             if (mode != vrx::ui::ScreenPresets::kPlayer) {
@@ -470,15 +479,9 @@ int main(int argc, char** argv) {
                 std::fprintf(stderr, "[плеєр] носія немає — показувати нічого\n");
                 return;
             }
-            auto list = vrx::record::list_sessions(drive.root);
-            if (list.empty()) {
-                std::fprintf(stderr, "[плеєр] на носії немає жодного сеансу\n");
-                return;
-            }
-        // Поки що найсвіжіший. Вибір зі списку — крок 3.
-            std::fprintf(stderr, "[плеєр] екран %d -> сеанс %s (%.0f с)\n",
-                         role, list.front().id.c_str(), list.front().length_us / 1e6);
-            players[role]->open(list.front().journal, 0);
+            // Сеанс НЕ відкриваємо: плеєр починає зі СПИСКУ, і обирає
+            // людина. Відкривати найсвіжіший мовчки — це вирішувати за неї.
+            (void)role;
         });
 
 

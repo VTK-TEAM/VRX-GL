@@ -54,6 +54,20 @@ bool PlayerSession::open(const std::string& journal_path, int64_t t_us) {
 void PlayerSession::close() {
     for (auto& c : ch_) c->stop();     // джерела лишаються, кадри зникають
     open_ = false;
+
+    // ЗАБУВАЄМО САМ СЕАНС, а не лише зупиняємо подачу.
+    //
+    // Інакше довжина лишалась ненульовою, і плеєр при наступному вході
+    // показував старий таймлайн замість списку — виглядало так, ніби вибір
+    // не працює й уперто вмикається той самий запис.
+    ix_ = record::SessionIndex{};
+    journal_.clear();
+    length_us_.store(0, std::memory_order_relaxed);
+    start_wall_us_.store(0, std::memory_order_relaxed);
+    live_.store(false, std::memory_order_relaxed);
+    position_us_ = 0;
+    last_tick_ns_ = 0;
+    last_reload_ns_ = 0;
 }
 
 FrameSource* PlayerSession::channel(int i) {

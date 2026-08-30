@@ -7,6 +7,7 @@
 #include <ctime>
 #include <string>
 #include <cstring>
+#include <ctime>
 #include <vector>
 
 namespace vrx::ui {
@@ -152,8 +153,29 @@ int glyph_index(char c) {
     }
 }
 
+// Рядок сеансу: "ДД.ММ ГГ:ХХ:СС  Г:ХХ:СС" — коли ввімкнули станцію і
+// скільки тривав запис. Літер немає навмисно: у шрифті лише цифри й кілька
+// знаків, і цього рівно вистачає.
+std::string session_row(int64_t power_on_us, int64_t len_us) {
+    const time_t sec = (time_t)(power_on_us / 1000000);
+    struct tm tm {};
+    localtime_r(&sec, &tm);
+    const int64_t s = len_us / 1000000;
+    char b[48];
+    std::snprintf(b, sizeof(b), "%02d.%02d %02d:%02d:%02d  %d:%02d:%02d",
+                  tm.tm_mday, tm.tm_mon + 1, tm.tm_hour, tm.tm_min, tm.tm_sec,
+                  (int)(s / 3600), (int)(s / 60 % 60), (int)(s % 60));
+    return b;
+}
+
 // Час доби з мікросекунд епохи — той самий, що показував годинник станції
 // у мить запису.
+int64_t mono_ns() {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000000000LL + ts.tv_nsec;
+}
+
 std::string clock_hms(int64_t us) {
     const time_t sec = (time_t)(us / 1000000);
     struct tm tm {};
@@ -198,6 +220,12 @@ struct PlayerUi::Impl {
 
     uint64_t seen_clicks = 0;
     uint64_t seen_btn_clicks = 0;
+    uint64_t seen_list_clicks = 0;
+    std::function<std::vector<record::SessionBrief>()> sessions_cb;
+    std::vector<record::SessionBrief> list;
+    int64_t list_at_ns = 0;
+    int scroll = 0;
+    int64_t seen_wheel = 0;
     double resume_speed[kRoles] = {1.0, 1.0};   // куди повертатись із паузи
     char speed_lbl[kRoles][8] = {};             // підпис швидкості, живе між кадрами
     bool was_left = false;
@@ -261,6 +289,35 @@ struct PlayerUi::Impl {
         lay(row, (int)(sizeof(row) / sizeof(row[0])), bar_y - cfg.row_gap - h);
     }
 
+    static void quad(render::DrawList& out, int image,
+                     float x, float y, float w, float h) {
+        render::OverlayQuad q;
+        q.image = image;
+        q.x[0] = x;     q.y[0] = y;     q.x[1] = x + w; q.y[1] = y;
+        q.x[2] = x;     q.y[2] = y + h; q.x[3] = x + w; q.y[3] = y + h;
+        q.u[0] = 0; q.v[0] = 0; q.u[1] = 1; q.v[1] = 0;
+        q.u[2] = 0; q.v[2] = 1; q.u[3] = 1; q.v[3] = 1;
+        out.quads.push_back(q);
+    }
+
+    void glyphs(render::DrawList& out, const std::string& t,
+                float x, float y, float h, float cw) const {
+        for (size_t i = 0; i < t.size(); ++i) {
+            const int g = glyph_index(t[i]);
+            if (g < 0) continue;
+            render::OverlayQuad q;
+            q.image = i_font;
+            const float x0 = x + cw * float(i), x1 = x0 + cw;
+            q.x[0] = x0; q.y[0] = y;     q.x[1] = x1; q.y[1] = y;
+            q.x[2] = x0; q.y[2] = y + h; q.x[3] = x1; q.y[3] = y + h;
+            const float u0 = float(g * kCellW) / float(kCellW * kGlyphs);
+            const float u1 = float((g + 1) * kCellW) / float(kCellW * kGlyphs);
+            q.u[0] = u0; q.v[0] = 0; q.u[1] = u1; q.v[1] = 0;
+            q.u[2] = u0; q.v[2] = 1; q.u[3] = u1; q.v[3] = 1;
+            out.quads.push_back(q);
+        }
+    }
+
     // Смуга в частках екрана.
     void bar_rect(float* x, float* y, float* w, float* h) const {
         *x = cfg.side;
@@ -290,6 +347,78 @@ void PlayerUi::set_frame_size(int role, int width, int height) {
 
 const std::vector<render::OverlayImage>& PlayerUi::images() const { return impl_->images; }
 
+void PlayerUi::draw_list(int role, render::DrawList& out, float sa) {
+    Impl& d = *impl_;
+
+    // Перелік оновлюємо не частіше ніж раз на дві секунди: живий сеанс
+    // росте, а перечитувати журнали щокадру ні до чого.
+    const int64_t now = mono_ns();
+    if (d.sessions_cb && (d.list_at_ns == 0 || now - d.list_at_ns > 2000000000LL)) {
+        d.list_at_ns = now;
+        d.list = d.sessions_cb();
+        if (d.scroll > (int)d.list.size() - 1) d.scroll = 0;
+    }
+
+    const float th = d.cfg.list_text;
+    const float cw = th * (float(kCellW) / float(kCellH)) * sa;
+    const float rowh = d.cfg.list_row;
+    const int n = (int)d.list.size();
+    const int fit = (int)(d.cfg.list_fill / rowh);
+    const int vis = n < fit ? n : (fit > 0 ? fit : 1);
+
+    const float w = cw * 22.0f + 0.04f;
+    const float x = 0.5f - w * 0.5f;
+    const float total = rowh * (vis > 0 ? vis : 1);
+    const float y0 = 0.5f - total * 0.5f;
+
+    Impl::quad(out, d.i_pad, x - 0.012f, y0 - 0.018f, w + 0.024f, total + 0.036f);
+
+    // --- ввід: колесо гортає, клік обирає ---
+    if (d.pointer) {
+        const PointerState p = d.pointer->state();
+        const int W = d.rw[role].load(std::memory_order_relaxed);
+        const int H = d.rh[role].load(std::memory_order_relaxed);
+        if (p.present && p.screen == role && W > 0 && H > 0) {
+            if (d.seen_wheel == 0) d.seen_wheel = p.wheel;
+            const int64_t dw = p.wheel - d.seen_wheel;
+            if (dw != 0) {
+                d.seen_wheel = p.wheel;
+                d.scroll -= (int)dw;
+                if (d.scroll < 0) d.scroll = 0;
+                if (d.scroll > n - vis) d.scroll = n - vis < 0 ? 0 : n - vis;
+            }
+            if (p.clicks > d.seen_list_clicks) {
+                d.seen_list_clicks = p.clicks;
+                const float cx = float(p.x) / float(W);
+                const float cy = float(p.y) / float(H);
+                for (int i = 0; i < vis; ++i) {
+                    const float ry = y0 + rowh * i;
+                    if (cx < x || cx > x + w || cy < ry || cy > ry + rowh) continue;
+                    const auto& b = d.list[i + d.scroll];
+                    std::fprintf(stderr, "[плеєр] екран %d -> сеанс %s\n",
+                                 role, b.id.c_str());
+                    d.player[role]->open(b.journal, 0);
+                    break;
+                }
+            }
+        }
+    }
+
+    for (int i = 0; i < vis; ++i) {
+        const auto& b = d.list[i + d.scroll];
+        const float ry = y0 + rowh * i;
+        // Живий сеанс підсвічено: у полі саме він потрібен найчастіше.
+        Impl::quad(out, b.live ? d.i_fill : d.i_track,
+                   x, ry + rowh * 0.08f, w, rowh * 0.84f);
+        d.glyphs(out, session_row(b.power_on_us, b.length_us),
+                 x + 0.012f, ry + (rowh - th) * 0.5f, th, cw);
+    }
+}
+
+void PlayerUi::set_sessions(std::function<std::vector<record::SessionBrief>()> cb) {
+    impl_->sessions_cb = std::move(cb);
+}
+
 bool PlayerUi::hit_bar(int role, float cx, float cy) const {
     Impl& d = *impl_;
     if (role < 0 || role >= kRoles || !d.player[role] || !d.presets) return false;
@@ -315,8 +444,19 @@ bool PlayerUi::acquire(int role, render::DrawList& out) {
     if (d.presets->mode(role) != ScreenPresets::kPlayer) return true;
 
     auto& pl = *d.player[role];
+
+    const int Wp0 = d.rw[role].load(std::memory_order_relaxed);
+    const int Hp0 = d.rh[role].load(std::memory_order_relaxed);
+    const float sa0 = (Wp0 > 0 && Hp0 > 0) ? float(Hp0) / float(Wp0) : 0.5625f;
+
+    // СЕАНС ЩЕ НЕ ОБРАНО — показуємо список. Це і є вхід у плеєр: спершу
+    // вибір, і лише потім усе інше. Відкривати найсвіжіший мовчки було
+    // тимчасовим рішенням і виглядало як свавілля.
     const int64_t len = pl.timeline_len_us();
-    if (len <= 0) return true;              // сеанс не відкритий
+    if (len <= 0) {
+        draw_list(role, out, sa0);
+        return true;
+    }
 
     float bx, by, bw, bh;
     d.bar_rect(&bx, &by, &bw, &bh);
