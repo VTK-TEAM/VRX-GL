@@ -40,6 +40,7 @@ add_executable(vrx_gl
     display/display.cpp
     source/mkv_feeder.cpp
     source/playback_source.cpp
+    source/player_session.cpp
     source/video_source.cpp
     render/gl_renderer.cpp
     control/camera_api.cpp

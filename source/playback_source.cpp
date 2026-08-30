@@ -65,12 +65,17 @@ struct PlaybackSource::Impl {
     Item current;                     // що показуємо зараз
     int64_t anchor_us = 0;            // якір файлу, щоб PTS перевести в час сеансу
 
-    // Швидкість як БОРГ: за кожен забір додається cfg-швидкість, і поки
-    // борг не менший за одиницю, з черги знімається кадр. Дробові
-    // швидкості так виходять самі, без окремих випадків.
-    std::atomic<double> speed{1.0};
-    double debt = 0.0;
-    std::atomic<bool> step_once{false};
+    // Ціль у часі СЕАНСУ. Кадр із черги стає поточним, поки його власний
+    // час не перевищує цілі.
+    std::atomic<int64_t> target_us{-1};
+    int64_t session_start_us = 0;
+
+    // Час кадру в шкалі сеансу. Якір — момент, якому відповідає PTS=0 у
+    // цьому файлі; звідси різні файли одного каналу лягають на спільну
+    // вісь без жодних поправок.
+    int64_t session_time(int64_t pts_us) const {
+        return anchor_us + pts_us - session_start_us;
+    }
 
     SourceStats st;
 
@@ -258,17 +263,26 @@ bool PlaybackSource::seek(int64_t t_us) {
             if (!f.closed) limit = f.safe_bytes;
         }
     d.anchor_us = anchor;
-    d.debt = 0.0;
+    d.session_start_us = d.ix.start_us();
+    d.target_us.store(t_us, std::memory_order_relaxed);
     return d.build(d.ix.dir() + "/" + sp.name, sp.byte_off, limit);
 }
 
 bool PlaybackSource::start() { return true; }       // піднімає open/seek
 void PlaybackSource::stop()  { impl_->teardown(); }
 
-void PlaybackSource::set_speed(double s) {
-    impl_->speed.store(s < 0 ? 0 : (s > 10.0 ? 10.0 : s));
+void PlaybackSource::set_target(int64_t session_us) {
+    impl_->target_us.store(session_us, std::memory_order_relaxed);
 }
-void PlaybackSource::step() { impl_->step_once.store(true); }
+
+int64_t PlaybackSource::next_after(int64_t session_us) const {
+    std::lock_guard<std::mutex> lk(impl_->mtx);
+    for (const auto& it : impl_->queue) {
+        const int64_t t = impl_->session_time(it.pts_us);
+        if (t > session_us) return t;
+    }
+    return 0;
+}
 
 bool PlaybackSource::acquire(SourceFrame& out) {
     Impl& d = *impl_;
@@ -277,19 +291,17 @@ bool PlaybackSource::acquire(SourceFrame& out) {
     {
         std::lock_guard<std::mutex> lk(d.mtx);
 
-        double take = d.speed.load(std::memory_order_relaxed);
-        if (d.step_once.exchange(false)) take = 1.0;   // крок на паузі
-        d.debt += take;
+        const int64_t target = d.target_us.load(std::memory_order_relaxed);
 
-        while (d.debt >= 1.0 && !d.queue.empty()) {
+        // Знімаємо все, що вже настало, лишаючи ОСТАННІЙ такий кадр.
+        // Проміжні при швидкості вище одиниці глядач і так не побачив би.
+        while (!d.queue.empty() && d.session_time(d.queue.front().pts_us) <= target) {
             if (d.current.frame) dying.push_back(std::move(d.current.frame));
             d.current = d.queue.front();
             d.queue.pop_front();
-            d.debt -= 1.0;
             d.st.taken++;
         }
-        if (!dying.empty() || d.debt < 1.0) d.room.notify_one();
-        if (d.debt >= 1.0) d.debt = 1.0;    // черга порожня — борг не копимо
+        if (!dying.empty()) d.room.notify_one();
 
         if (!d.current.frame) return false;
         out = *d.current.frame;
@@ -311,7 +323,7 @@ SourceStats PlaybackSource::stats() const {
 int64_t PlaybackSource::position_us() const {
     std::lock_guard<std::mutex> lk(impl_->mtx);
     if (!impl_->current.frame) return 0;
-    return impl_->anchor_us + impl_->current.pts_us - impl_->ix.start_us();
+    return impl_->session_time(impl_->current.pts_us);
 }
 
 } // namespace vrx::source
