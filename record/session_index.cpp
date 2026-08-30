@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <dirent.h>
 
 namespace vrx::record {
 namespace {
@@ -60,6 +61,16 @@ int64_t parse_iso(const std::string& s) {
         frac = std::strtoll(f.c_str(), nullptr, 10);
     }
     return (int64_t)sec * 1000000 + frac;
+}
+
+// "20260830_193028" -> мікросекунди епохи. Мітку ставить рекордер за
+// МІСЦЕВИМ часом (так само, як у назвах файлів), тож і читаємо як місцевий.
+int64_t parse_session_id(const std::string& id) {
+    struct tm tm {};
+    if (!strptime(id.c_str(), "%Y%m%d_%H%M%S", &tm)) return 0;
+    tm.tm_isdst = -1;
+    const time_t sec = mktime(&tm);
+    return sec > 0 ? (int64_t)sec * 1000000 : 0;
 }
 
 } // namespace
@@ -174,6 +185,49 @@ SeekPoint SessionIndex::locate(const std::string& channel, int64_t t_us) const {
         return sp;
     }
     return sp;      // провал у записі — не помилка
+}
+
+
+std::vector<SessionBrief> list_sessions(const std::string& root) {
+    std::vector<SessionBrief> out;
+    DIR* d = ::opendir(root.c_str());
+    if (!d) return out;
+
+    while (dirent* e = ::readdir(d)) {
+        if (e->d_name[0] == '.') continue;
+        const std::string day = root + "/" + e->d_name;
+
+        DIR* dd = ::opendir(day.c_str());
+        if (!dd) continue;                       // не тека — і добре
+        while (dirent* f = ::readdir(dd)) {
+            const std::string n = f->d_name;
+            if (n.rfind("session_", 0) != 0) continue;
+            if (n.size() < 6 || n.compare(n.size() - 6, 6, ".jsonl") != 0) continue;
+
+            SessionIndex ix;
+            const std::string path = day + "/" + n;
+            if (!ix.load(path)) continue;        // порожній або битий — пропускаємо
+
+            SessionBrief b;
+            b.id = ix.id();
+            b.power_on_us = parse_session_id(b.id);
+            b.journal = path;
+            b.start_us = ix.start_us();
+            b.length_us = ix.length_us();
+            b.live = ix.live();
+            b.files = (int)ix.files().size();
+            out.push_back(std::move(b));
+        }
+        ::closedir(dd);
+    }
+    ::closedir(d);
+
+    // Найновіші першими: у полі шукають щойно знятий політ, а не вчорашній.
+    std::sort(out.begin(), out.end(),
+              [](const SessionBrief& a, const SessionBrief& b) {
+                  return a.power_on_us > b.power_on_us;
+              });
+    return out;
 }
 
 } // namespace vrx::record
