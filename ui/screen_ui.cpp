@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdio>
 #include <mutex>
+#include <utility>
 #include <vector>
 
 namespace vrx::ui {
@@ -158,7 +159,12 @@ struct ScreenUi::Impl {
     static constexpr int kButtonActive = 1;
     static constexpr int kCursor = 2;
 
-    std::atomic<int> fw{0}, fh{0};
+    // Геометрія КОЖНОГО екрана. Кнопка й курсор рахуються в частках, а
+    // частка береться від висоти саме того екрана, на якому малюємо.
+    static constexpr int kRoles = 2;
+    std::atomic<int> rw[kRoles] = {};
+    std::atomic<int> rh[kRoles] = {};
+    std::atomic<int> fw{0}, fh{0};   // основний — для сумісності всередині
     std::atomic<bool> editor_requested{false};
 
     // Натиснуто — і назад уже не вимикається: станція від цієї миті
@@ -199,19 +205,38 @@ void ScreenUi::attach(Pointer* pointer) { impl_->pointer = pointer; }
 bool ScreenUi::start() { return true; }
 void ScreenUi::stop() {}
 
-void ScreenUi::set_frame_size(int width, int height) {
-    impl_->fw.store(width);
-    impl_->fh.store(height);
-    if (impl_->pointer) impl_->pointer->set_bounds(width, height);
+void ScreenUi::set_frame_size(int role, int width, int height) {
+    Impl& d = *impl_;
+    if (role < 0 || role >= Impl::kRoles) return;
+    d.rw[role].store(width);
+    d.rh[role].store(height);
+    if (role == 0) {
+        d.fw.store(width);
+        d.fh.store(height);
+    }
+
+    // КУРСОР ХОДИТЬ ПО ВСІХ ЕКРАНАХ, тож межі йому задаємо СПИСКОМ, а не
+    // одним прямокутником. Робить це саме цей оверлей: він курсор і
+    // малює, отже він і єдиний, хто зобов'язаний знати всю геометрію.
+    std::vector<std::pair<int, int>> sizes;
+    for (int r = 0; r < Impl::kRoles; ++r) {
+        const int w = d.rw[r].load(), h = d.rh[r].load();
+        if (w > 0 && h > 0) sizes.push_back({w, h});
+    }
+    if (d.pointer && !sizes.empty()) {
+        d.pointer->set_bounds(sizes[0].first, sizes[0].second);
+        d.pointer->set_screens(sizes);
+    }
 }
 
 const std::vector<render::OverlayImage>& ScreenUi::images() const {
     return impl_->images;
 }
 
-bool ScreenUi::acquire(render::DrawList& out) {
+bool ScreenUi::acquire(int role, render::DrawList& out) {
     Impl& d = *impl_;
-    const int W = d.fw.load(), H = d.fh.load();
+    if (role < 0 || role >= Impl::kRoles) return false;
+    const int W = d.rw[role].load(), H = d.rh[role].load();
     if (W <= 0 || H <= 0) return false;
 
     float bx, by, bw, bh;
@@ -233,11 +258,19 @@ bool ScreenUi::acquire(render::DrawList& out) {
         out.quads.push_back(q);
     };
 
-    push(d.pressed.load() ? Impl::kButtonActive : Impl::kButton, bx, by, bw, bh);
+    // КНОПКА РЕДАКТОРА — ЛИШЕ НА ОСНОВНОМУ. Редактор розкладки OSD це
+    // окрема програма під X, вона одна й показується там; кнопка на
+    // додатковому екрані вела б у те саме місце, тільки збивала б з
+    // пантелику.
+    if (role == 0) {
+        push(d.pressed.load() ? Impl::kButtonActive : Impl::kButton, bx, by, bw, bh);
+    }
 
     if (d.pointer) {
         const PointerState p = d.pointer->state();
-        if (p.present) {
+        // КУРСОР МАЛЮЄ ЛИШЕ ТОЙ ЕКРАН, НА ЯКОМУ ВІН ЗАРАЗ. Інакше він
+        // роздвоївся б: та сама позиція в частках існує на обох.
+        if (p.present && p.screen == role) {
             // Курсор малюємо ПІСЛЯ кнопки — він завжди поверх.
             //
             // Висота в частках екрана, ширина з неї ж за пропорцією
@@ -251,7 +284,7 @@ bool ScreenUi::acquire(render::DrawList& out) {
             // КЛІК ПО КНОПЦІ. Рахуємо за лічильником натискань, а не за
             // станом кнопки: між двома кадрами миша встигає і натиснути,
             // і відпустити, і стан у цей момент уже нічого не покаже.
-            if (p.clicks > d.seen_clicks) {
+            if (role == 0 && p.clicks > d.seen_clicks) {
                 d.seen_clicks = p.clicks;
                 const float px = float(p.x) / float(W);
                 const float py = float(p.y) / float(H);

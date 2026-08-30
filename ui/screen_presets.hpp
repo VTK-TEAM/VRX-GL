@@ -66,17 +66,13 @@ public:
     void set_telemetry(VtTelemetryStorage* tlm);   // для перемикача каналом 15; може бути nullptr
 
     const char* name() const override { return "presets"; }
-    // Куди складати розкладку. Раніше пресети писали прямо в джерела
-    // (source->set_placement), і саме тому розкладка була одна на всю
-    // станцію. Тепер адресат — сцена, і в неї можна писати окремо на
-    // кожен екран.
     void attach_scene(render::Scene* scene);
 
     bool start() override;
     void stop() override;
-    void set_frame_size(int width, int height) override;
+    void set_frame_size(int role, int width, int height) override;
     const std::vector<render::OverlayImage>& images() const override;
-    bool acquire(render::DrawList& out) override;
+    bool acquire(int role, render::DrawList& out) override;
 
 private:
     struct Impl;

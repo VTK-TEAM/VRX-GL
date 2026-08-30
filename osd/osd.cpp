@@ -73,7 +73,8 @@ struct Osd::Impl {
     // Опублікований знімок. Пишe збирач, читає рендерер.
     mutable std::mutex out_mtx;
     render::DrawList ready;
-    bool ready_fresh = false;
+    static constexpr int kRoles = 2;
+    bool fresh[kRoles] = {false, false};
     uint64_t serial = 0;
 
     mutable std::mutex st_mtx;
@@ -701,7 +702,7 @@ struct Osd::Impl {
             std::lock_guard<std::mutex> lk(out_mtx);
             dl.serial = ++serial;
             ready = std::move(dl);
-            ready_fresh = true;
+            for (int r = 0; r < Impl::kRoles; ++r) fresh[r] = true;
         }
         {
             std::lock_guard<std::mutex> lk(st_mtx);
@@ -786,7 +787,17 @@ void Osd::stop() {
     impl_->listener.stop();
 }
 
-void Osd::set_frame_size(int width, int height) {
+void Osd::set_frame_size(int role, int width, int height) {
+    // ЗБИРАЧ ОДИН, І ВІН РАХУЄ ПІД ОСНОВНИЙ ЕКРАН.
+    //
+    // Розмір гліфа береться з висоти кадру, тож список квадів, зібраний
+    // під один екран, на екрані іншої ВИСОТИ дасть інший піксельний
+    // розмір тексту. Поки обидва наші монітори 16:9, різниця лише в
+    // масштабі, і телеметрія на додатковому виглядає пропорційно.
+    //
+    // Окремий збирач на кожен екран — наступний крок; тоді ж з'явиться і
+    // окремий osd_config.json на роль.
+    if (role != 0) return;
     impl_->frame_w.store(width, std::memory_order_relaxed);
     impl_->frame_h.store(height, std::memory_order_relaxed);
 }
@@ -795,11 +806,15 @@ const std::vector<render::OverlayImage>& Osd::images() const {
     return impl_->images;
 }
 
-bool Osd::acquire(render::DrawList& out) {
+bool Osd::acquire(int role, render::DrawList& out) {
     std::lock_guard<std::mutex> lk(impl_->out_mtx);
-    if (!impl_->ready_fresh) return false;      // нового немає — хай малює попередній
+    if (role < 0 || role >= Impl::kRoles) return false;
+    // Свіжість — ОКРЕМА НА КОЖНУ РОЛЬ. Рендерер питає нас двічі за кадр,
+    // і спільний прапорець означав би, що новий список дістається лише
+    // тому, хто спитав першим, а другий екран показує вчорашній.
+    if (!impl_->fresh[role]) return false;
     out = impl_->ready;
-    impl_->ready_fresh = false;
+    impl_->fresh[role] = false;
     return true;
 }
 

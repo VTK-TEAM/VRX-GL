@@ -322,7 +322,7 @@ int main(int argc, char** argv) {
     // ним ніхто не керує, як і джерелами.
     auto osd = std::make_shared<vrx::osd::Osd>(vrx::osd::Osd::Config{});
     if (osd->init() && osd->start()) {
-        renderer.add_overlay(osd);
+        renderer.add_overlay(osd, vrx::render::GlRenderer::OverlayKind::Osd);
         std::printf("OSD піднято.\n");
     } else {
         // Немає атласу чи конфігу — працюємо без OSD, а не падаємо:

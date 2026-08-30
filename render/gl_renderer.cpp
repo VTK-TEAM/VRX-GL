@@ -68,6 +68,22 @@ struct GlRenderer::Impl {
     std::map<int, display::OutputState> infos;
     std::map<int, uint32_t> gens;
 
+    // ГЕОМЕТРІЯ, ПРО ЯКУ ОВЕРЛЕЇ ВЖЕ ЗНАЮТЬ.
+    //
+    // Окремо від infos, і це не дублювання. Раніше оверлеям казали про
+    // екран рівно один раз — у гілці "змінилось покоління". Але потік
+    // показу стартує РАНІШЕ, ніж main встигає додати оверлеї: перша ж
+    // ітерація проходила ту гілку, коли список оверлеїв ще порожній, а
+    // далі вона вже не спрацьовувала ніколи. Другий екран так і лишався
+    // для них невідомим — без кнопок, без курсора, а миша впиралась у
+    // край, бо не знала, що поруч є ще один екран.
+    //
+    // Тепер стан "кому що сказано" ведеться явно й звіряється щокадру:
+    // це кілька порівнянь у map, зате від порядку запуску не залежить.
+    std::map<int, std::pair<int, int>> told_size;
+    std::atomic<uint32_t> ovl_epoch{0};   // росте, коли додали оверлей
+    uint32_t seen_epoch = 0;
+
     struct gbm_device* gbm = nullptr;   // належить дисплею, ми лише беремо для EGL
 
     EGLDisplay egl = EGL_NO_DISPLAY;
@@ -168,8 +184,13 @@ struct GlRenderer::Impl {
     struct OverlaySlot {
         std::shared_ptr<Overlay> ovl;
         std::vector<GLuint> textures;
-        DrawList list;
-        bool have = false;
+        // Знімок ОКРЕМИЙ на кожну роль: вміст різний (курсор лише там, де
+        // він зараз; кнопка OSD показує стан свого екрана), і спільний
+        // кеш віддавав би одному екрану чуже.
+        static constexpr int kRoles = 2;
+        DrawList list[kRoles];
+        bool have[kRoles] = {false, false};
+        OverlayKind kind = OverlayKind::Ui;
     };
     mutable std::mutex ovl_mtx;
     std::vector<OverlaySlot> overlays;
@@ -473,7 +494,7 @@ struct GlRenderer::Impl {
     //
     // Пропорція екрана й розкладка тут різні для кожного виводу, тому
     // вписування рахується окремо, хоч кадри й ті самі.
-    void build_items(int screen, const display::OutputState& oi,
+    void build_items(int role, const display::OutputState& oi,
                      const std::vector<Grab>& grabs, std::vector<Item>& items) {
         if (oi.width <= 0 || oi.height <= 0) return;
         const float screen_aspect = float(oi.width) / float(oi.height);
@@ -483,7 +504,7 @@ struct GlRenderer::Impl {
             // Немає запису в сцені (ані власного, ані замовчування) —
             // значить на цьому екрані цього джерела просто немає.
             layout::Placement where;
-            if (!scene.get(screen, g.src, &where)) continue;
+            if (!scene.get(role, g.src, &where)) continue;
             if (!where.enabled) continue;
 
             const float a = g.f.aspect();
@@ -547,8 +568,8 @@ struct GlRenderer::Impl {
         if (rel / 1e6 > poll_offset_ms) st.late++;
     }
 
-    void draw_screen(int screen, const display::OutputState& oi,
-                     const std::vector<Grab>& grabs, bool with_overlays) {
+    void draw_screen(int role, const display::OutputState& oi,
+                     const std::vector<Grab>& grabs) {
         if (cfg.colortest) { draw_colortest(); return; }
 
         // Чистимо ЗАВЖДИ. Під кадром, що не покрив увесь екран, інакше
@@ -579,17 +600,12 @@ struct GlRenderer::Impl {
         // програма одна, а дрони різні, і рамка чи напис припускали б
         // знання про конкретну конфігурацію.
         std::vector<Item> items;
-        build_items(screen, oi, grabs, items);
+        build_items(role, oi, grabs, items);
         draw_sources(items);
 
-        // ОВЕРЛЕЇ — ЛИШЕ НА ОСНОВНОМУ.
-        //
-        // Курсор і кнопка редактора за ТЗ живуть тільки там, а OSD на
-        // додатковому вимикається окремим перемикачем (крок 4). До того
-        // ж збирач OSD рахує розмір гліфів під ОДИН екран, і малювати
-        // його список на екрані іншої висоти означало б показувати
-        // телеметрію в чужому масштабі.
-        if (with_overlays) draw_overlays();
+        // Хто саме малюється — вирішує draw_overlays за роллю: курсор і
+        // кнопки лише на основному, телеметрія за перемикачем.
+        draw_overlays(role);
     }
 
     // Оверлеї малюються ПІСЛЯ джерел, тобто поверх відео, і завжди зі
@@ -599,17 +615,34 @@ struct GlRenderer::Impl {
     // Змішування вмикається тільки тут. Для відео воно шкідливе: кадр
     // непрозорий, а зайвий blend — це зайве читання цілі, тобто та сама
     // смуга пам'яті, заради якої вся ця архітектура й затіяна.
-    void draw_overlays() {
+    void draw_overlays(int role) {
         std::lock_guard<std::mutex> lk(ovl_mtx);
         if (overlays.empty() || !prog_tex) return;
 
+        const bool osd_here = scene.osd(role);
         bool blend_on = false;
 
         for (OverlaySlot& slot : overlays) {
+            // ІНТЕРФЕЙС МАЛЮЄТЬСЯ НА ВСІХ ЕКРАНАХ, і рішення "що саме
+            // показати" ухвалює сам оверлей, а не рендерер.
+            //
+            // Тут стояв фільтр "Ui лише на основному". Він був
+            // правильний, поки курсор жив на одному екрані, і став
+            // помилкою, щойно курсор пішов по кільцю: разом із кнопками
+            // з другого екрана зникав і САМ КУРСОР. Ззовні це виглядало
+            // не як "не намальовано", а як "миша не переходить" — вона
+            // переходила, просто малювати її не було кому.
+            //
+            // Тепер ScreenUi сам показує курсор лише там, де він зараз, і
+            // кнопку редактора лише на основному, а ScreenPresets малює
+            // кнопку OSD свою на кожному екрані.
+            if (slot.kind == OverlayKind::Osd && !osd_here) continue;
+
             // Знімок. Немає нового — малюємо попередній: OSD оновлюється
             // разів у двадцять на секунду, показ іде шістдесят.
-            if (slot.ovl->acquire(slot.list)) slot.have = true;
-            if (!slot.have || slot.list.quads.empty()) continue;
+            const int r = (role >= 0 && role < OverlaySlot::kRoles) ? role : 0;
+            if (slot.ovl->acquire(r, slot.list[r])) slot.have[r] = true;
+            if (!slot.have[r] || slot.list[r].quads.empty()) continue;
 
             ensure_overlay_textures(slot);
 
@@ -628,13 +661,13 @@ struct GlRenderer::Impl {
             // кожен одним викликом — двісті гліфів дають одну-дві пачки
             // замість двохсот перемикань стану.
             size_t i = 0;
-            while (i < slot.list.quads.size()) {
-                const int img = slot.list.quads[i].image;
+            while (i < slot.list[r].quads.size()) {
+                const int img = slot.list[r].quads[i].image;
                 size_t j = i;
-                while (j < slot.list.quads.size() && slot.list.quads[j].image == img) ++j;
+                while (j < slot.list[r].quads.size() && slot.list[r].quads[j].image == img) ++j;
 
                 if (img >= 0 && img < (int)slot.textures.size() && slot.textures[img]) {
-                    build_overlay_batch(slot.list, i, j);
+                    build_overlay_batch(slot.list[r], i, j);
                     glBindTexture(GL_TEXTURE_2D, slot.textures[img]);
                     glBindBuffer(GL_ARRAY_BUFFER, ovl_vbo);
                     glBufferData(GL_ARRAY_BUFFER,
@@ -864,6 +897,30 @@ struct GlRenderer::Impl {
     // Пропуск екрана тут нічого не ламає: у нього просто лишиться
     // попередній кадр. Саме тому додатковий і не має права затримати
     // основний — його робота вся необов'язкова.
+    // Розсилає оверлеям геометрію КОЖНОГО відомого екрана — але лише те,
+    // чого вони ще не знають. Дешево: кілька порівнянь у map.
+    void sync_overlay_sizes() {
+        const uint32_t ep = ovl_epoch.load(std::memory_order_relaxed);
+        if (ep != seen_epoch) {
+            // Додали новий оверлей — він не знає нічого, тож розповідаємо
+            // всім заново.
+            told_size.clear();
+            seen_epoch = ep;
+        }
+        for (const auto& kv : infos) {
+            const display::OutputState& oi = kv.second;
+            if (oi.width <= 0 || oi.height <= 0) continue;
+            const int r = Scene::role_of(oi.primary);
+            const auto t = told_size.find(r);
+            if (t != told_size.end() && t->second.first == oi.width &&
+                t->second.second == oi.height) continue;
+            told_size[r] = {oi.width, oi.height};
+
+            std::lock_guard<std::mutex> lk(ovl_mtx);
+            for (OverlaySlot& sl : overlays) sl.ovl->set_frame_size(r, oi.width, oi.height);
+        }
+    }
+
     void draw_extra_screens(const std::vector<Grab>& grabs, int primary_screen) {
         const int n = dpy->screen_count();
         for (int sc = 0; sc < n; ++sc) {
@@ -892,7 +949,10 @@ struct GlRenderer::Impl {
 
             glBindFramebuffer(GL_FRAMEBUFFER, fbo2);
             glViewport(0, 0, oi.width, oi.height);
-            draw_screen(sc, oi, grabs, /*with_overlays=*/false);
+            // Роль беремо зі стану виводу, а не з номера слота: слот —
+            // це просто місце в масиві, а хто зараз основний, вирішує
+            // дисплей за типом коннектора.
+            draw_screen(Scene::role_of(oi.primary), oi, grabs);
 
             // Чекаємо GPU так само, як для основного: без цього на екран
             // поїхав би недомальований буфер.
@@ -966,17 +1026,13 @@ struct GlRenderer::Impl {
                 // перепідключення монітора з іншою роздільністю OSD
                 // лишився б із масштабом від попереднього — і це було б
                 // не падіння, а тихо неправильний розмір тексту.
-                {
-                    std::lock_guard<std::mutex> lk(ovl_mtx);
-                    for (OverlaySlot& sl : overlays) {
-                        sl.ovl->set_frame_size(info.width, info.height);
-                    }
-                }
 
                 std::fprintf(stderr, "[gl] %dx%d | період %.2f мс | fence: %s\n",
                              info.width, info.height, period_ns / 1e6,
                              have_fence ? "є" : "немає");
             }
+
+            sync_overlay_sizes();
 
             const GLuint fbo = fbo_for(target);
             if (!fbo) {
@@ -1025,7 +1081,8 @@ struct GlRenderer::Impl {
 
             glBindFramebuffer(GL_FRAMEBUFFER, fbo);
             glViewport(0, 0, info.width, info.height);
-            draw_screen(target.screen, info, grabs, /*with_overlays=*/true);
+            // Основний вивід за визначенням несе роль kPrimary.
+            draw_screen(Scene::kPrimary, info, grabs);
             frame_no++;
 
             // Чекаємо РЕАЛЬНОГО завершення GPU. Без цього на екран поїде
@@ -1148,13 +1205,17 @@ void GlRenderer::add_source(std::shared_ptr<source::FrameSource> src) {
     impl_->sources.push_back(std::move(src));
 }
 
-void GlRenderer::add_overlay(std::shared_ptr<Overlay> ovl) {
+void GlRenderer::add_overlay(std::shared_ptr<Overlay> ovl, OverlayKind kind) {
     if (!ovl) return;
-    ovl->set_frame_size(impl_->info.width, impl_->info.height);
+    ovl->set_frame_size(Scene::kPrimary, impl_->info.width, impl_->info.height);
     std::lock_guard<std::mutex> lk(impl_->ovl_mtx);
     Impl::OverlaySlot slot;
     slot.ovl = std::move(ovl);
+    slot.kind = kind;
     impl_->overlays.push_back(std::move(slot));
+    // Новий оверлей ще не знає жодної геометрії — хай цикл розповість
+    // йому про ВСІ екрани, а не лише про основний.
+    impl_->ovl_epoch.fetch_add(1, std::memory_order_relaxed);
 }
 
 void GlRenderer::remove_source(const std::shared_ptr<source::FrameSource>& src) {

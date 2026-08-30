@@ -112,10 +112,10 @@ public:
     bool start() override;
     void stop() override;
 
-    void set_frame_size(int width, int height) override;
+    void set_frame_size(int role, int width, int height) override;
 
     const std::vector<render::OverlayImage>& images() const override;
-    bool acquire(render::DrawList& out) override;
+    bool acquire(int role, render::DrawList& out) override;
 
     OsdStats stats() const;
 

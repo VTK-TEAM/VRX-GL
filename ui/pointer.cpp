@@ -14,6 +14,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace vrx::ui {
@@ -52,6 +53,10 @@ struct Pointer::Impl {
     mutable std::mutex mtx;
     PointerState st{};
     int w = 0, h = 0;
+
+    // Розміри всіх екранів у порядку ролей. Порожньо або один — кільця
+    // немає, курсор просто впирається в край, як було завжди.
+    std::vector<std::pair<int, int>> screens;
 
     explicit Impl(Config c) : cfg(c) {}
 
@@ -191,6 +196,29 @@ struct Pointer::Impl {
             if (w > 0 && h > 0) {
                 st.x += (int)(dx * cfg.speed);
                 st.y += (int)(dy * cfg.speed);
+
+                // ПЕРЕХІД МІЖ ЕКРАНАМИ ЧЕРЕЗ БІЧНИЙ КРАЙ.
+                //
+                // Кільце: вийшов ліворуч — з'явився праворуч на
+                // сусідньому. Так не треба знати, який монітор де стоїть
+                // фізично, і обійти всі екрани можна в будь-який бік.
+                //
+                // Вертикаль переносимо ЧАСТКОЮ, а не пікселями: екрани
+                // різної висоти, і перехід на середині має лишатись
+                // серединою.
+                const int n = (int)screens.size();
+                if (n > 1) {
+                    while (st.x < 0 || st.x > w - 1) {
+                        const double fy = (h > 1) ? double(st.y) / double(h - 1) : 0.0;
+                        const bool left = st.x < 0;
+                        st.screen = left ? (st.screen - 1 + n) % n : (st.screen + 1) % n;
+                        w = screens[(size_t)st.screen].first;
+                        h = screens[(size_t)st.screen].second;
+                        st.x = left ? w - 1 : 0;
+                        st.y = (int)(fy * double(h - 1) + 0.5);
+                    }
+                }
+
                 if (st.x < 0) st.x = 0;
                 if (st.y < 0) st.y = 0;
                 if (st.x > w - 1) st.x = w - 1;
@@ -220,6 +248,21 @@ Pointer::Pointer(Config cfg) : impl_(new Impl(cfg)) {}
 Pointer::Pointer() : impl_(new Impl(Config())) {}
 
 Pointer::~Pointer() { stop(); }
+
+void Pointer::set_screens(const std::vector<std::pair<int, int>>& sizes) {
+    std::lock_guard<std::mutex> lk(impl_->mtx);
+    impl_->screens = sizes;
+    if (impl_->screens.empty()) return;
+    if (impl_->st.screen >= (int)impl_->screens.size()) {
+        // Екран, на якому стояв курсор, зник — забираємо його на перший.
+        impl_->st.screen = 0;
+    }
+    const auto& sc = impl_->screens[(size_t)impl_->st.screen];
+    impl_->w = sc.first;
+    impl_->h = sc.second;
+    if (impl_->st.x > impl_->w - 1) impl_->st.x = impl_->w - 1;
+    if (impl_->st.y > impl_->h - 1) impl_->st.y = impl_->h - 1;
+}
 
 void Pointer::set_bounds(int width, int height) {
     std::lock_guard<std::mutex> lk(impl_->mtx);
