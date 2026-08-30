@@ -624,7 +624,11 @@ void EditorApp::request_delete_confirm() {
 
 // Підпис і колір кнопки показують, ЯКУ розкладку зараз видно на полотні.
 void EditorApp::update_screen_button() {
-    screen_button_.label = (edit_role_ == 0) ? "Екран: ОСН" : "Екран: ДОД";
+    // Підписи однакової довжини з сусідніми кнопками ("+ додати",
+    // "Зберегти") — довше в 92 пікселі не влазить. "Додатковий" не
+    // вмістився, тож пара стала "Основний / Другий": кнопка має рівно два
+    // стани, і сплутати їх нема з чим.
+    screen_button_.label = (edit_role_ == 0) ? "Основний" : "Другий";
     screen_button_.bg_color = (edit_role_ == 0) ? ui_color::ACCENT : ui_color::WARNING;
 }
 

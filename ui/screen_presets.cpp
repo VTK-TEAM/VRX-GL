@@ -47,16 +47,17 @@ render::OverlayImage make_num_button(int digit /*1..3*/, bool active, int size) 
     img.rgba.assign((size_t)size * size * 4, 0);
 
     const int r = size / 6;
-    const uint8_t br = active ? 255 : 235, bg = active ? 240 : 235, bb = active ? 190 : 240;
     const uint8_t fr = active ? 200 : 25, fg = active ? 120 : 28, fb = active ? 20 : 36;
     for (int y = 0; y < size; ++y) {
         for (int x = 0; x < size; ++x) {
             const int cx = (x < r) ? r : (x >= size - r ? size - r - 1 : x);
             const int cy = (y < r) ? r : (y >= size - r ? size - r - 1 : y);
             if (std::hypot(float(x - cx), float(y - cy)) > r) continue;
-            const bool edge = x < 2 || y < 2 || x >= size - 2 || y >= size - 2;
-            if (edge) put(img.rgba, size, x, y, br, bg, bb, active ? 255 : 235);
-            else      put(img.rgba, size, x, y, fr, fg, fb, active ? 255 : 200);
+            // БЕЗ РАМКИ. Світлий обідець у два пікселі на заокругленому
+            // куті лягав сходинками — згладжування тут нізвідки взятись,
+            // бо картинка малюється кодом попіксельно. Суцільна плитка
+            // читається чистіше, а форму тримають самі заокруглення.
+            put(img.rgba, size, x, y, fr, fg, fb, active ? 255 : 200);
         }
     }
 
@@ -77,16 +78,17 @@ render::OverlayImage make_num_button(int digit /*1..3*/, bool active, int size) 
 // Тло кнопки: та сама заокруглена плитка, що й у цифрових.
 void draw_button_bg(render::OverlayImage& img, bool active, int size) {
     const int r = size / 6;
-    const uint8_t br = active ? 255 : 235, bg = active ? 240 : 235, bb = active ? 190 : 240;
     const uint8_t fr = active ? 200 : 25, fg = active ? 120 : 28, fb = active ? 20 : 36;
     for (int y = 0; y < size; ++y) {
         for (int x = 0; x < size; ++x) {
             const int cx = (x < r) ? r : (x >= size - r ? size - r - 1 : x);
             const int cy = (y < r) ? r : (y >= size - r ? size - r - 1 : y);
             if (std::hypot(float(x - cx), float(y - cy)) > r) continue;
-            const bool edge = x < 2 || y < 2 || x >= size - 2 || y >= size - 2;
-            if (edge) put(img.rgba, size, x, y, br, bg, bb, active ? 255 : 235);
-            else      put(img.rgba, size, x, y, fr, fg, fb, active ? 255 : 200);
+            // БЕЗ РАМКИ. Світлий обідець у два пікселі на заокругленому
+            // куті лягав сходинками — згладжування тут нізвідки взятись,
+            // бо картинка малюється кодом попіксельно. Суцільна плитка
+            // читається чистіше, а форму тримають самі заокруглення.
+            put(img.rgba, size, x, y, fr, fg, fb, active ? 255 : 200);
         }
     }
 }
@@ -98,7 +100,12 @@ void fill_box(render::OverlayImage& img, int size, int x0, int y0, int w, int h,
             put(img.rgba, size, x, y, r, g, b, a);
 }
 
-// ПЕРЕМИКАЧ OSD: три рядки тексту. Яскраві — показуємо, тьмяні — ні.
+// ПЕРЕМИКАЧ OSD: коло по центру й два промені вбоки — той самий знак,
+// що й авіагоризонт у кабіні. Читається як "прилади", і саме приладами
+// OSD і є; три рядки тексту, що стояли тут раніше, читались радше як
+// "субтитри".
+//
+// Яскравий — телеметрію показуємо, тьмяний — ні.
 render::OverlayImage make_osd_button(bool on) {
     const int size = 48;
     render::OverlayImage img;
@@ -109,12 +116,37 @@ render::OverlayImage make_osd_button(bool on) {
 
     const uint8_t r = on ? 255 : 110, g = on ? 190 : 110, b = on ? 60 : 120;
     const uint8_t a = on ? 255 : 200;
-    const int lw[3] = {size / 2, size * 2 / 5, size / 2};
-    const int th = std::max(2, size / 12);
-    for (int k = 0; k < 3; ++k) {
-        const int x = (size - size / 2) / 2;
-        const int y = size / 3 + k * (th + size / 12);
-        fill_box(img, size, x, y, lw[k], th, r, g, b, a);
+
+    const float cx = (size - 1) * 0.5f, cy = (size - 1) * 0.5f;
+    const float rad = size / 7.0f;
+    const int th = std::max(2, size / 14);          // товщина променя й обода
+
+    // Коло — обідцем, а не залите: залите на 48 пікселях перетворюється
+    // на пляму, у якій форми не видно.
+    for (int y = 0; y < size; ++y) {
+        for (int x = 0; x < size; ++x) {
+            const float d = std::hypot(float(x) - cx, float(y) - cy);
+            if (d <= rad && d >= rad - th) put(img.rgba, size, x, y, r, g, b, a);
+        }
+    }
+
+    // Два промені вбоки, на висоті центра: із зазором від кола і з
+    // ВІДСТУПОМ ВІД КРАЮ плитки. Раніше довжина була задана числом, і
+    // лівий промінь упирався рівно в край кнопки — знак виглядав
+    // обрізаним, ніби не помістився.
+    //
+    // Тепер навпаки: задані відступ і зазор, а довжина — те, що між ними
+    // лишилось. Так промені не дістануть краю за будь-якого розміру
+    // кнопки.
+    const int margin = std::max(3, size / 8);        // від краю плитки
+    const int gap    = std::max(2, size / 16);       // від кола
+    const int y0 = (int)(cy - th * 0.5f + 0.5f);
+    const int len = (int)(cx - rad) - gap - margin;
+    if (len > 0) {
+        // Правий рахуємо дзеркально, а не своєю арифметикою: інакше
+        // округлення дало б промені різної довжини.
+        fill_box(img, size, margin, y0, len, th, r, g, b, a);
+        fill_box(img, size, size - margin - len, y0, len, th, r, g, b, a);
     }
     return img;
 }
@@ -204,7 +236,15 @@ struct ScreenPresets::Impl {
     int drag_win = -1;
     float prev_cx = 0.f, prev_cy = 0.f;
     int last_switch_pos = -1;
-    int selected = -1;           // обране вікно (реагує на колесо), -1 = нічого
+    // ОБРАНЕ ВІКНО — СВОЄ НА КОЖНОМУ ЕКРАНІ, -1 = нічого.
+    //
+    // Спільне поле давало дві біди одразу. Видиму: виділив вікно на
+    // одному екрані — рамка з'являлась і на другому, бо малювання не
+    // питало, де зараз курсор. І невидиму, гіршу: колесо крутило вікно
+    // ТОГО екрана, над яким миша, хоч обирали зовсім інше.
+    //
+    // Вибір належить розкладці, а розкладка — екрану.
+    int selected[kRoles] = {-1, -1};
     bool apply_pending = true;   // застосувати пресет до джерел (лише при зміні)
 
     std::thread saver;
@@ -401,9 +441,11 @@ struct ScreenPresets::Impl {
     // перемикачі: екран, чию розкладку тягаємо, і OSD на ньому.
     // Проміжок навмисний: це кнопки іншого призначення, і ставити їх
     // упритул до цифр означало б запрошувати на випадковий клік.
-    // Кнопки: [0..preset_count) — пресети, далі ПРОМІЖОК і перемикач
-    // OSD ЦЬОГО екрана. Перемикача ролі немає: редагується той екран, на
-    // якому зараз курсор, а він ходить по обох.
+    // Кнопки одним рядом, без проміжків: [1][2][3][OSD]. Пресети й
+    // перемикач телеметрії — речі одного роду (що показувати на ЦЬОМУ
+    // екрані), тож і стоять разом. Проміжок лишається далі, перед
+    // кнопкою редактора, яка веде зовсім в інше місце — в окрему
+    // програму (див. ScreenUi::Config::slot).
     int osd_button() const { return cfg.preset_count; }
     int button_count() const { return cfg.preset_count + 1; }
 
@@ -413,8 +455,7 @@ struct ScreenPresets::Impl {
         *h = cfg.button_size;
         *w = cfg.button_size * aspect;               // квадрат на екрані
         const float gap = *w * 0.25f;
-        const float extra = (b >= osd_button()) ? *w * 0.8f : 0.f;
-        *x = b * (*w + gap) + extra;
+        *x = b * (*w + gap);
         *y = 0.f;
     }
 
@@ -501,7 +542,7 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
                 // польоті. Додатковий налаштовує оператор мишею.
                 const int r = render::Scene::kPrimary;
                 if (pos < d.cfg.preset_count && pos != d.active[r]) {
-                    d.active[r] = pos; d.selected = -1; d.apply_pending = true;
+                    d.active[r] = pos; d.selected[r] = -1; d.apply_pending = true;
                 }
             }
         }
@@ -540,7 +581,7 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
                     // Пресет — конфігурація ВСІЄЇ станції, тож міняє
                     // картинку на обох екранах разом.
                     if (b != d.active[role]) {
-                        d.active[role] = b; d.selected = -1; d.apply_pending = true;
+                        d.active[role] = b; d.selected[role] = -1; d.apply_pending = true;
                         std::fprintf(stderr, "[екрани] %s екран -> пресет %d\n",
                                      role == render::Scene::kPrimary ? "основний" : "додатковий",
                                      b + 1);
@@ -565,7 +606,7 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
                 if (on_button) { d.drag_win = -1; }
                 else {
                     const int wi = d.window_at(role, cx, cy);
-                    if (wi >= 0) d.selected = wi;        // обрали
+                    if (wi >= 0) d.selected[role] = wi;  // обрали
                     d.drag_win = wi;                     // і тягнемо його
                 }
                 d.prev_cx = cx; d.prev_cy = cy;
@@ -582,8 +623,8 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
             // --- 4) колесо: масштаб ОБРАНОГО вікна (не під курсором) ---
             const int64_t dwheel = p.wheel - d.seen_wheel;
             d.seen_wheel = p.wheel;
-            if (dwheel != 0 && d.selected >= 0) {
-                const size_t wi = (size_t)d.selected;
+            if (dwheel != 0 && d.selected[role] >= 0) {
+                const size_t wi = (size_t)d.selected[role];
                 Impl::Rect r0 = d.rect_of(role, wi);
                 const float c0x = r0.x + r0.w * 0.5f, c0y = r0.y + r0.h * 0.5f;
                 layout::Placement& pl = d.presets[d.active[role]][role][wi];
@@ -609,14 +650,14 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
             if (p.rclicks > d.seen_rclicks) {
                 d.seen_rclicks = p.rclicks;
                 const int wi = on_button ? -1 : d.window_at(role, cx, cy);
-                if (wi >= 0 && wi == d.selected) {
+                if (wi >= 0 && wi == d.selected[role]) {
                     d.lower_window(role, (size_t)wi);          // на один рівень вниз, z компактні
                     d.mark_dirty(role); d.apply_pending = true;
                     std::fprintf(stderr, "[екрани] '%s' -> z %d\n",
                                  d.windows[wi].name.c_str(),
                                  d.presets[d.active[role]][role][wi].z);
                 } else {
-                    d.selected = -1;                     // клац на іншому/порожньому — зняти
+                    d.selected[role] = -1;               // клац на іншому/порожньому — зняти
                 }
             }
 
@@ -631,7 +672,7 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
                 const int wi = on_button ? -1 : d.window_at(role, cx, cy);
                 if (wi >= 0) {
                     d.fill_screen(role, (size_t)wi);
-                    d.selected = wi;
+                    d.selected[role] = wi;
                     d.mark_dirty(role); d.apply_pending = true;
                     std::fprintf(stderr, "[екрани] '%s' -> на весь екран\n",
                                  d.windows[wi].name.c_str());
@@ -672,8 +713,9 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
 
     // рамка ОБРАНОГО вікна — бурштинова
     (void)have_ptr;
-    if (d.selected >= 0) {
-        Impl::Rect r = d.rect_of(role, (size_t)d.selected);
+    // Рамка — лише для вікна, обраного НА ЦЬОМУ екрані.
+    if (d.selected[role] >= 0 && (size_t)d.selected[role] < d.windows.size()) {
+        Impl::Rect r = d.rect_of(role, (size_t)d.selected[role]);
         const float t = 0.004f;                          // товщина рамки
         const float ta = t * float(H) / float(W);        // однакова в пікселях
         push(d.solid_idx, r.x, r.y, r.w, ta);            // верх

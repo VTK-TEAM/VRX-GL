@@ -372,7 +372,12 @@ int main(int argc, char** argv) {
         renderer.add_overlay(screen_presets);   // під курсором
     }
 
-    auto screen_ui = std::make_shared<vrx::ui::ScreenUi>(vrx::ui::ScreenUi::Config{});
+    // Кнопка редактора стоїть у спільному ряду з пресетами, через одне
+    // порожнє місце. В одноканальній збірці пресетів немає — тоді вона
+    // перша й сама.
+    vrx::ui::ScreenUi::Config ui_cfg;
+    ui_cfg.slot = kSingleChannel ? 0 : 5;
+    auto screen_ui = std::make_shared<vrx::ui::ScreenUi>(ui_cfg);
     screen_ui->attach(&pointer);
     renderer.add_overlay(screen_ui);         // курсор і кнопка редактора — зверху
 

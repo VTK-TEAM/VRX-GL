@@ -1,0 +1,564 @@
+{
+  "elements": {
+    "// === 200+ = VRX-локальні (recording.state=200, line_loss=201) ===": {},
+    "// === GROUP: DRONE POWER (TOP-LEFT) ===": {},
+    "// === GROUP: FLIGHT DATA ROW (BOTTOM-CENTER-RIGHT EQUAL SPACING) ===": {},
+    "// === GROUP: OPTICS TELEMETRY (MID-RIGHT) ===": {},
+    "// === GROUP: SATELLITES (BOTTOM-LEFT) ===": {},
+    "// === osd_atlas_builder.cpp і мати відповідні png в OSD_ATLAS/img/. ===": {},
+    "// === Іконки battery_empty/low/mid/full ЩЕ ТРЕБА додати в TARGET_ICONS ===": {},
+    "// === КАНАЛИ ТЕПЕР ЧИСЛА (VT_telemetry_index_e, OSD/vt_telemetry_index.h) ===": {},
+    "// === НОВЕ: BAR приклад — ДВІ картинки (не з атласу): фон+заповнення ===": {},
+    "// === НОВЕ: ENUM_SWITCH приклад — іконка заряду замість цифри. ===": {},
+    "// === НОВЕ: HORIZON приклад — ОКРЕМА картинка (не з атласу), крен борта ===": {},
+    "// === НОВЕ: META-канали — діагностика телеметрії, не самі дані ===": {},
+    "// === Файл /opt/vrx/osd/horizon.png ще треба підготувати окремо: ===": {},
+    "// === Файли ще треба підготувати: battery_bar_empty.png / _fill.png ===": {},
+    "// === зверху як індекс — так само як на стандартних AH-індикаторах. ===": {},
+    "// === квадратне PNG з альфою, лінія горизонту по центру, стрілка/риска ===": {},
+    "arm_status_display": {
+      "CASES": [
+        {
+          "LABEL": "ARM",
+          "OP": "EQ",
+          "VALUE": 1
+        }
+      ],
+      "DATACHANNEL": 21,
+      "DEFAULT": "DISARM",
+      "L": 0.6700000166893005,
+      "S": 1,
+      "T": 0.0,
+      "TYPE": "ENUM",
+      "UNITS": ""
+    },
+    "arming_disable_display": {
+      "// NOTE": "ARMING_DISABLE_REASON(23) — під ARM-статусом, тією ж лівою межею: показання має сенс лише при DISARM і читається разом із ним. Прошивка згортає 30-бітову маску armingDisableFlags_e до ОДНІЄЇ причини — найнижчого встановленого біта, бо прапорці там перелічені за критичністю. Значення = позиція біта + 1, 0 = арму ніщо не заважає (тоді нічого не малюється). Перелік повний, 1..30.",
+      "CASES": [
+        {
+          "LABEL": "NO GYRO",
+          "OP": "EQ",
+          "VALUE": 1
+        },
+        {
+          "LABEL": "FAILSAFE",
+          "OP": "EQ",
+          "VALUE": 2
+        },
+        {
+          "LABEL": "RX FAILSAFE",
+          "OP": "EQ",
+          "VALUE": 3
+        },
+        {
+          "LABEL": "NOT DISARMED",
+          "OP": "EQ",
+          "VALUE": 4
+        },
+        {
+          "LABEL": "BOXFAILSAFE",
+          "OP": "EQ",
+          "VALUE": 5
+        },
+        {
+          "LABEL": "RUNAWAY",
+          "OP": "EQ",
+          "VALUE": 6
+        },
+        {
+          "LABEL": "CRASH",
+          "OP": "EQ",
+          "VALUE": 7
+        },
+        {
+          "LABEL": "THROTTLE",
+          "OP": "EQ",
+          "VALUE": 8
+        },
+        {
+          "LABEL": "ANGLE",
+          "OP": "EQ",
+          "VALUE": 9
+        },
+        {
+          "LABEL": "BOOT GRACE",
+          "OP": "EQ",
+          "VALUE": 10
+        },
+        {
+          "LABEL": "NOPREARM",
+          "OP": "EQ",
+          "VALUE": 11
+        },
+        {
+          "LABEL": "LOAD",
+          "OP": "EQ",
+          "VALUE": 12
+        },
+        {
+          "LABEL": "CALIB",
+          "OP": "EQ",
+          "VALUE": 13
+        },
+        {
+          "LABEL": "CLI",
+          "OP": "EQ",
+          "VALUE": 14
+        },
+        {
+          "LABEL": "CMS MENU",
+          "OP": "EQ",
+          "VALUE": 15
+        },
+        {
+          "LABEL": "BST",
+          "OP": "EQ",
+          "VALUE": 16
+        },
+        {
+          "LABEL": "MSP",
+          "OP": "EQ",
+          "VALUE": 17
+        },
+        {
+          "LABEL": "PARALYZE",
+          "OP": "EQ",
+          "VALUE": 18
+        },
+        {
+          "LABEL": "GPS",
+          "OP": "EQ",
+          "VALUE": 19
+        },
+        {
+          "LABEL": "RESCUE",
+          "OP": "EQ",
+          "VALUE": 20
+        },
+        {
+          "LABEL": "DSHOT TLM",
+          "OP": "EQ",
+          "VALUE": 21
+        },
+        {
+          "LABEL": "REBOOT REQ",
+          "OP": "EQ",
+          "VALUE": 22
+        },
+        {
+          "LABEL": "BITBANG",
+          "OP": "EQ",
+          "VALUE": 23
+        },
+        {
+          "LABEL": "ACC CALIB",
+          "OP": "EQ",
+          "VALUE": 24
+        },
+        {
+          "LABEL": "MOTOR PROTO",
+          "OP": "EQ",
+          "VALUE": 25
+        },
+        {
+          "LABEL": "CRASHFLIP",
+          "OP": "EQ",
+          "VALUE": 26
+        },
+        {
+          "LABEL": "ALTHOLD",
+          "OP": "EQ",
+          "VALUE": 27
+        },
+        {
+          "LABEL": "POSHOLD",
+          "OP": "EQ",
+          "VALUE": 28
+        },
+        {
+          "LABEL": "AUTOPILOT",
+          "OP": "EQ",
+          "VALUE": 29
+        },
+        {
+          "LABEL": "ARM SWITCH",
+          "OP": "EQ",
+          "VALUE": 30
+        }
+      ],
+      "DATACHANNEL": 23,
+      "DEFAULT": "",
+      "L": 0.6700000166893005,
+      "S": 1,
+      "T": 0.029999999329447746,
+      "TYPE": "ENUM",
+      "UNITS": ""
+    },
+    "clock_display": {
+      "// NOTE": "LOCAL_CLOCK(211) — системний годинник станції, секунди від опівночі. FORMAT дає HH:MM. Виставляється в редакторі.",
+      "DATACHANNEL": 211,
+      "DECIMALS": 0,
+      "FORMAT": "HH:MM",
+      "L": 0.28999999165534973,
+      "LABEL": "",
+      "S": 1,
+      "T": 0.9399999976158142,
+      "UNITS": ""
+    },
+    "date_display": {
+      "// NOTE": "LOCAL_DATE(212) — дата як YYMMDD одним числом: float32 має точні цілі лише до 16.7 млн, і YYYYMMDD зсунув би день мовчки.",
+      "DATACHANNEL": 212,
+      "DECIMALS": 0,
+      "FORMAT": "DD.MM.YY",
+      "L": 0.20000000298023224,
+      "LABEL": "",
+      "S": 1,
+      "T": 0.9399999976158142,
+      "UNITS": ""
+    },
+    "drive_free_display": {
+      "// NOTE": "LOCAL_DRIVE_FREE(213) — вільно на носії, ГБ, поруч зі значком запису: разом вони й кажуть «пишемо і чи надовго вистачить». HIDE_IF_NO_DATA: немає флешки — рядка на екрані немає взагалі. Прочерк означав би «значення мало б бути», а тут правда інша — нема про що звітувати.",
+      "DATACHANNEL": 213,
+      "DECIMALS": 1,
+      "HIDE_IF_NO_DATA": true,
+      "L": 0.550000011920929,
+      "LABEL": "",
+      "S": 1,
+      "T": 0.9399999976158142,
+      "UNITS": "GB"
+    },
+    "drone_battery_display": {
+      "DATACHANNEL": 2,
+      "DECIMALS": 1,
+      "L": 0.0,
+      "LABEL": "<fpv_battery>",
+      "S": 1,
+      "T": 0.03999999910593033,
+      "UNITS": "V"
+    },
+    "drone_current_display": {
+      "DATACHANNEL": 1,
+      "DECIMALS": 0,
+      "HIDE_IF_NO_DATA": true,
+      "L": 0.0,
+      "LABEL": "<fpv_current>",
+      "S": 1,
+      "T": 0.07000000029802322,
+      "UNITS": "A"
+    },
+    "dropped_fps_display": {
+      "// NOTE": "LOCAL_DROPPED_FPS(208) — кадри, декодовані, але зрізані чергою як застарілі. Чиста втрата, на відміну від 209.",
+      "DATACHANNEL": 208,
+      "DECIMALS": 2,
+      "L": 0.88,
+      "LABEL": "Drop ",
+      "S": 0,
+      "T": 0.37,
+      "UNITS": "fps"
+    },
+    "flight_altitude_display": {
+      "DATACHANNEL": 16,
+      "DECIMALS": 0,
+      "L": 0.07999999821186066,
+      "LABEL": "ALT ",
+      "S": 1,
+      "T": 0.9700000286102295,
+      "UNITS": "m"
+    },
+    "flight_distance_display": {
+      "DATACHANNEL": 3,
+      "DECIMALS": 0,
+      "L": 0.3799999952316284,
+      "LABEL": "DIST ",
+      "S": 1,
+      "T": 0.9700000286102295,
+      "UNITS": "m"
+    },
+    "flight_gforce_value": {
+      "DATACHANNEL": 4,
+      "DECIMALS": 1,
+      "L": 0.0,
+      "LABEL": "<current_amperage>",
+      "S": 1,
+      "T": 0.10000000149011612,
+      "TYPE": "VALUE",
+      "UNITS": "G"
+    },
+    "flight_mode_display": {
+      "CASES": [
+        {
+          "LABEL": "ACRO",
+          "OP": "EQ",
+          "VALUE": 0
+        },
+        {
+          "LABEL": "ANGLE",
+          "OP": "EQ",
+          "VALUE": 1
+        },
+        {
+          "LABEL": "HORIZON",
+          "OP": "EQ",
+          "VALUE": 2
+        },
+        {
+          "LABEL": "HEADFREE",
+          "OP": "EQ",
+          "VALUE": 3
+        },
+        {
+          "LABEL": "PASSTHRU",
+          "OP": "EQ",
+          "VALUE": 4
+        },
+        {
+          "LABEL": "RESCUE",
+          "OP": "EQ",
+          "VALUE": 5
+        },
+        {
+          "LABEL": "FAILSAFE",
+          "OP": "EQ",
+          "VALUE": 6
+        }
+      ],
+      "DATACHANNEL": 24,
+      "DEFAULT": "",
+      "L": 0.75,
+      "LABEL": "MODE:",
+      "S": 1,
+      "T": -0.0,
+      "TYPE": "ENUM",
+      "UNITS": ""
+    },
+    "flight_odometer_value": {
+      "DATACHANNEL": 18,
+      "DECIMALS": 0,
+      "L": 0.3799999952316284,
+      "LABEL": "ODO ",
+      "S": 1,
+      "T": 0.9399999976158142,
+      "TYPE": "VALUE",
+      "UNITS": "m"
+    },
+    "flight_sats_display": {
+      "DATACHANNEL": 7,
+      "DECIMALS": 0,
+      "L": 0.009999999776482582,
+      "LABEL": "<gps_sat> ",
+      "S": 1,
+      "T": 0.9700000286102295,
+      "UNITS": ""
+    },
+    "flight_speed_display": {
+      "DATACHANNEL": 11,
+      "DECIMALS": 0,
+      "L": 0.20000000298023224,
+      "LABEL": "SPD ",
+      "S": 1,
+      "T": 0.9700000286102295,
+      "UNITS": "km/h"
+    },
+    "flight_time_display": {
+      "// NOTE": "FLIGHT_TIME(19) - сирі секунди з FC; FORMAT=MM:SS переводить їх у хвилини:секунди при виводі.",
+      "DATACHANNEL": 19,
+      "DECIMALS": 0,
+      "FORMAT": "MM:SS",
+      "L": 0.550000011920929,
+      "LABEL": "TIME ",
+      "S": 1,
+      "T": 0.9700000286102295,
+      "UNITS": ""
+    },
+    "h265_fps_display": {
+      "DATACHANNEL": 202,
+      "DECIMALS": 1,
+      "L": 0.88,
+      "LABEL": "Main ",
+      "S": 0,
+      "T": 0.18,
+      "UNITS": "fps"
+    },
+    "h265_shown_fps_display": {
+      "DATACHANNEL": 204,
+      "DECIMALS": 1,
+      "L": 0.88,
+      "LABEL": "Screen ",
+      "S": 0,
+      "T": 0.24,
+      "UNITS": "fps"
+    },
+    "late_fps_display": {
+      "// NOTE": "LOCAL_LATE_FPS(209) — кадри, що прийшли після точки опиту рендерера. НЕ втрачені: поїдуть на екран на розгортку пізніше, тобто платимо лише затримкою. Жоден інший показник цього не бачить — кадр цілий, черга здорова, крок зйомки в нормі.",
+      "DATACHANNEL": 209,
+      "DECIMALS": 2,
+      "L": 0.88,
+      "LABEL": "Late ",
+      "S": 0,
+      "T": 0.34,
+      "UNITS": "fps"
+    },
+    "latency_display": {
+      "// NOTE": "LOCAL_LATENCY_MS(207) — вихід декодера -> підтверджений показ. Читати разом із 209: маленька затримка при великому Late означає, що кадри просто летять повз екран.",
+      "DATACHANNEL": 207,
+      "DECIMALS": 1,
+      "L": 0.88,
+      "LABEL": "Lat ",
+      "S": 0,
+      "T": 0.31,
+      "UNITS": "ms"
+    },
+    "line_loss_display": {
+      "DATACHANNEL": 201,
+      "DECIMALS": 1,
+      "L": 0.8799999952316284,
+      "LABEL": "LOSS",
+      "S": 1,
+      "T": 0.0,
+      "UNITS": "dB"
+    },
+    "lost_frames_display": {
+      "// NOTE": "LOCAL_LOST_FRAMES(210) — кадри, які мали прийти й не прийшли: діри в приході, більші за півтора періоди. КІЛЬКІСТЮ, а не темпом: питання до цього числа — скільки всього загубилось за політ. Діра, довша за signal_timeout_ms (3 с), сюди не входить — то втрата сигналу, а не кадрів.",
+      "DATACHANNEL": 210,
+      "DECIMALS": 0,
+      "L": 0.88,
+      "LABEL": "Lost ",
+      "S": 0,
+      "T": 0.4,
+      "UNITS": ""
+    },
+    "mjpeg_fps_display": {
+      "DATACHANNEL": 203,
+      "DECIMALS": 1,
+      "L": 0.88,
+      "LABEL": "Sub ",
+      "S": 0,
+      "T": 0.21,
+      "UNITS": "fps"
+    },
+    "optics_drone_rx_display": {
+      "DATACHANNEL": 29,
+      "DECIMALS": 1,
+      "L": 0.88,
+      "LABEL": "ARx ",
+      "S": 0,
+      "T": 0.09,
+      "UNITS": "dBm"
+    },
+    "optics_drone_tx_display": {
+      "DATACHANNEL": 28,
+      "DECIMALS": 1,
+      "L": 0.88,
+      "LABEL": "ATx ",
+      "S": 0,
+      "T": 0.06,
+      "UNITS": "dBm"
+    },
+    "optics_gcs_rx_display": {
+      "DATACHANNEL": 34,
+      "DECIMALS": 1,
+      "L": 0.88,
+      "LABEL": "GRx ",
+      "S": 0,
+      "T": 0.15,
+      "UNITS": "dBm"
+    },
+    "optics_gcs_tx_display": {
+      "DATACHANNEL": 33,
+      "DECIMALS": 1,
+      "L": 0.88,
+      "LABEL": "GTx ",
+      "S": 0,
+      "T": 0.12,
+      "UNITS": "dBm"
+    },
+    "phase_lock_display": {
+      "// NOTE": "LOCAL_PHASE_LOCK(206). Три стани, бо 'не веде' і 'веде, але ще не захопила' — різні речі: перше означає, що петлі немає (вимкнена, немає сигналу чи виміру частоти), друге — що фаза ще їде до цілі. LOCK означає 'фаза стоїть на цілі в межах того, що вимірювач здатний розгледіти', а не 'похибка менша за придумане число'.",
+      "CASES": [
+        {
+          "LABEL": "LOCK",
+          "OP": "EQ",
+          "VALUE": 2
+        },
+        {
+          "LABEL": "SYNC",
+          "OP": "EQ",
+          "VALUE": 1
+        }
+      ],
+      "DATACHANNEL": 206,
+      "DEFAULT": "----",
+      "L": 0.88,
+      "LABEL": "PLL ",
+      "S": 0,
+      "T": 0.28,
+      "TYPE": "ENUM",
+      "UNITS": ""
+    },
+    "power_supply_A_value": {
+      "DATACHANNEL": 35,
+      "DECIMALS": 1,
+      "L": 0.009999999776482582,
+      "LABEL": "A ",
+      "S": 1,
+      "T": 0.9399999976158142,
+      "TYPE": "VALUE",
+      "UNITS": "V"
+    },
+    "power_supply_G_value": {
+      "DATACHANNEL": 36,
+      "DECIMALS": 1,
+      "L": 0.07999999821186066,
+      "LABEL": "G ",
+      "S": 1,
+      "T": 0.9399999976158142,
+      "TYPE": "VALUE",
+      "UNITS": "V"
+    },
+    "rc_ch2_bar": {
+      "BAR_H": 0.015,
+      "BAR_W": 0.1,
+      "DATACHANNEL": 20,
+      "EMPTY_IMAGE": "img/pgbar_empy.png",
+      "FILL_IMAGE": "img/pgbar_green.png",
+      "L": 0.1599999964237213,
+      "LABEL": "",
+      "MAX": 2000,
+      "MIN": 1000,
+      "S": 1,
+      "T": 0.009999999776482582,
+      "TYPE": "BAR",
+      "UNITS": ""
+    },
+    "record_indicator": {
+      "CASES": [
+        {
+          "LABEL": "<rec_dot>",
+          "OP": "EQ",
+          "VALUE": 1
+        },
+        {
+          "LABEL": "<no_drive>",
+          "OP": "EQ",
+          "VALUE": 0
+        }
+      ],
+      "DATACHANNEL": 200,
+      "DEFAULT": "",
+      "L": 0.94,
+      "S": 3,
+      "T": 0.93,
+      "TYPE": "ENUM"
+    },
+    "throttle": {
+      "DATACHANNEL": 20,
+      "DECIMALS": 0,
+      "L": 0.07999999821186066,
+      "LABEL": "THR",
+      "S": 1,
+      "T": 0.0,
+      "TYPE": "VALUE",
+      "UNITS": ""
+    }
+  }
+}
