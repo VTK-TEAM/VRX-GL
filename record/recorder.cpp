@@ -384,6 +384,17 @@ struct Recorder::Impl {
         reserved = want;
     }
 
+    // ЖУРНАЛ — СВІЙ НА КОЖНЕ ВМИКАННЯ, а не спільний на теку дня.
+    //
+    // Спільний ріс би через усі запуски за добу, і читачеві доводилось би
+    // щоразу перебирати чужі рядки, щоб дійти до своїх. А головне — сеанс
+    // це природна одиниця: увімкнули, політали, вимкнули. Один запуск —
+    // один журнал і один проєкт поруч із ним, з тим самим іменем.
+    std::string journal_name() const {
+        return cfg.session.empty() ? std::string("index.jsonl")
+                                   : "session_" + cfg.session + ".jsonl";
+    }
+
     std::string cur_name() const {
         const size_t slash = cur_path.rfind('/');
         return slash == std::string::npos ? cur_path : cur_path.substr(slash + 1);
@@ -433,14 +444,15 @@ struct Recorder::Impl {
         const size_t slash = cur_path.rfind('/');
         if (slash == std::string::npos) return;
         if (idx_fd < 0)
-            idx_fd = ::open((cur_path.substr(0, slash) + "/index.jsonl").c_str(),
+            idx_fd = ::open((cur_path.substr(0, slash) + "/" + journal_name()).c_str(),
                             O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
 
         char buf[512];
         std::snprintf(buf, sizeof(buf),
-            "{\"event\":\"open\",\"file\":\"%s\",\"channel\":\"%s\","
+            "{\"event\":\"open\",\"session\":\"%s\","
+            "\"file\":\"%s\",\"channel\":\"%s\","
             "\"opened\":\"%s\",\"opened_mono_us\":%lld}\n",
-            cur_name().c_str(), cfg.name.c_str(),
+            cfg.session.c_str(), cur_name().c_str(), cfg.name.c_str(),
             iso_utc(cur_open_wall_us).c_str(), (long long)cur_open_mono_us);
         index_write(buf);
     }
@@ -462,9 +474,10 @@ struct Recorder::Impl {
         const int64_t pts = last_pts_ns.load(std::memory_order_relaxed);
         char buf[512];
         std::snprintf(buf, sizeof(buf),
-            "{\"event\":\"mark\",\"file\":\"%s\",\"channel\":\"%s\","
+            "{\"event\":\"mark\",\"session\":\"%s\","
+            "\"file\":\"%s\",\"channel\":\"%s\","
             "\"wall\":\"%s\",\"mono_us\":%lld,\"pts_s\":%.3f,\"bytes\":%llu}\n",
-            cur_name().c_str(), cfg.name.c_str(),
+            cfg.session.c_str(), cur_name().c_str(), cfg.name.c_str(),
             iso_utc(now_wall_us()).c_str(), (long long)now_mono_us(),
             pts < 0 ? -1.0 : pts / 1e9,
             (unsigned long long)file_bytes.load(std::memory_order_relaxed));
@@ -475,10 +488,11 @@ struct Recorder::Impl {
         if (cur_path.empty()) return;
         char buf[512];
         std::snprintf(buf, sizeof(buf),
-            "{\"event\":\"close\",\"file\":\"%s\",\"channel\":\"%s\","
+            "{\"event\":\"close\",\"session\":\"%s\","
+            "\"file\":\"%s\",\"channel\":\"%s\","
             "\"closed\":\"%s\",\"duration_s\":%.3f,\"bytes\":%lld,"
             "\"reason\":\"%s\"}\n",
-            cur_name().c_str(), cfg.name.c_str(),
+            cfg.session.c_str(), cur_name().c_str(), cfg.name.c_str(),
             iso_utc(now_wall_us()).c_str(),
             (now_mono_us() - cur_open_mono_us) / 1e6,
             bytes, why ? why : "");

@@ -32,6 +32,7 @@
 #include "osd/local_channels.hpp"
 #include "osd/telemetry/vt_telemetry_index.h"
 #include "osd/subtitle_writer.hpp"
+#include "record/session_mlt.hpp"
 #include "render/gl_renderer.hpp"
 #include "source/h265_source.hpp"
 #include "source/mjpeg_source.hpp"
@@ -405,7 +406,18 @@ int main(int argc, char** argv) {
     // глушить усі рекордери й субтитри.)
     constexpr bool kRecordEnabled = true;
 
+    // МІТКА ВМИКАННЯ. Той самий вигляд, що й у назвах файлів, — щоб
+    // ім'я проєкту читалось поруч із ними без перекладу.
+    char session[32] = {0};
+    {
+        const std::time_t t = std::time(nullptr);
+        struct tm tm {};
+        localtime_r(&t, &tm);
+        std::strftime(session, sizeof(session), "%Y%m%d_%H%M%S", &tm);
+    }
+
     vrx::record::Recorder::Config rec_cfg;
+    rec_cfg.session = session;
     rec_cfg.name = "main";
     rec_cfg.udp_port = h265_cfg.udp_port;
     rec_cfg.payload_type = h265_cfg.payload_type;
@@ -418,7 +430,8 @@ int main(int argc, char** argv) {
     // local-каналів: індикатор запису (канал 200) має бачити всі три, бо
     // "пише" — це коли пише хоч один, а не лише основний.
     vrx::record::Recorder::Config rec2_cfg;
-    rec2_cfg.name = "pip";
+    rec2_cfg.session = session;
+        rec2_cfg.name = "pip";
     rec2_cfg.codec = vrx::record::Recorder::Codec::MJPEG;
     rec2_cfg.udp_port = pip_cfg.udp_port;
     rec2_cfg.payload_type = pip_cfg.payload_type;
@@ -431,6 +444,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<vrx::record::Recorder> recorder3;
     if (cap_src) {
         vrx::record::Recorder::Config rec3_cfg;
+        rec3_cfg.session = session;
         rec3_cfg.name = "capture";
         rec3_cfg.codec = vrx::record::Recorder::Codec::MJPEG;
         rec3_cfg.udp_port = kCapPort;
@@ -446,6 +460,17 @@ int main(int argc, char** argv) {
     //
     // Синхронізується з рекордером ОСНОВНОГО каналу: новий файл запису
     // тягне новий .ass, зупинка запису їх закриває.
+    // Проєкт сеансу: збирає з журналу таймлайн і кладе .mlt поруч із
+    // відео. Власний потік — переписування XML на флешці блокує, і в
+    // циклі рекордера йому не місце.
+    std::unique_ptr<vrx::record::SessionMlt> session_mlt;
+    if (kRecordEnabled) {
+        vrx::record::SessionMlt::Config mlt_cfg;
+        mlt_cfg.session = session;
+        session_mlt = std::make_unique<vrx::record::SessionMlt>(mlt_cfg, storage);
+        session_mlt->start();
+    }
+
     std::unique_ptr<vrx::osd::SubtitleWriter> subs;
     std::unique_ptr<vrx::osd::LocalChannels> local_ch;
     if (osd) {
