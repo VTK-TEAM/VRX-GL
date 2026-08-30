@@ -221,7 +221,15 @@ struct ScreenPresets::Impl {
     //
     // Файл пресету при цьому лишається спільним: у ньому обидві секції,
     // просто екрани можуть читати РІЗНІ файли одночасно.
-    int active[kRoles] = {0, 0};
+    // Режим кожної ролі й СВІЙ активний пресет на кожен режим.
+    int mode[kRoles] = {ScreenPresets::kLive, ScreenPresets::kLive};
+    int active_by[ScreenPresets::kModes][kRoles] = {{0, 0}, {0, 0}};
+
+    int& active_of(int role) { return active_by[mode[role]][role]; }
+    int  active_of(int role) const { return active_by[mode[role]][role]; }
+
+    // Вікно належить набору, який зараз показує ця роль.
+    bool in_mode(int role, size_t i) const { return windows[i].mode == mode[role]; }
     uint32_t dirty_mask = 0;
     int64_t last_edit = 0;
 
@@ -352,24 +360,25 @@ struct ScreenPresets::Impl {
         const float sa = (W > 0 && H > 0) ? float(W) / float(H) : 1.777f;
         float va = windows[i].source ? windows[i].source->frame_aspect() : 0.f;
         if (va <= 0.f) va = sa;                       // ще не знаємо кадр — беремо як екран
-        layout::Placement r = layout::fit_source(presets[active[role]][role][i], va, sa);
+        layout::Placement r = layout::fit_source(presets[active_of(role)][role][i], va, sa);
         return {r.x, 1.0f - r.y - r.h, r.w, r.h};     // Y -> екранний (0=верх)
     }
 
     // Зсунути вікно на (dsx, dsy) в ЕКРАННИХ частках. По X прямо, по Y
     // інверсія (екранний низ = менший placement.y).
     void move(int role, size_t i, float dsx, float dsy) {
-        presets[active[role]][role][i].x += dsx;
-        presets[active[role]][role][i].y -= dsy;
+        presets[active_of(role)][role][i].x += dsx;
+        presets[active_of(role)][role][i].y -= dsy;
     }
 
     // Верхнє (за z) вікно під курсором, або -1.
     int window_at(int role, float cx, float cy) const {
         int best = -1, bestz = -1000000;
         for (size_t i = 0; i < windows.size(); ++i) {
+            if (!in_mode(role, i)) continue;      // чуже вікно, не цього набору
             Rect r = rect_of(role, i);
             if (cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h) {
-                const int z = presets[active[role]][role][i].z;
+                const int z = presets[active_of(role)][role][i].z;
                 if (z >= bestz) { bestz = z; best = (int)i; }
             }
         }
@@ -409,7 +418,7 @@ struct ScreenPresets::Impl {
     // Це опорна точка для всього іншого: після довгого совання й зуму
     // повернутись до чогось передбачуваного інакше нічим.
     void fill_screen(int role, size_t i) {
-        layout::Placement& pl = presets[active[role]][role][i];
+        layout::Placement& pl = presets[active_of(role)][role][i];
         pl.x = 0.5f; pl.y = 0.5f;
         pl.w = 1.0f; pl.h = 1.0f;
         pl.anchor = layout::Anchor::Center;
@@ -417,7 +426,7 @@ struct ScreenPresets::Impl {
     }
 
     void mark_dirty(int role) {
-        dirty_mask |= (1u << active[role]);
+        dirty_mask |= (1u << active_of(role));
         last_edit = now_ms();
     }
 
@@ -425,7 +434,7 @@ struct ScreenPresets::Impl {
     // прямо під ним, і z переприсвоюються КОМПАКТНО (0..n-1). Так вони
     // завжди сусідні, а не розповзаються від повторних кліків.
     void lower_window(int role, size_t wi) {
-        auto& pv = presets[active[role]][role];
+        auto& pv = presets[active_of(role)][role];
         std::vector<size_t> order(pv.size());
         for (size_t i = 0; i < pv.size(); ++i) order[i] = i;
         std::stable_sort(order.begin(), order.end(),
@@ -493,6 +502,18 @@ void ScreenPresets::set_telemetry(VtTelemetryStorage* tlm) { impl_->tlm = tlm; }
 
 void ScreenPresets::attach_scene(render::Scene* s) { impl_->scene = s; }
 
+void ScreenPresets::set_mode(int role, int m) {
+    if (role < 0 || role >= Impl::kRoles || m < 0 || m >= kModes) return;
+    if (impl_->mode[role] == m) return;
+    impl_->mode[role] = m;
+    impl_->selected[role] = -1;          // вибір належав іншому набору вікон
+    impl_->apply_pending = true;
+}
+
+int ScreenPresets::mode(int role) const {
+    return (role >= 0 && role < Impl::kRoles) ? impl_->mode[role] : kLive;
+}
+
 bool ScreenPresets::start() {
     Impl& d = *impl_;
     d.build_images();
@@ -541,8 +562,8 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
                 // пілота, і стосується вона того, на що він дивиться в
                 // польоті. Додатковий налаштовує оператор мишею.
                 const int r = render::Scene::kPrimary;
-                if (pos < d.cfg.preset_count && pos != d.active[r]) {
-                    d.active[r] = pos; d.selected[r] = -1; d.apply_pending = true;
+                if (pos < d.cfg.preset_count && pos != d.active_of(r)) {
+                    d.active_of(r) = pos; d.selected[r] = -1; d.apply_pending = true;
                 }
             }
         }
@@ -580,8 +601,8 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
                 if (b < d.cfg.preset_count) {
                     // Пресет — конфігурація ВСІЄЇ станції, тож міняє
                     // картинку на обох екранах разом.
-                    if (b != d.active[role]) {
-                        d.active[role] = b; d.selected[role] = -1; d.apply_pending = true;
+                    if (b != d.active_of(role)) {
+                        d.active_of(role) = b; d.selected[role] = -1; d.apply_pending = true;
                         std::fprintf(stderr, "[екрани] %s екран -> пресет %d\n",
                                      role == render::Scene::kPrimary ? "основний" : "додатковий",
                                      b + 1);
@@ -590,7 +611,7 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
                     // OSD САМЕ ЦЬОГО ЕКРАНА — того, на якому кнопку
                     // натиснули. Своя кнопка на кожному, перемикати нічого
                     // не треба.
-                    bool& on = d.osd_on[d.active[role]][role];
+                    bool& on = d.osd_on[d.active_of(role)][role];
                     on = !on;
                     d.mark_dirty(role);
                     d.apply_pending = true;
@@ -627,7 +648,7 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
                 const size_t wi = (size_t)d.selected[role];
                 Impl::Rect r0 = d.rect_of(role, wi);
                 const float c0x = r0.x + r0.w * 0.5f, c0y = r0.y + r0.h * 0.5f;
-                layout::Placement& pl = d.presets[d.active[role]][role][wi];
+                layout::Placement& pl = d.presets[d.active_of(role)][role][wi];
                 float f = std::pow(1.0f + d.cfg.wheel_step, (float)dwheel);
                 pl.w *= f; pl.h *= f;
                 // Стеля — kMaxSize площ екрана (див. layout.hpp). Міряємо
@@ -655,7 +676,7 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
                     d.mark_dirty(role); d.apply_pending = true;
                     std::fprintf(stderr, "[екрани] '%s' -> z %d\n",
                                  d.windows[wi].name.c_str(),
-                                 d.presets[d.active[role]][role][wi].z);
+                                 d.presets[d.active_of(role)][role][wi].z);
                 } else {
                     d.selected[role] = -1;               // клац на іншому/порожньому — зняти
                 }
@@ -691,10 +712,15 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
     // обох екранах одразу.
     if (d.apply_pending && d.scene) {
         for (int r = 0; r < 2; ++r) {
-            for (size_t i = 0; i < d.windows.size(); ++i)
-                if (d.windows[i].source)
-                    d.scene->set(r, d.windows[i].source.get(), d.presets[d.active[r]][r][i]);
-            d.scene->set_osd(r, d.osd_on[d.active[r]][r]);
+            for (size_t i = 0; i < d.windows.size(); ++i) {
+                if (!d.windows[i].source) continue;
+                // Вікна чужого набору не ховаються десь окремо — вони
+                // просто вимкнені в сцені, і рендерер їх пропускає.
+                layout::Placement pl = d.presets[d.active_of(r)][r][i];
+                if (!d.in_mode(r, i)) pl.enabled = false;
+                d.scene->set(r, d.windows[i].source.get(), pl);
+            }
+            d.scene->set_osd(r, d.osd_on[d.active_of(r)][r]);
         }
         d.apply_pending = false;
     }
@@ -727,7 +753,7 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
     for (int b = 0; b < d.cfg.preset_count; ++b) {
         float bx, by, bw, bh;
         d.button_rect(role, b, &bx, &by, &bw, &bh);
-        const int img = b * 2 + (b == d.active[role] ? 1 : 0);
+        const int img = b * 2 + (b == d.active_of(role) ? 1 : 0);
         push(img, bx, by, bw, bh);
     }
 
@@ -736,7 +762,7 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
     {
         float bx, by, bw, bh;
         d.button_rect(role, d.osd_button(), &bx, &by, &bw, &bh);
-        push(d.osd_idx + (d.osd_on[d.active[role]][role] ? 1 : 0), bx, by, bw, bh);
+        push(d.osd_idx + (d.osd_on[d.active_of(role)][role] ? 1 : 0), bx, by, bw, bh);
     }
     return true;
 }
