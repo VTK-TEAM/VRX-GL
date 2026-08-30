@@ -21,6 +21,7 @@
 #include "../layout/layout.hpp"
 #include "../osd/telemetry/vt_telemetry_storage.h"
 #include "../render/overlay.hpp"
+#include "../render/scene.hpp"
 #include "../source/frame_source.hpp"
 #include "pointer.hpp"
 
@@ -65,6 +66,12 @@ public:
     void set_telemetry(VtTelemetryStorage* tlm);   // для перемикача каналом 15; може бути nullptr
 
     const char* name() const override { return "presets"; }
+    // Куди складати розкладку. Раніше пресети писали прямо в джерела
+    // (source->set_placement), і саме тому розкладка була одна на всю
+    // станцію. Тепер адресат — сцена, і в неї можна писати окремо на
+    // кожен екран.
+    void attach_scene(render::Scene* scene);
+
     bool start() override;
     void stop() override;
     void set_frame_size(int width, int height) override;

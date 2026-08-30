@@ -42,7 +42,6 @@ add_executable(vrx_gl
     render/gl_renderer.cpp
     control/camera_api.cpp
     control/phase_controller.cpp
-    control/layout_control.cpp
     ui/pointer.cpp
     ui/screen_ui.cpp
     ui/screen_presets.cpp

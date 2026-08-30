@@ -111,8 +111,6 @@ public:
 
     bool acquire(SourceFrame& out) override;
 
-    layout::Placement placement() const override;
-    void set_placement(const layout::Placement& p) override;
 
     SourceStats stats() const override;
 

@@ -138,6 +138,10 @@ struct GlRenderer::Impl {
     mutable std::mutex src_mtx;
     std::vector<std::shared_ptr<source::FrameSource>> sources;
 
+    // Де малювати кожне джерело. Живе тут, а не в джерелах: одне джерело
+    // має стільки місць, скільки екранів (див. render/scene.hpp).
+    Scene scene;
+
     // Дві програми, бо sampler2D і samplerExternalOES — різні типи GLSL
     // і в одну не компілюються. Перемикань за кадр буде одне, не по
     // одному на прямокутник: відео знизу, OSD зверху, тож групуються самі.
@@ -370,7 +374,7 @@ struct GlRenderer::Impl {
     // не малюємо: програма одна, а дрони різні, і будь-яка заставка
     // припускала б знання про конкретну конфігурацію, якого в програми
     // немає.
-    bool collect_items(std::vector<Item>& items, int64_t& primary_produced) {
+    bool collect_items(int screen, std::vector<Item>& items, int64_t& primary_produced) {
         std::vector<std::shared_ptr<source::FrameSource>> snap;
         {
             std::lock_guard<std::mutex> lk(src_mtx);
@@ -392,8 +396,15 @@ struct GlRenderer::Impl {
 
             source::SourceFrame f;
             if (!src->acquire(f)) continue;
-            if (!f.valid() || !f.where.enabled) continue;
+            if (!f.valid()) continue;
             if (f.image.fd[0] < 0) continue;      // кадру як буфера немає
+
+            // ДЕ малювати — питання екрана, а не джерела. Немає запису в
+            // сцені (ані власного, ані замовчування) — значить на цьому
+            // екрані цього джерела просто немає.
+            layout::Placement where;
+            if (!scene.get(screen, src.get(), &where)) continue;
+            if (!where.enabled) continue;
 
             const float a = f.aspect();
             if (a <= 0.0f) continue;
@@ -414,7 +425,7 @@ struct GlRenderer::Impl {
             pm_now.push_back({VRX_PM_CHANNEL(src->name()), f.produced_ns});
 #endif
 
-            items.push_back({layout::fit_source(f.where, a, screen_aspect), f});
+            items.push_back({layout::fit_source(where, a, screen_aspect), f});
         }
         if (items.empty()) return false;
 
@@ -481,7 +492,7 @@ struct GlRenderer::Impl {
         if (rel / 1e6 > poll_offset_ms) st.late++;
     }
 
-    void draw_frame() {
+    void draw_frame(int screen) {
         if (cfg.colortest) { draw_colortest(); return; }
 
         // Чистимо ЗАВЖДИ. Під кадром, що не покрив увесь екран, інакше
@@ -509,7 +520,7 @@ struct GlRenderer::Impl {
         // інтерфейси, — і єдине, що їх пов'язувало, це був цей `return`.
         std::vector<Item> items;
         int64_t primary_produced = 0;
-        collect_items(items, primary_produced);
+        collect_items(screen, items, primary_produced);
 
         const int64_t vbl = last_present_ns.load(std::memory_order_relaxed);
         phase.sample(primary_produced, vbl, period_ns);
@@ -895,7 +906,7 @@ struct GlRenderer::Impl {
             const double t0 = now_ms();
 
             glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-            draw_frame();
+            draw_frame(target.screen);
             frame_no++;
 
             // Чекаємо РЕАЛЬНОГО завершення GPU. Без цього на екран поїде
@@ -995,6 +1006,8 @@ void GlRenderer::stop() {
     // GBM і карту не чіпаємо: ними володіє дисплей.
     d.gbm = nullptr;
 }
+
+Scene& GlRenderer::scene() { return impl_->scene; }
 
 void GlRenderer::add_source(std::shared_ptr<source::FrameSource> src) {
     if (!src) return;

@@ -128,6 +128,8 @@ struct ScreenPresets::Impl {
     uint64_t seen_clicks = 0;
     uint64_t seen_rclicks = 0;
     uint64_t seen_mclicks = 0;
+
+    render::Scene* scene = nullptr;
     int64_t seen_wheel = 0;
     bool was_left = false;
     int drag_win = -1;
@@ -326,6 +328,8 @@ void ScreenPresets::attach(Pointer* pointer) { impl_->pointer = pointer; }
 void ScreenPresets::add_window(Window w) { impl_->windows.push_back(std::move(w)); }
 void ScreenPresets::set_telemetry(VtTelemetryStorage* tlm) { impl_->tlm = tlm; }
 
+void ScreenPresets::attach_scene(render::Scene* s) { impl_->scene = s; }
+
 bool ScreenPresets::start() {
     Impl& d = *impl_;
     d.build_images();
@@ -479,13 +483,17 @@ bool ScreenPresets::acquire(render::DrawList& out) {
     }
 
     // --- 6) застосувати пресет до джерел ЛИШЕ ПРИ ЗМІНІ ---
-    // set_placement бере мутекс джерела (спільний з потоком декодера), тож
-    // робити це щокадру з потоку показу давало ривки курсора під
-    // навантаженням. Тепер — лише коли розкладка справді змінилась.
-    if (d.apply_pending) {
+    // Робиться лише при ЗМІНІ, а не щокадру: запис у сцену бере її
+    // м'ютекс, і смикати його з потоку показу шістдесят разів на секунду
+    // означало б платити локом за роботу, якої немає.
+    //
+    // Пишемо поки в шар ЗАМОВЧУВАННЯ, тобто розкладка діє на всіх
+    // екранах одразу — рівно як було до появи другого. Запис саме цьому
+    // екрану з'явиться разом із перемикачем у редакторі.
+    if (d.apply_pending && d.scene) {
         for (size_t i = 0; i < d.windows.size(); ++i)
             if (d.windows[i].source)
-                d.windows[i].source->set_placement(d.presets[d.active][i]);
+                d.scene->set_default(d.windows[i].source.get(), d.presets[d.active][i]);
         d.apply_pending = false;
     }
 

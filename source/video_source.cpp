@@ -61,7 +61,6 @@ struct VideoSource::Impl {
     GstBus* bus = nullptr;
 
     mutable std::mutex mtx;
-    layout::Placement place{};
     SourceStats st{};
 
     // Черга готових кадрів замість одного слота.
@@ -397,7 +396,6 @@ struct VideoSource::Impl {
             }
         }
 
-        frame->where = place;
         queue.push_back(std::move(frame));
         while (queue.size() > kMaxQueue) {
             queue.pop_front();     // найстаріший помирає -> буфер у пул
@@ -775,21 +773,10 @@ bool VideoSource::acquire(SourceFrame& out) {
         if (!d.in_use) return false;
 
         out = *d.in_use;
-        out.where = d.place;
     }
 
     // Ось тут помирають старі кадри — лок уже відпущено.
     return true;
-}
-
-layout::Placement VideoSource::placement() const {
-    std::lock_guard<std::mutex> lk(impl_->mtx);
-    return impl_->place;
-}
-
-void VideoSource::set_placement(const layout::Placement& p) {
-    std::lock_guard<std::mutex> lk(impl_->mtx);
-    impl_->place = p;
 }
 
 SourceStats VideoSource::stats() const {

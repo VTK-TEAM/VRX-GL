@@ -21,6 +21,7 @@
 #include "../display/display.hpp"
 #include "../source/frame_source.hpp"
 #include "overlay.hpp"
+#include "scene.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -131,6 +132,11 @@ public:
     // Рендерер НЕ володіє життям джерела і не запускає його — за це
     // відповідає той, хто джерело створив. Тут лише shared_ptr, щоб
     // джерело не зникло посеред кадру.
+    // СЦЕНА — де саме малювати кожне джерело, окремо на кожен екран.
+    // Рендерер її лише читає; пишуть у неї налаштування за замовчуванням
+    // (при старті) і редактор розкладки (мишею).
+    Scene& scene();
+
     void add_source(std::shared_ptr<source::FrameSource> src);
     void remove_source(const std::shared_ptr<source::FrameSource>& src);
     int source_count() const;

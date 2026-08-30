@@ -21,7 +21,6 @@
 // власний темп. Тут лише ініціалізація, запуск і зупинка.
 
 #include "build_config.h"
-#include "control/layout_control.hpp"
 #include "control/phase_controller.hpp"
 #include "license/license_gate.hpp"
 #include "record/recorder.hpp"
@@ -258,14 +257,14 @@ int main(int argc, char** argv) {
     main_default.w = 1.0f; main_default.h = 1.0f;      // уся площа
     main_default.anchor = vrx::layout::Anchor::Center;
     main_default.z = 0;
-    main_src->set_placement(main_default);
+    renderer.scene().set_default(main_src.get(), main_default);
 
     vrx::layout::Placement pip_default;
     pip_default.x = 0.98f; pip_default.y = 0.02f;      // правий верх, відступ 2%
     pip_default.w = 0.30f; pip_default.h = 0.30f;
     pip_default.anchor = vrx::layout::Anchor::TopRight;
     pip_default.z = 1;                                  // поверх основного
-    if (pip_src) pip_src->set_placement(pip_default);
+    if (pip_src) renderer.scene().set_default(pip_src.get(), pip_default);
 
     // ТРЕТІЙ ПОТІК — ЛОКАЛЬНИЙ ЗАХВАТ (MS2106) по V4L2.
     //
@@ -306,7 +305,7 @@ int main(int argc, char** argv) {
         cap_cfg.udp_port = kCapPort;
         cap_cfg.multicast_addr = kCapGroup;
         cap_src = std::make_shared<vrx::source::MjpegSource>("capture", cap_cfg);
-        cap_src->set_placement(cap_default);
+        renderer.scene().set_default(cap_src.get(), cap_default);
         std::printf("Локальний захват: релей -> %s:%d (loopback)\n", kCapGroup, kCapPort);
     }
 
@@ -367,6 +366,7 @@ int main(int argc, char** argv) {
             screen_presets->add_window(std::move(w));
         }
         screen_presets->attach(&pointer);
+        screen_presets->attach_scene(&renderer.scene());
         screen_presets->set_telemetry(osd ? &osd->storage() : nullptr);
         screen_presets->start();
         renderer.add_overlay(screen_presets);   // під курсором
