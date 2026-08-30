@@ -132,16 +132,25 @@ void PlayerSession::set_speed(double s) {
     speed_ = s < 0 ? 0 : (s > 10.0 ? 10.0 : s);
 }
 
-void PlayerSession::step() {
-    // Питаємо основний канал, коли в нього НАСТУПНИЙ кадр. Якщо його
-    // немає (провал або черга ще порожня) — пробуємо решту, і лише потім
-    // відступаємо до умовного кроку.
-    int64_t next = 0;
-    for (int i = 0; i < kChannels && next == 0; ++i)
-        if (ch_[i]) next = ch_[i]->next_after(position_us_);
+void PlayerSession::step(int dir) {
+    if (dir >= 0) {
+        // Питаємо основний канал, коли в нього НАСТУПНИЙ кадр. Якщо його
+        // немає (провал або черга ще порожня) — пробуємо решту, і лише
+        // потім відступаємо до умовного кроку.
+        int64_t next = 0;
+        for (int i = 0; i < kChannels && next == 0; ++i)
+            if (ch_[i]) next = ch_[i]->next_after(position_us_);
+        position_us_ = next > 0 ? next : position_us_ + 16667;
+        push_target();
+        return;
+    }
+    // Назад наявних кадрів у черзі немає — вони вже позаду. Тому просто
+    // відступаємо на кадр і перезбираємо подачу.
+    seek(position_us_ - 16667);
+}
 
-    position_us_ = next > 0 ? next : position_us_ + 16667;
-    push_target();
+void PlayerSession::jump(int64_t delta_us) {
+    seek(position_us_ + delta_us);
 }
 
 } // namespace vrx::source

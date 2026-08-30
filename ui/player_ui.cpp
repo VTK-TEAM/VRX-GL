@@ -3,8 +3,10 @@
 #include <atomic>
 #include <cstdio>
 #include <cmath>
+#include <cstdio>
 #include <ctime>
 #include <string>
+#include <cstring>
 #include <vector>
 
 namespace vrx::ui {
@@ -32,7 +34,7 @@ render::OverlayImage solid(const char* id, uint8_t r, uint8_t g, uint8_t b, uint
 // заради них залежність від шрифтової підсистеми OSD означало б зв'язати
 // плеєр із нею назавжди. Растр 5x7 старий як світ, малюється в коді й
 // важить кілька рядків.
-constexpr int kGlyphs = 11;                 // 0..9 та ':'
+constexpr int kGlyphs = 18;                 // 0..9 : - + . x I < >
 constexpr int kGW = 5, kGH = 7, kScale = 3;
 constexpr int kCellW = kGW * kScale + 2;    // +2: поле, щоб сусід не підмішувався
 constexpr int kCellH = kGH * kScale + 2;
@@ -49,6 +51,13 @@ const uint8_t kFont[kGlyphs][kGH] = {
     {0x0E,0x11,0x11,0x0E,0x11,0x11,0x0E},   // 8
     {0x0E,0x11,0x11,0x0F,0x01,0x02,0x0C},   // 9
     {0x00,0x04,0x00,0x00,0x04,0x00,0x00},   // :
+    {0x00,0x00,0x00,0x1F,0x00,0x00,0x00},   // -
+    {0x00,0x04,0x04,0x1F,0x04,0x04,0x00},   // +
+    {0x00,0x00,0x00,0x00,0x00,0x0C,0x0C},   // .
+    {0x00,0x00,0x11,0x0A,0x04,0x0A,0x11},   // x
+    {0x0E,0x04,0x04,0x04,0x04,0x04,0x0E},   // I
+    {0x02,0x04,0x08,0x10,0x08,0x04,0x02},   // <
+    {0x08,0x04,0x02,0x01,0x02,0x04,0x08},   // >
 };
 
 render::OverlayImage make_font() {
@@ -82,10 +91,65 @@ render::OverlayImage make_font() {
     return img;
 }
 
+// Іконки транспорту. Малюються в коді з тієї ж причини, що й шрифт: їх
+// чотири, вони прості, і файл на диску для них — зайва річ, яку ще й може
+// не виявитись на місці.
+//
+// Колір скрізь однаковий, міняється лише прозорість — інакше згладжування
+// підмішує до країв чорне, і знак обростає брудною облямівкою.
+render::OverlayImage make_icon(const char* id, int kind) {
+    const int S = 64;
+    render::OverlayImage img;
+    img.id = std::string("player:ic_") + id;
+    img.width = img.height = S;
+    img.rgba.assign((size_t)S * S * 4, 0);
+    for (size_t i = 0; i < img.rgba.size(); i += 4) {
+        img.rgba[i + 0] = img.rgba[i + 1] = img.rgba[i + 2] = 240;
+        img.rgba[i + 3] = 0;
+    }
+    auto on = [&](int x, int y) {
+        if (x < 0 || y < 0 || x >= S || y >= S) return;
+        img.rgba[((size_t)y * S + x) * 4 + 3] = 255;
+    };
+    // Трикутник вершиною вправо або вліво, у смузі [x0,x1).
+    auto tri = [&](int x0, int x1, bool right) {
+        const float h = float(x1 - x0);
+        for (int x = x0; x < x1; ++x) {
+            const float k = right ? float(x - x0) / h : float(x1 - x) / h;
+            const int half = (int)((S * 0.34f) * (1.0f - k));
+            for (int y = S / 2 - half; y <= S / 2 + half; ++y) on(x, y);
+        }
+    };
+    auto bar = [&](int x0, int w) {
+        for (int x = x0; x < x0 + w; ++x)
+            for (int y = S / 2 - (int)(S * 0.34f); y <= S / 2 + (int)(S * 0.34f); ++y)
+                on(x, y);
+    };
+
+    const int m = S / 5, bw = S / 9;
+    switch (kind) {
+        case 0: tri(m, S - m, true); break;                         // грати
+        case 1: bar(m + S / 12, bw * 2); bar(S - m - S / 12 - bw * 2, bw * 2); break;
+        case 2: tri(m, S - m - bw - 2, true); bar(S - m - bw, bw); break;  // кадр уперед
+        case 3: bar(m, bw); tri(m + bw + 2, S - m, false); break;          // кадр назад
+        default: break;
+    }
+    return img;
+}
+
 int glyph_index(char c) {
     if (c >= '0' && c <= '9') return c - '0';
-    if (c == ':') return 10;
-    return -1;
+    switch (c) {
+        case ':': return 10;
+        case '-': return 11;
+        case '+': return 12;
+        case '.': return 13;
+        case 'x': return 14;
+        case 'I': return 15;
+        case '<': return 16;
+        case '>': return 17;
+        default:  return -1;
+    }
 }
 
 // Час доби з мікросекунд епохи — той самий, що показував годинник станції
@@ -101,6 +165,24 @@ std::string clock_hms(int64_t us) {
 
 } // namespace
 
+// Кнопка керування. Підпис несе і зміст, і розмір: ширина рахується з
+// нього, тож ряд сам розкладається під будь-який набір.
+struct Btn {
+    const char* label;      // порожній, якщо кнопка іконкова
+    int kind;
+    double arg;
+    float x, y, w, h;
+    int icon = -1;          // індекс картинки; -1 = підпис
+};
+
+enum { kJump = 0, kPlay, kStep, kSpeedDown, kSpeedUp, kSpeedShow };
+
+// Сходинки швидкості. Не безперервний повзунок: у полі треба влучати, а
+// не підбирати, і шість значень покривають усе — від розгляду по кадрах
+// до швидкого прогону.
+const double kSpeeds[] = {0.2, 0.5, 1.0, 2.0, 4.0, 10.0};
+constexpr int kSpeedCount = 6;
+
 struct PlayerUi::Impl {
     Config cfg;
     Pointer* pointer = nullptr;
@@ -109,21 +191,74 @@ struct PlayerUi::Impl {
 
     std::vector<render::OverlayImage> images;
     int i_track = 0, i_fill = 1, i_knob = 2, i_font = 3, i_pad = 4;
+    int i_play = 5, i_pause = 6, i_next = 7, i_prev = 8;
 
     std::atomic<int> rw[kRoles] = {};
     std::atomic<int> rh[kRoles] = {};
 
     uint64_t seen_clicks = 0;
+    uint64_t seen_btn_clicks = 0;
+    double resume_speed[kRoles] = {1.0, 1.0};   // куди повертатись із паузи
+    char speed_lbl[kRoles][8] = {};             // підпис швидкості, живе між кадрами
     bool was_left = false;
     bool dragging = false;
     uint64_t serial = 0;
 
     Impl(Config c) : cfg(c) {
-        images.push_back(solid("track", 30, 32, 38, 180));
+        images.push_back(solid("track", 58, 61, 68, 175));
         images.push_back(solid("fill", 240, 170, 60, 235));
         images.push_back(solid("knob", 250, 245, 235, 255));
         images.push_back(make_font());
-        images.push_back(solid("pad", 0, 0, 0, 200));   // підкладка під цифри
+        // Підкладка СІРА, а не чорна: чорний прямокутник поверх відео
+        // читається як діра в картинці, сірий — як накладка.
+        images.push_back(solid("pad", 62, 65, 72, 200));
+        images.push_back(make_icon("play", 0));
+        images.push_back(make_icon("pause", 1));
+        images.push_back(make_icon("next", 2));
+        images.push_back(make_icon("prev", 3));
+    }
+
+    // Розкладка двох рядів кнопок. Один код і для малювання, і для
+    // влучання — інакше вони неминуче розійшлись би.
+    void build_buttons(std::vector<Btn>& out, float bar_y, float sa,
+                       double speed, int role) {
+        // ОДИН РЯД. Стрибки обабіч транспорту: рука тягнеться від центру
+        // в потрібний бік, і думати, у якому ряду шукати, не доводиться.
+        std::snprintf(speed_lbl[role], sizeof(speed_lbl[role]), "%.1fx", speed);
+        const Btn row[] = {
+            {"-10", kJump, -10000000, 0,0,0,0}, {"-5", kJump, -5000000, 0,0,0,0},
+            {"-1",  kJump,  -1000000, 0,0,0,0}, {"-.5", kJump, -500000, 0,0,0,0},
+            {"", kStep, -1, 0,0,0,0, i_prev},
+            {"", kPlay,  0, 0,0,0,0, speed > 0.0 ? i_pause : i_play},
+            {"", kStep,  1, 0,0,0,0, i_next},
+            {"+.5", kJump,   500000, 0,0,0,0},  {"+1",  kJump, 1000000, 0,0,0,0},
+            {"+5",  kJump,  5000000, 0,0,0,0},  {"+10", kJump, 10000000, 0,0,0,0},
+            {"-",   kSpeedDown, 0, 0,0,0,0},
+            {speed_lbl[role], kSpeedShow, 0, 0,0,0,0},
+            {"+",   kSpeedUp, 0, 0,0,0,0},
+        };
+
+        const float th = cfg.btn_text;
+        const float cw = th * (float(kCellW) / float(kCellH)) * sa;
+        const float h = th + cfg.btn_pad;
+
+        auto lay = [&](const Btn* src, int n, float y) {
+            float total = 0;
+            for (int i = 0; i < n; ++i)
+                total += (src[i].icon >= 0 ? h
+                                           : cw * (float)std::strlen(src[i].label) + cfg.btn_pad)
+                         + (i ? cfg.btn_gap : 0.f);
+            float x = 0.5f - total * 0.5f;
+            for (int i = 0; i < n; ++i) {
+                Btn b = src[i];
+                b.w = src[i].icon >= 0 ? h
+                                       : cw * (float)std::strlen(src[i].label) + cfg.btn_pad;
+                b.h = h; b.x = x; b.y = y;
+                out.push_back(b);
+                x += b.w + cfg.btn_gap;
+            }
+        };
+        lay(row, (int)(sizeof(row) / sizeof(row[0])), bar_y - cfg.row_gap - h);
     }
 
     // Смуга в частках екрана.
@@ -163,7 +298,12 @@ bool PlayerUi::hit_bar(int role, float cx, float cy) const {
 
     float bx, by, bw, bh;
     d.bar_rect(&bx, &by, &bw, &bh);
-    return cx >= bx && cx <= bx + bw && cy >= by - bh && cy <= by + bh * 2.0f;
+
+    // Уся смуга керування, а не лише сама доріжка: кнопки теж лежать
+    // поверх відео, і клац по них не має доходити до вікна під ними.
+    const float h = d.cfg.btn_text + d.cfg.btn_pad;
+    const float top = by - d.cfg.row_gap - h;
+    return cy >= top - bh && cx >= 0.0f && cx <= 1.0f;
 }
 
 bool PlayerUi::acquire(int role, render::DrawList& out) {
@@ -193,7 +333,11 @@ bool PlayerUi::acquire(int role, render::DrawList& out) {
 
             // Зона влучання вища за саму смугу: смуга тонка, а цілитись у
             // неї мишею на екрані з метра — задача не з приємних.
-            const bool in_bar = hit_bar(role, cx, cy);
+            // Тільки сама доріжка, а не вся смуга керування: інакше клац
+            // по кнопці читався б як перемотка, і кнопки "не працювали б",
+            // а таймлайн стрибав би туди, де їх натиснули.
+            const bool in_bar = cx >= bx && cx <= bx + bw &&
+                                cy >= by - bh && cy <= by + bh * 2.0f;
 
             if (p.left && !d.was_left && in_bar) d.dragging = true;
             if (!p.left) d.dragging = false;
@@ -255,6 +399,65 @@ bool PlayerUi::acquire(int role, render::DrawList& out) {
         }
     };
 
+    // --- кнопки керування ---
+    std::vector<Btn> btns;
+    d.build_buttons(btns, by, sa, pl.speed(), role);
+
+    if (d.pointer) {
+        const PointerState p = d.pointer->state();
+        const int W2 = d.rw[role].load(std::memory_order_relaxed);
+        const int H2 = d.rh[role].load(std::memory_order_relaxed);
+        if (p.present && p.screen == role && W2 > 0 && H2 > 0 &&
+            p.clicks > d.seen_btn_clicks) {
+            const float cx = float(p.x) / float(W2);
+            const float cy = float(p.y) / float(H2);
+            for (const Btn& b : btns) {
+                if (!(cx >= b.x && cx <= b.x + b.w && cy >= b.y && cy <= b.y + b.h))
+                    continue;
+                d.seen_btn_clicks = p.clicks;
+                switch (b.kind) {
+                    case kJump: pl.jump((int64_t)b.arg); break;
+                    case kStep:
+                        // Крок має сенс лише на паузі; сам ставить її, щоб
+                        // не доводилось спершу зупиняти, потім крокувати.
+                        if (pl.speed() > 0.0) {
+                            d.resume_speed[role] = pl.speed();
+                            pl.set_speed(0.0);
+                        }
+                        pl.step(b.arg < 0 ? -1 : 1);
+                        break;
+                    case kPlay:
+                        if (pl.speed() > 0.0) {
+                            d.resume_speed[role] = pl.speed();
+                            pl.set_speed(0.0);
+                        } else {
+                            pl.set_speed(d.resume_speed[role]);
+                        }
+                        break;
+                    case kSpeedDown:
+                    case kSpeedUp: {
+                        // Від поточної швидкості шукаємо найближчу сходинку
+                        // й рухаємось по списку. На паузі міняємо ту, до
+                        // якої повернемось, — інакше кнопка мовчала б.
+                        double cur = pl.speed() > 0.0 ? pl.speed() : d.resume_speed[role];
+                        int idx = 0;
+                        for (int i = 0; i < kSpeedCount; ++i)
+                            if (std::fabs(kSpeeds[i] - cur) < std::fabs(kSpeeds[idx] - cur))
+                                idx = i;
+                        idx += (b.kind == kSpeedUp) ? 1 : -1;
+                        if (idx < 0) idx = 0;
+                        if (idx >= kSpeedCount) idx = kSpeedCount - 1;
+                        if (pl.speed() > 0.0) pl.set_speed(kSpeeds[idx]);
+                        else d.resume_speed[role] = kSpeeds[idx];
+                        break;
+                    }
+                    default: break;
+                }
+                break;
+            }
+        }
+    }
+
     const double f = (double)pl.position_us() / (double)len;
     const float frac = f < 0 ? 0.f : (f > 1 ? 1.f : (float)f);
 
@@ -291,6 +494,38 @@ bool PlayerUi::acquire(int role, render::DrawList& out) {
     const float cx_lbl = frac > 0.5f ? knob_x - gap - cw * (float)cur.size()
                                      : knob_x + gap;
     text(cur, cx_lbl, ty);
+
+    // Кнопки: підкладка й підпис. Активна швидкість підсвічена самим
+    // підписом, окремого стану кнопкам не треба.
+    const float btn_cw = d.cfg.btn_text * (float(kCellW) / float(kCellH)) * sa;
+    for (const Btn& b : btns) {
+        push(b.kind == kSpeedShow ? d.i_track : d.i_pad, b.x, b.y, b.w, b.h);
+        if (b.icon >= 0) {
+            // Іконка квадратна, тож по горизонталі стискаємо її під
+            // пропорцію екрана — інакше знак поїде вшир.
+            const float iw = b.h * sa, ix = b.x + (b.w - iw) * 0.5f;
+            push(b.icon, ix, b.y, iw, b.h);
+            continue;
+        }
+        const float tw = btn_cw * (float)std::strlen(b.label);
+        const float tx = b.x + (b.w - tw) * 0.5f;
+        const float tyb = b.y + (b.h - d.cfg.btn_text) * 0.5f;
+        for (size_t i = 0; b.label[i]; ++i) {
+            const int g = glyph_index(b.label[i]);
+            if (g < 0) continue;
+            render::OverlayQuad q;
+            q.image = d.i_font;
+            const float x0 = tx + btn_cw * float(i), x1 = x0 + btn_cw;
+            const float y0 = tyb, y1 = tyb + d.cfg.btn_text;
+            q.x[0] = x0; q.y[0] = y0; q.x[1] = x1; q.y[1] = y0;
+            q.x[2] = x0; q.y[2] = y1; q.x[3] = x1; q.y[3] = y1;
+            const float u0 = float(g * kCellW) / float(kCellW * kGlyphs);
+            const float u1 = float((g + 1) * kCellW) / float(kCellW * kGlyphs);
+            q.u[0] = u0; q.v[0] = 0; q.u[1] = u1; q.v[1] = 0;
+            q.u[2] = u0; q.v[2] = 1; q.u[3] = u1; q.v[3] = 1;
+            out.quads.push_back(q);
+        }
+    }
     return true;
 }
 
