@@ -813,9 +813,10 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
                     // картинку на обох екранах разом.
                     if (b != d.active_of(role)) {
                         d.active_of(role) = b; d.selected[role] = -1; d.apply_pending = true;
-                        std::fprintf(stderr, "[екрани] %s екран -> пресет %d\n",
+                        std::fprintf(stderr, "[екрани] %s екран -> пресет %d (%s)\n",
                                      role == render::Scene::kPrimary ? "основний" : "додатковий",
-                                     b + 1);
+                                     b + 1,
+                                     d.mode[role] == ScreenPresets::kPlayer ? "плеєр" : "ефір");
                     }
                 } else if (b == d.shot_button()) {
                     // Знімок ЕФІРУ. У плеєра своя кнопка й свій зміст:
