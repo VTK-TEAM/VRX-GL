@@ -48,6 +48,7 @@ add_executable(vrx_gl
     diag/link_monitor.cpp
     record/storage.cpp
     record/mkv_seek.cpp
+    record/session_index.cpp
     record/recorder.cpp
     osd/osd.cpp
     osd/osd_version.cpp
