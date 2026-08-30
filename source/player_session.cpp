@@ -25,9 +25,17 @@ std::shared_ptr<FrameSource> PlayerSession::source(int i) const {
     return (i >= 0 && i < kChannels) ? ch_[i] : nullptr;
 }
 
+void PlayerSession::adopt() {
+    length_us_.store(ix_.length_us(), std::memory_order_relaxed);
+    start_wall_us_.store(ix_.start_us(), std::memory_order_relaxed);
+    live_.store(ix_.live(), std::memory_order_relaxed);
+}
+
 bool PlayerSession::open(const std::string& journal_path, int64_t t_us) {
     for (auto& c : ch_) c->stop();
     if (!ix_.load(journal_path)) return false;
+    journal_ = journal_path;
+    adopt();
 
     // Невдача каналу — НЕ привід кидати сеанс: канал міг узагалі не
     // писатись (не було сигналу, вимкнений захват), і це нормальний запис,
@@ -57,6 +65,17 @@ const char* PlayerSession::channel_name(int i) const {
     return (i >= 0 && i < kChannels) ? kNames[i] : "";
 }
 
+int64_t PlayerSession::timeline_len_us() const {
+    const int64_t len = length_us_.load(std::memory_order_relaxed);
+    if (!live_.load(std::memory_order_relaxed)) return len;
+
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    const int64_t now_wall = ts.tv_sec * 1000000LL + ts.tv_nsec / 1000;
+    const int64_t edge = now_wall - start_wall_us_.load(std::memory_order_relaxed);
+    return edge > len ? edge : len;
+}
+
 void PlayerSession::push_target() {
     for (auto& c : ch_) if (c) c->set_target(position_us_);
 }
@@ -68,6 +87,20 @@ void PlayerSession::tick() {
     clock_gettime(CLOCK_MONOTONIC, &ts);
     const int64_t now = ts.tv_sec * 1000000000LL + ts.tv_nsec;
 
+    // ЖИВИЙ ЗАПИС РОСТЕ ПІД НОГАМИ. Журнал дописується далі, тож раз на
+    // дві секунди перечитуємо його: інакше кінець таймлайну застиг би на
+    // тому, яким запис був у мить відкриття, і догнати "зараз" було б ніяк.
+    if (live_.load(std::memory_order_relaxed) && !journal_.empty() &&
+        (last_reload_ns_ == 0 || now - last_reload_ns_ > 2000000000LL)) {
+        last_reload_ns_ = now;
+        record::SessionIndex fresh;
+        if (fresh.load(journal_) && fresh.length_us() >= ix_.length_us()) {
+            ix_ = std::move(fresh);
+            adopt();
+            for (auto& c : ch_) if (c) c->refresh(ix_);
+        }
+    }
+
     if (last_tick_ns_ != 0 && speed_ > 0.0) {
         // Понад чверть секунди між тактами — це не сповільнений показ, а
         // зупинка: перемикання екрана, підняття пайплайна, затик носія.
@@ -76,7 +109,8 @@ void PlayerSession::tick() {
         int64_t dt = now - last_tick_ns_;
         if (dt > 250000000LL) dt = 0;
         position_us_ += (int64_t)(dt / 1000.0 * speed_);
-        const int64_t len = ix_.length_us();
+        // Межа — гладка: по ній позиція вже не смикається.
+        const int64_t len = timeline_len_us();
         if (len > 0 && position_us_ > len) position_us_ = len;
     }
     last_tick_ns_ = now;
@@ -84,13 +118,13 @@ void PlayerSession::tick() {
 }
 
 void PlayerSession::seek(int64_t t_us) {
-    const int64_t len = ix_.length_us();
+    const int64_t len = timeline_len_us();
     position_us_ = t_us < 0 ? 0 : (len > 0 && t_us > len ? len : t_us);
     last_tick_ns_ = 0;
 
     // Усі канали на ту саму секунду СЕАНСУ. Кожен сам знайде свій файл і
     // свій байтовий зсув — у них різні ротації й різні розриви.
-    for (auto& c : ch_) if (c) c->seek(position_us_);
+    for (auto& c : ch_) if (c) c->seek(ix_, position_us_);
     push_target();
 }
 

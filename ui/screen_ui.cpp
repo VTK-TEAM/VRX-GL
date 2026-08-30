@@ -1,6 +1,7 @@
 #include "screen_ui.hpp"
 
 #include <cmath>
+#include <functional>
 #include <cstdio>
 #include <mutex>
 #include <utility>
@@ -175,6 +176,7 @@ struct ScreenUi::Impl {
     // Скільки кліків уже враховано. Порівнюємо з лічильником миші —
     // так натискання не загубиться між кадрами й не спрацює двічі.
     uint64_t seen_clicks = 0;
+    std::function<bool(int)> visible;
 
     explicit Impl(Config c) : cfg(c) {
         images.push_back(make_button(48));
@@ -201,6 +203,8 @@ struct ScreenUi::Impl {
 
 ScreenUi::ScreenUi(Config cfg) : impl_(new Impl(cfg)) {}
 ScreenUi::~ScreenUi() = default;
+
+void ScreenUi::set_visible(std::function<bool(int)> cb) { impl_->visible = std::move(cb); }
 
 void ScreenUi::attach(Pointer* pointer) { impl_->pointer = pointer; }
 
@@ -264,7 +268,8 @@ bool ScreenUi::acquire(int role, render::DrawList& out) {
     // окрема програма під X, вона одна й показується там; кнопка на
     // додатковому екрані вела б у те саме місце, тільки збивала б з
     // пантелику.
-    if (role == 0) {
+    const bool show_btn = role == 0 && (!d.visible || d.visible(role));
+    if (show_btn) {
         push(d.pressed.load() ? Impl::kButtonActive : Impl::kButton, bx, by, bw, bh);
     }
 
@@ -286,7 +291,7 @@ bool ScreenUi::acquire(int role, render::DrawList& out) {
             // КЛІК ПО КНОПЦІ. Рахуємо за лічильником натискань, а не за
             // станом кнопки: між двома кадрами миша встигає і натиснути,
             // і відпустити, і стан у цей момент уже нічого не покаже.
-            if (role == 0 && p.clicks > d.seen_clicks) {
+            if (show_btn && p.clicks > d.seen_clicks) {
                 d.seen_clicks = p.clicks;
                 const float px = float(p.x) / float(W);
                 const float py = float(p.y) / float(H);

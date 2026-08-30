@@ -2,6 +2,9 @@
 
 #include <atomic>
 #include <cstdio>
+#include <cmath>
+#include <ctime>
+#include <string>
 #include <vector>
 
 namespace vrx::ui {
@@ -23,6 +26,79 @@ render::OverlayImage solid(const char* id, uint8_t r, uint8_t g, uint8_t b, uint
     return img;
 }
 
+// ЦИФРИ ВБУДОВАНІ, а не з атласа OSD.
+//
+// Потрібні рівно одинадцять знаків — десять цифр і двокрапка, — і тягти
+// заради них залежність від шрифтової підсистеми OSD означало б зв'язати
+// плеєр із нею назавжди. Растр 5x7 старий як світ, малюється в коді й
+// важить кілька рядків.
+constexpr int kGlyphs = 11;                 // 0..9 та ':'
+constexpr int kGW = 5, kGH = 7, kScale = 3;
+constexpr int kCellW = kGW * kScale + 2;    // +2: поле, щоб сусід не підмішувався
+constexpr int kCellH = kGH * kScale + 2;
+
+const uint8_t kFont[kGlyphs][kGH] = {
+    {0x0E,0x11,0x13,0x15,0x19,0x11,0x0E},   // 0
+    {0x04,0x0C,0x04,0x04,0x04,0x04,0x0E},   // 1
+    {0x0E,0x11,0x01,0x02,0x04,0x08,0x1F},   // 2
+    {0x1F,0x02,0x04,0x02,0x01,0x11,0x0E},   // 3
+    {0x02,0x06,0x0A,0x12,0x1F,0x02,0x02},   // 4
+    {0x1F,0x10,0x1E,0x01,0x01,0x11,0x0E},   // 5
+    {0x06,0x08,0x10,0x1E,0x11,0x11,0x0E},   // 6
+    {0x1F,0x01,0x02,0x04,0x08,0x08,0x08},   // 7
+    {0x0E,0x11,0x11,0x0E,0x11,0x11,0x0E},   // 8
+    {0x0E,0x11,0x11,0x0F,0x01,0x02,0x0C},   // 9
+    {0x00,0x04,0x00,0x00,0x04,0x00,0x00},   // :
+};
+
+render::OverlayImage make_font() {
+    render::OverlayImage img;
+    img.id = "player:font";
+    img.width = kCellW * kGlyphs;
+    img.height = kCellH;
+    img.rgba.assign((size_t)img.width * img.height * 4, 0);
+
+    // КОЛІР СКРІЗЬ ОДНАКОВИЙ, МІНЯЄТЬСЯ ЛИШЕ ПРОЗОРІСТЬ.
+    //
+    // Інакше прозорі пікселі лишаються чорними, і при згладжуванні
+    // текстури вони підмішуються до країв цифр — знак обростає темною
+    // облямівкою, а на дрібному розмірі це виглядає як чорна підкладка.
+    for (size_t i = 0; i < img.rgba.size(); i += 4) {
+        img.rgba[i + 0] = img.rgba[i + 1] = img.rgba[i + 2] = 245;
+        img.rgba[i + 3] = 0;
+    }
+
+    for (int g = 0; g < kGlyphs; ++g)
+        for (int row = 0; row < kGH; ++row)
+            for (int col = 0; col < kGW; ++col) {
+                if (!(kFont[g][row] & (1 << (kGW - 1 - col)))) continue;
+                for (int dy = 0; dy < kScale; ++dy)
+                    for (int dx = 0; dx < kScale; ++dx) {
+                        const int x = g * kCellW + 1 + col * kScale + dx;
+                        const int y = 1 + row * kScale + dy;
+                        img.rgba[((size_t)y * img.width + x) * 4 + 3] = 255;
+                    }
+            }
+    return img;
+}
+
+int glyph_index(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c == ':') return 10;
+    return -1;
+}
+
+// Час доби з мікросекунд епохи — той самий, що показував годинник станції
+// у мить запису.
+std::string clock_hms(int64_t us) {
+    const time_t sec = (time_t)(us / 1000000);
+    struct tm tm {};
+    localtime_r(&sec, &tm);
+    char b[16];
+    std::snprintf(b, sizeof(b), "%02d:%02d:%02d", tm.tm_hour, tm.tm_min, tm.tm_sec);
+    return b;
+}
+
 } // namespace
 
 struct PlayerUi::Impl {
@@ -32,7 +108,7 @@ struct PlayerUi::Impl {
     std::shared_ptr<source::PlayerSession> player[kRoles];
 
     std::vector<render::OverlayImage> images;
-    int i_track = 0, i_fill = 1, i_knob = 2;
+    int i_track = 0, i_fill = 1, i_knob = 2, i_font = 3, i_pad = 4;
 
     std::atomic<int> rw[kRoles] = {};
     std::atomic<int> rh[kRoles] = {};
@@ -46,6 +122,8 @@ struct PlayerUi::Impl {
         images.push_back(solid("track", 30, 32, 38, 180));
         images.push_back(solid("fill", 240, 170, 60, 235));
         images.push_back(solid("knob", 250, 245, 235, 255));
+        images.push_back(make_font());
+        images.push_back(solid("pad", 0, 0, 0, 200));   // підкладка під цифри
     }
 
     // Смуга в частках екрана.
@@ -97,7 +175,7 @@ bool PlayerUi::acquire(int role, render::DrawList& out) {
     if (d.presets->mode(role) != ScreenPresets::kPlayer) return true;
 
     auto& pl = *d.player[role];
-    const int64_t len = pl.length_us();
+    const int64_t len = pl.timeline_len_us();
     if (len <= 0) return true;              // сеанс не відкритий
 
     float bx, by, bw, bh;
@@ -136,6 +214,15 @@ bool PlayerUi::acquire(int role, render::DrawList& out) {
         }
     }
 
+    const int Wp = d.rw[role].load(std::memory_order_relaxed);
+    const int Hp = d.rh[role].load(std::memory_order_relaxed);
+
+    // Пропорція екрана потрібна, щоб цифри не розтягувало: квади задані в
+    // частках, а екран не квадратний.
+    const float sa = (Wp > 0 && Hp > 0) ? float(Hp) / float(Wp) : 0.5625f;
+    const float th = d.cfg.text_h;
+    const float cw = th * (float(kCellW) / float(kCellH)) * sa;
+
     auto push = [&out](int image, float x, float y, float w, float h) {
         render::OverlayQuad q;
         q.image = image;
@@ -144,6 +231,28 @@ bool PlayerUi::acquire(int role, render::DrawList& out) {
         q.u[0] = 0; q.v[0] = 0; q.u[1] = 1; q.v[1] = 0;
         q.u[2] = 0; q.v[2] = 1; q.u[3] = 1; q.v[3] = 1;
         out.quads.push_back(q);
+    };
+
+    // Підпис із підкладкою. Без неї цифри губляться на світлій картинці —
+    // а таймлайн лежить поверх відео, і яким воно буде, ми не знаємо.
+    auto text = [&](const std::string& t, float x, float y) {
+        const float w = cw * (float)t.size();
+        push(d.i_pad, x - cw * 0.25f, y - th * 0.2f,
+             w + cw * 0.5f, th * 1.4f);
+        for (size_t i = 0; i < t.size(); ++i) {
+            const int g = glyph_index(t[i]);
+            if (g < 0) continue;
+            render::OverlayQuad q;
+            q.image = d.i_font;
+            const float x0 = x + cw * float(i), x1 = x0 + cw;
+            q.x[0] = x0; q.y[0] = y;      q.x[1] = x1; q.y[1] = y;
+            q.x[2] = x0; q.y[2] = y + th; q.x[3] = x1; q.y[3] = y + th;
+            const float u0 = float(g * kCellW) / float(kCellW * kGlyphs);
+            const float u1 = float((g + 1) * kCellW) / float(kCellW * kGlyphs);
+            q.u[0] = u0; q.v[0] = 0; q.u[1] = u1; q.v[1] = 0;
+            q.u[2] = u0; q.v[2] = 1; q.u[3] = u1; q.v[3] = 1;
+            out.quads.push_back(q);
+        }
     };
 
     const double f = (double)pl.position_us() / (double)len;
@@ -156,8 +265,32 @@ bool PlayerUi::acquire(int role, render::DrawList& out) {
     // видно й на самому початку, де заповнення ще нульове.
     // Повзунок піднімається НАД смугою, а не звисає під неї: смуга стоїть
     // упритул до низу, і все, що нижче, просто не поміститься на екрані.
-    const float kw = bh * 0.5f, kh = bh * 1.6f;
-    push(d.i_knob, bx + bw * frac - kw * 0.5f, by + bh - kh, kw, kh);
+    // Повзунок рівно у висоту смуги: усе, що вище або нижче, або лізе на
+    // картинку, або не міститься на екрані.
+    const float kw = bh * 0.55f;
+    const float knob_x = bx + bw * frac;
+    push(d.i_knob, knob_x - kw * 0.5f, by, kw, bh);
+
+    // Час НА РЕЄСТРАТОРІ, а не від початку сеансу: людина шукає момент за
+    // годинником, а не за секундою запису. Початок сеансу — це настінний
+    // час першого кадру, він є в журналі.
+    const int64_t t0 = pl.start_wall_us();
+    const std::string a_lbl = clock_hms(t0);
+    const std::string b_lbl = clock_hms(t0 + len);
+
+    // Краї — у бічних полях, по центру висоти смуги. Дрібний шрифт туди
+    // влазить, і смуга від цього не коротшає.
+    const float ty = by + (bh - th) * 0.5f;
+    text(a_lbl, 0.004f, ty);
+    text(b_lbl, 1.0f - 0.004f - cw * (float)b_lbl.size(), ty);
+
+    // Поточний час — ПРЯМО НА СМУЗІ, поруч із повзунком, і з того боку,
+    // де є місце: у правій половині підпис ішов би за край екрана.
+    const std::string cur = clock_hms(t0 + pl.position_us());
+    const float gap = cw * 0.8f;
+    const float cx_lbl = frac > 0.5f ? knob_x - gap - cw * (float)cur.size()
+                                     : knob_x + gap;
+    text(cur, cx_lbl, ty);
     return true;
 }
 

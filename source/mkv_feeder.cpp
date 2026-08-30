@@ -44,14 +44,15 @@ void MkvFeeder::close() {
     header_.clear();
     header_sent_ = 0;
     pos_ = size_ = 0;
-    limit_ = -1;
+    limit_.store(-1, std::memory_order_relaxed);
 }
 
-void MkvFeeder::set_limit(int64_t bytes) { limit_ = bytes; }
+void MkvFeeder::set_limit(int64_t bytes) { limit_.store(bytes, std::memory_order_relaxed); }
 
 bool MkvFeeder::seek(int64_t byte_hint) {
     if (fd_ < 0) return false;
-    const int64_t end = limit_ >= 0 ? std::min(limit_, size_) : size_;
+    const int64_t lim = limit_.load(std::memory_order_relaxed);
+    const int64_t end = lim >= 0 ? std::min(lim, size_) : size_;
     const int64_t at = record::mkv_find_cluster(fd_, byte_hint, end);
     if (at < 0) return false;
     pos_ = at;
@@ -71,7 +72,19 @@ size_t MkvFeeder::read(uint8_t* out, size_t max) {
         return n;
     }
 
-    const int64_t end = limit_ >= 0 ? std::min(limit_, size_) : size_;
+    int64_t lim2 = limit_.load(std::memory_order_relaxed);
+    int64_t end = lim2 >= 0 ? std::min(lim2, size_) : size_;
+
+    // РОЗМІР ЖИВОГО ФАЙЛУ ПЕРЕПИТУЄМО. Знятий при відкритті, він застигає,
+    // і межа читання впиралась би в нього навіть тоді, коли журнал уже
+    // дозволив читати далі.
+    if (pos_ >= end && lim2 >= 0) {
+        struct stat st {};
+        if (::fstat(fd_, &st) == 0 && st.st_size > size_) {
+            size_ = st.st_size;
+            end = std::min(lim2, size_);
+        }
+    }
     if (pos_ >= end) return 0;
 
     const size_t want = (size_t)std::min<int64_t>((int64_t)max, end - pos_);

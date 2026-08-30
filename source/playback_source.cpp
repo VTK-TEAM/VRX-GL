@@ -13,6 +13,7 @@
 #include <deque>
 #include <condition_variable>
 #include <mutex>
+#include <chrono>
 #include <thread>
 #include <vector>
 
@@ -43,8 +44,7 @@ struct PlaybackSource::Impl {
 
     // Опис сеансу тримаємо СВОЮ КОПІЮ: плеєр живе довго, а той, хто його
     // відкрив, може піти раніше.
-    record::SessionIndex ix;
-    bool have_ix = false;
+    std::string cur_file;        // який файл зараз програється
 
     GstElement* pipeline = nullptr;
     GstElement* appsrc = nullptr;
@@ -190,7 +190,17 @@ struct PlaybackSource::Impl {
         std::vector<uint8_t> buf(256 * 1024);
         while (running.load(std::memory_order_relaxed)) {
             const size_t n = feeder.read(buf.data(), buf.size());
-            if (n == 0) break;                    // кінець доступних даних
+            if (n == 0) {
+                // ДЛЯ ЖИВОГО ЗАПИСУ НУЛЬ — НЕ КІНЕЦЬ, а "поки що все".
+                //
+                // Раніше подача тут завершувалась назавжди: відео завмирало
+                // на останньому кадрі, хоч журнал за дві секунди додавав
+                // нових даних, а таймлайн бачив їх і біг далі. Виглядало
+                // так, ніби завис показ, а насправді нікуди було вливати.
+                if (!feeder.growing()) break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(120));
+                continue;
+            }
             GstBuffer* b = gst_buffer_new_allocate(nullptr, n, nullptr);
             gst_buffer_fill(b, 0, buf.data(), n);
             if (gst_app_src_push_buffer(GST_APP_SRC(appsrc), b) != GST_FLOW_OK) break;
@@ -246,29 +256,37 @@ PlaybackSource::PlaybackSource(Config cfg)
 PlaybackSource::~PlaybackSource() = default;
 
 bool PlaybackSource::open(const record::SessionIndex& ix, int64_t t_us) {
-    impl_->ix = ix;
-    impl_->have_ix = true;
-    return seek(t_us);
+    return seek(ix, t_us);
 }
 
-bool PlaybackSource::seek(int64_t t_us) {
+void PlaybackSource::refresh(const record::SessionIndex& ix) {
     Impl& d = *impl_;
-    if (!d.have_ix) return false;
-    const auto sp = d.ix.locate(d.cfg.channel, t_us);
+    if (d.cur_file.empty()) return;
+    for (const auto& f : ix.files())
+        if (f.name == d.cur_file) {
+            d.feeder.set_limit(f.closed ? -1 : f.safe_bytes);
+            return;
+        }
+}
+
+bool PlaybackSource::seek(const record::SessionIndex& ix, int64_t t_us) {
+    Impl& d = *impl_;
+    const auto sp = ix.locate(d.cfg.channel, t_us);
     if (!sp.valid) return false;
 
     // Межа читання: для сеансу, що ще пишеться, далі останньої мітки
     // дані можуть не дійти до носія.
     int64_t limit = -1, anchor = 0;
-    for (const auto& f : d.ix.files())
+    for (const auto& f : ix.files())
         if (f.name == sp.name) {
             anchor = f.anchor_us;
             if (!f.closed) limit = f.safe_bytes;
         }
     d.anchor_us = anchor;
-    d.session_start_us = d.ix.start_us();
+    d.cur_file = sp.name;
+    d.session_start_us = ix.start_us();
     d.target_us.store(t_us, std::memory_order_relaxed);
-    return d.build(d.ix.dir() + "/" + sp.name, sp.byte_off, limit);
+    return d.build(ix.dir() + "/" + sp.name, sp.byte_off, limit);
 }
 
 bool PlaybackSource::start() { return true; }       // піднімає open/seek

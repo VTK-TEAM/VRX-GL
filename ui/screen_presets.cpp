@@ -110,6 +110,41 @@ void fill_box(render::OverlayImage& img, int size, int x0, int y0, int w, int h,
 // Кнопка плеєра. У режимі ефіру на ній трикутник "грати", у режимі
 // плеєра — квадрат "стоп", тобто повернутись до ефіру. Знак показує, що
 // СТАНЕТЬСЯ від натискання, а не що зараз, — так само як у кнопці OSD.
+// Замок. Закритий — розкладку не зрушити; відкритий — можна.
+//
+// Свій на КОЖЕН ПРЕСЕТ, а не один на екран: пресет для польоту зазвичай
+// вилизаний і чіпати його не хочеться, а сусідній лишається робочим.
+render::OverlayImage make_lock_button(bool locked) {
+    const int size = 48;
+    render::OverlayImage img;
+    img.id = std::string("presets:lock") + (locked ? "1" : "0");
+    img.width = img.height = size;
+    img.rgba.assign((size_t)size * size * 4, 0);
+    draw_button_bg(img, false, size);
+
+    const uint8_t r = locked ? 250 : 120, g = locked ? 190 : 190, b = locked ? 90 : 120;
+    const uint8_t a = locked ? 255 : 200;
+
+    // Корпус
+    const int bw = size / 2, bh = size / 3;
+    const int bx = (size - bw) / 2, by = size / 2;
+    for (int y = by; y < by + bh; ++y)
+        for (int x = bx; x < bx + bw; ++x)
+            put(img.rgba, size, x, y, r, g, b, a);
+
+    // Дужка: півколо над корпусом. У відкритого воно зсунуте вбік і вище.
+    const float cx = locked ? size * 0.5f : size * 0.62f;
+    const float cy = float(by);
+    const float rad = size * 0.16f;
+    const int th = std::max(2, size / 16);
+    for (int y = 0; y < by; ++y)
+        for (int x = 0; x < size; ++x) {
+            const float d = std::hypot(float(x) - cx, float(y) - cy);
+            if (d <= rad && d >= rad - th) put(img.rgba, size, x, y, r, g, b, a);
+        }
+    return img;
+}
+
 render::OverlayImage make_player_button(bool playing) {
     const int size = 48;
     render::OverlayImage img;
@@ -196,6 +231,42 @@ render::OverlayImage make_solid() {
     return img;
 }
 
+// Рамка замкненого пресета — червона. Колір тут несе зміст: жовта каже
+// "обране й рухається", червона — "обране, але замкнене". Інакше замок
+// видно лише на кнопці, а рука вже тягне вікно.
+render::OverlayImage make_solid_locked() {
+    render::OverlayImage img;
+    img.id = "presets:solid_locked";
+    img.width = img.height = 4;
+    img.rgba.assign(4 * 4 * 4, 0);
+    for (auto* p = img.rgba.data(); p < img.rgba.data() + img.rgba.size(); p += 4) {
+        p[0] = 235; p[1] = 60; p[2] = 55; p[3] = 235;
+    }
+    return img;
+}
+
+// Ручка меню — три смужки. Єдина кнопка, яку видно завжди.
+render::OverlayImage make_menu_button(bool open) {
+    const int size = 48;
+    render::OverlayImage img;
+    img.id = std::string("presets:menu") + (open ? "1" : "0");
+    img.width = img.height = size;
+    img.rgba.assign((size_t)size * size * 4, 0);
+    draw_button_bg(img, false, size);
+
+    const uint8_t r = open ? 250 : 150, g = open ? 220 : 150, b = open ? 150 : 160;
+    const uint8_t a = open ? 255 : 210;
+    const int th = std::max(2, size / 12);
+    const int m = size / 4;
+    for (int k = 0; k < 3; ++k) {
+        const int y0 = size / 4 + k * (size / 4) - th / 2;
+        for (int y = y0; y < y0 + th; ++y)
+            for (int x = m; x < size - m; ++x)
+                put(img.rgba, size, x, y, r, g, b, a);
+    }
+    return img;
+}
+
 const char* anchor_key(layout::Anchor a) { (void)a; return "anchor"; }
 
 nlohmann::json to_json(const layout::Placement& p) {
@@ -224,8 +295,12 @@ struct ScreenPresets::Impl {
 
     std::vector<render::OverlayImage> images;   // [d*2+active] цифри, далі solid і перемикачі
     int solid_idx = 0;
+    int solid_lock_idx = 0;
+    int menu_idx = 0;
+    bool menu[2] = {false, false};   // меню розгорнуте (kRoles оголошено нижче)
     int osd_idx = 0;       // +0 OSD вимкнено, +1 увімкнено
     int play_idx = 0;      // +0 ефір (знак "грати"), +1 плеєр (знак "стоп")
+    int lock_idx = 0;      // +0 відкритий, +1 закритий
     int btn_px = 48;
 
     // Геометрія КОЖНОГО екрана: частки рахуються від свого.
@@ -246,6 +321,7 @@ struct ScreenPresets::Impl {
     // [пресет][роль] — чи показувати OSD. Типово: на основному так, на
     // додатковому ні (ТЗ).
     std::vector<std::array<bool, 2>> osd_on;
+    std::vector<std::array<bool, 2>> locked;
     // АКТИВНИЙ ПРЕСЕТ — СВІЙ НА КОЖНОМУ ЕКРАНІ.
     //
     // Спершу я зробив пресет спільним, міркуючи, що це "конфігурація
@@ -314,12 +390,20 @@ struct ScreenPresets::Impl {
         }
         solid_idx = (int)images.size();
         images.push_back(make_solid());
+        solid_lock_idx = (int)images.size();
+        images.push_back(make_solid_locked());
+        menu_idx = (int)images.size();
+        images.push_back(make_menu_button(false));
+        images.push_back(make_menu_button(true));
         osd_idx = (int)images.size();
         images.push_back(make_osd_button(false));
         images.push_back(make_osd_button(true));
         play_idx = (int)images.size();
         images.push_back(make_player_button(false));
         images.push_back(make_player_button(true));
+        lock_idx = (int)images.size();
+        images.push_back(make_lock_button(false));
+        images.push_back(make_lock_button(true));
     }
 
     // Розкладка однієї ролі з уже розібраного json.
@@ -338,6 +422,7 @@ struct ScreenPresets::Impl {
             std::vector<std::vector<layout::Placement>>(
                 2, std::vector<layout::Placement>(windows.size())));
         osd_on.assign(cfg.preset_count, {true, false});
+        locked.assign(cfg.preset_count, {false, false});
 
         for (int p = 0; p < cfg.preset_count; ++p) {
             nlohmann::json root;
@@ -362,6 +447,10 @@ struct ScreenPresets::Impl {
                     load_role(nlohmann::json::object(), p, r);
                 }
             }
+            if (ok && root.contains("locked")) {
+                locked[p][render::Scene::kPrimary]   = root["locked"].value("primary", false);
+                locked[p][render::Scene::kSecondary] = root["locked"].value("secondary", false);
+            }
             if (ok && root.contains("osd")) {
                 osd_on[p][render::Scene::kPrimary]   = root["osd"].value("primary", true);
                 osd_on[p][render::Scene::kSecondary] = root["osd"].value("secondary", false);
@@ -374,7 +463,8 @@ struct ScreenPresets::Impl {
     }
 
     void save_preset(int p, const std::vector<std::vector<layout::Placement>>& roles,
-                     const std::array<bool, 2>& osd) {
+                     const std::array<bool, 2>& osd,
+                     const std::array<bool, 2>& lock) {
         nlohmann::json root;
         for (int r = 0; r < 2; ++r) {
             const char* key = (r == render::Scene::kPrimary) ? "primary" : "secondary";
@@ -383,6 +473,8 @@ struct ScreenPresets::Impl {
         }
         root["osd"]["primary"]   = osd[render::Scene::kPrimary];
         root["osd"]["secondary"] = osd[render::Scene::kSecondary];
+        root["locked"]["primary"]   = lock[render::Scene::kPrimary];
+        root["locked"]["secondary"] = lock[render::Scene::kSecondary];
         std::ofstream f(file_of(p));
         if (!f.is_open()) {
             std::fprintf(stderr, "[екрани] не зберігся %s\n", file_of(p).c_str());
@@ -503,7 +595,8 @@ struct ScreenPresets::Impl {
     // програму (див. ScreenUi::Config::slot).
     int osd_button() const { return cfg.preset_count; }
     int play_button() const { return cfg.preset_count + 1; }
-    int button_count() const { return cfg.preset_count + 2; }
+    int lock_button() const { return cfg.preset_count + 2; }
+    int button_count() const { return cfg.preset_count + 3; }
 
     void button_rect(int role, int b, float* x, float* y, float* w, float* h) const {
         const int W = rw[role].load(), H = rh[role].load();
@@ -521,6 +614,7 @@ struct ScreenPresets::Impl {
             int p_to_save = -1;
             std::vector<std::vector<layout::Placement>> snap;
             std::array<bool, 2> snap_osd{true, false};
+            std::array<bool, 2> snap_lock{false, false};
             {
                 std::lock_guard<std::mutex> lk(mtx);
                 if (dirty_mask && now_ms() - last_edit >= cfg.autosave_ms) {
@@ -529,11 +623,12 @@ struct ScreenPresets::Impl {
                     if (p_to_save >= 0) {
                         snap = presets[p_to_save];
                         snap_osd = osd_on[p_to_save];
+                        snap_lock = locked[p_to_save];
                         dirty_mask &= ~(1u << p_to_save);
                     }
                 }
             }
-            if (p_to_save >= 0) save_preset(p_to_save, snap, snap_osd);   // I/O поза локом
+            if (p_to_save >= 0) save_preset(p_to_save, snap, snap_osd, snap_lock);  // I/O поза локом
         }
     }
 };
@@ -563,6 +658,10 @@ void ScreenPresets::set_mode(int role, int m) {
     impl_->mode[role] = m;
     impl_->selected[role] = -1;          // вибір належав іншому набору вікон
     impl_->apply_pending = true;
+}
+
+bool ScreenPresets::menu_open(int role) const {
+    return (role >= 0 && role < Impl::kRoles) && impl_->menu[role];
 }
 
 int ScreenPresets::mode(int role) const {
@@ -646,9 +745,23 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
             // --- 2) кнопки 1..3: клік перемикає пресет ---
             bool on_button = false;
             const bool clicked = p.clicks > d.seen_clicks;
-            for (int b = 0; b < d.button_count(); ++b) {
+
+            // РУЧКА МЕНЮ — єдина кнопка, яку видно завжди. Решта ряду
+            // з'являється за вимогою: кнопок стало шість, і постійно
+            // тримати їх поверх картинки вже забагато.
+            {
                 float bx, by, bw, bh;
-                d.button_rect(role, b, &bx, &by, &bw, &bh);
+                d.button_rect(role, 0, &bx, &by, &bw, &bh);
+                if (cx >= bx && cx <= bx + bw && cy >= by && cy <= by + bh) {
+                    on_button = true;
+                    if (clicked) d.menu[role] = !d.menu[role];
+                }
+            }
+
+            // Слоти зсунуті на один: нульовий зайняла ручка.
+            for (int b = 0; d.menu[role] && b < d.button_count(); ++b) {
+                float bx, by, bw, bh;
+                d.button_rect(role, b + 1, &bx, &by, &bw, &bh);
                 if (!(cx >= bx && cx <= bx + bw && cy >= by && cy <= by + bh)) continue;
                 on_button = true;
                 if (!clicked) continue;
@@ -662,6 +775,14 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
                                      role == render::Scene::kPrimary ? "основний" : "додатковий",
                                      b + 1);
                     }
+                } else if (b == d.lock_button()) {
+                    bool& lk = d.locked[d.active_of(role)][role];
+                    lk = !lk;
+                    d.mark_dirty(role);
+                    std::fprintf(stderr, "[екрани] пресет %d на %s екрані: %s\n",
+                                 d.active_of(role) + 1,
+                                 role == render::Scene::kPrimary ? "основному" : "додатковому",
+                                 lk ? "ЗАМКНЕНО" : "відкрито");
                 } else if (b == d.play_button()) {
                     // ПЛЕЄР НА ЦЬОМУ ЕКРАНІ. Другий екран лишається на
                     // ефірі — або має свій плеєр, це дозволено.
@@ -687,10 +808,21 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
                                  on ? "увімкнено" : "вимкнено");
                 }
             }
+            // МЕНЮ ЗАКРИВАЄ ЛИШЕ ПОВТОРНЕ НАТИСКАННЯ РУЧКИ.
+            //
+            // Ні вибір кнопки, ні клац повз нього його не згортають: комусь
+            // зручніше тримати ряд відкритим постійно, і вирішувати це має
+            // людина, а не здогад про те, чого вона хотіла.
             if (clicked) d.seen_clicks = p.clicks;
 
             // Чужий шар (таймлайн плеєра) забирає натискання собі.
             if (d.blocked && d.blocked(role, cx, cy)) on_button = true;
+
+            // ЗАМОК ЦЬОГО ПРЕСЕТА. Обирати вікно можна й далі — видно, що
+            // саме обране, — але жодна дія його не зрушить. Вилизаний
+            // польотний пресет тим і цінний, що не з'їжджає від випадкового
+            // руху мишею.
+            const bool lk = d.locked[d.active_of(role)][role];
 
             // --- 3) ліва кнопка: ОБРАТИ вікно (і почати перетяг) ---
             if (p.left && !d.was_left) {                 // натиснули
@@ -702,7 +834,7 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
                 }
                 d.prev_cx = cx; d.prev_cy = cy;
             }
-            if (p.left && d.drag_win >= 0) {              // тягнемо обране
+            if (p.left && d.drag_win >= 0 && !lk) {       // тягнемо обране
                 d.move(role, (size_t)d.drag_win, cx - d.prev_cx, cy - d.prev_cy);
                 d.clamp_on_screen(role, (size_t)d.drag_win);
                 d.mark_dirty(role); d.apply_pending = true;
@@ -714,7 +846,7 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
             // --- 4) колесо: масштаб ОБРАНОГО вікна (не під курсором) ---
             const int64_t dwheel = p.wheel - d.seen_wheel;
             d.seen_wheel = p.wheel;
-            if (dwheel != 0 && d.selected[role] >= 0) {
+            if (dwheel != 0 && d.selected[role] >= 0 && !lk) {
                 const size_t wi = (size_t)d.selected[role];
                 Impl::Rect r0 = d.rect_of(role, wi);
                 const float c0x = r0.x + r0.w * 0.5f, c0y = r0.y + r0.h * 0.5f;
@@ -760,7 +892,7 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
             // колесом по видимій частині повертає його на всю площу.
             if (p.mclicks > d.seen_mclicks) {
                 d.seen_mclicks = p.mclicks;
-                const int wi = on_button ? -1 : d.window_at(role, cx, cy);
+                const int wi = (on_button || lk) ? -1 : d.window_at(role, cx, cy);
                 if (wi >= 0) {
                     d.fill_screen(role, (size_t)wi);
                     d.selected[role] = wi;
@@ -814,15 +946,24 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
         Impl::Rect r = d.rect_of(role, (size_t)d.selected[role]);
         const float t = 0.004f;                          // товщина рамки
         const float ta = t * float(H) / float(W);        // однакова в пікселях
-        push(d.solid_idx, r.x, r.y, r.w, ta);            // верх
-        push(d.solid_idx, r.x, r.y + r.h - ta, r.w, ta); // низ
-        push(d.solid_idx, r.x, r.y, t, r.h);             // ліво
-        push(d.solid_idx, r.x + r.w - t, r.y, t, r.h);   // право
+        const int fi = d.locked[d.active_of(role)][role] ? d.solid_lock_idx
+                                                         : d.solid_idx;
+        push(fi, r.x, r.y, r.w, ta);            // верх
+        push(fi, r.x, r.y + r.h - ta, r.w, ta); // низ
+        push(fi, r.x, r.y, t, r.h);             // ліво
+        push(fi, r.x + r.w - t, r.y, t, r.h);   // право
     }
+
+    {
+        float bx, by, bw, bh;
+        d.button_rect(role, 0, &bx, &by, &bw, &bh);
+        push(d.menu_idx + (d.menu[role] ? 1 : 0), bx, by, bw, bh);
+    }
+    if (!d.menu[role]) return true;          // згорнуте — далі нічого
 
     for (int b = 0; b < d.cfg.preset_count; ++b) {
         float bx, by, bw, bh;
-        d.button_rect(role, b, &bx, &by, &bw, &bh);
+        d.button_rect(role, b + 1, &bx, &by, &bw, &bh);
         const int img = b * 2 + (b == d.active_of(role) ? 1 : 0);
         push(img, bx, by, bw, bh);
     }
@@ -831,11 +972,14 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
     // рядки яскраві, коли телеметрію тут показуємо.
     {
         float bx, by, bw, bh;
-        d.button_rect(role, d.osd_button(), &bx, &by, &bw, &bh);
+        d.button_rect(role, d.osd_button() + 1, &bx, &by, &bw, &bh);
         push(d.osd_idx + (d.osd_on[d.active_of(role)][role] ? 1 : 0), bx, by, bw, bh);
 
-        d.button_rect(role, d.play_button(), &bx, &by, &bw, &bh);
+        d.button_rect(role, d.play_button() + 1, &bx, &by, &bw, &bh);
         push(d.play_idx + (d.mode[role] == ScreenPresets::kPlayer ? 1 : 0), bx, by, bw, bh);
+
+        d.button_rect(role, d.lock_button() + 1, &bx, &by, &bw, &bh);
+        push(d.lock_idx + (d.locked[d.active_of(role)][role] ? 1 : 0), bx, by, bw, bh);
     }
     return true;
 }

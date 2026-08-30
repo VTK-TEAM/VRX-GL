@@ -19,6 +19,7 @@
 #include "pointer.hpp"
 
 #include <atomic>
+#include <functional>
 #include <memory>
 
 namespace vrx::ui {
@@ -44,7 +45,7 @@ public:
         //
         // В одноканальній збірці пресетів немає взагалі, і тоді кнопка
         // стає першою — задає це main, бо тільки він знає про режим.
-        int slot = 5;
+        int slot = 8;
 
 
     };
@@ -55,6 +56,11 @@ public:
     // Джерело позиції курсора. Живе зовні: мишу читає окремий клас, а цей
     // лише малює те, що той намалював.
     void attach(Pointer* pointer);
+
+    // ЧИ ПОКАЗУВАТИ КНОПКУ. Ряд кнопок згортається в меню, і кнопка
+    // редактора мусить зникати разом із ним — інакше вона висіла б сама
+    // посеред екрана, без жодного сусіда й без пояснення, що це.
+    void set_visible(std::function<bool(int role)> cb);
 
     const char* name() const override { return "ui"; }
     bool start() override;

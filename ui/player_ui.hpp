@@ -22,7 +22,9 @@ class PlayerUi : public render::Overlay {
 public:
     struct Config {
         float bar_h = 0.020f;      // висота смуги, частка висоти екрана
-        float side = 0.04f;        // відступ від бічних країв
+        // Бічні поля тримають підписи часу — початку й кінця запису.
+        float side = 0.058f;
+        float text_h = 0.0135f;    // висота цифр, частка висоти екрана
         float bottom = 0.0f;       // впритул до низу екрана
     };
 

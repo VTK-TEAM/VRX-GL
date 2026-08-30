@@ -425,8 +425,15 @@ int main(int argc, char** argv) {
     // порожнє місце. В одноканальній збірці пресетів немає — тоді вона
     // перша й сама.
     vrx::ui::ScreenUi::Config ui_cfg;
-    ui_cfg.slot = kSingleChannel ? 0 : 5;
+    ui_cfg.slot = kSingleChannel ? 0 : 8;
     auto screen_ui = std::make_shared<vrx::ui::ScreenUi>(ui_cfg);
+
+    // Кнопка редактора живе в іншому шарі, але в тому ж ряду кнопок — тож
+    // з'являється й зникає разом із меню.
+    if (screen_presets) {
+        auto sp = screen_presets;
+        screen_ui->set_visible([sp](int role) { return sp->menu_open(role); });
+    }
     screen_ui->attach(&pointer);
     renderer.add_overlay(screen_ui);         // курсор і кнопка редактора — зверху
 

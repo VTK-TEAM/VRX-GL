@@ -13,6 +13,7 @@
 #include "record/session_index.hpp"
 #include "source/playback_source.hpp"
 
+#include <atomic>
 #include <memory>
 #include <string>
 
@@ -55,20 +56,39 @@ public:
     void step();
 
     int64_t position_us() const { return position_us_; }
-    int64_t length_us() const { return ix_.length_us(); }
-    const record::SessionIndex& index() const { return ix_; }
-    bool live() const { return ix_.live(); }
+
+    // Довжина й початок читаються з ПОТОКУ ПОКАЗУ, а журнал живого сеансу
+    // перечитує годинник — тому атомарні знімки, а не посилання на індекс.
+    int64_t length_us() const { return length_us_.load(std::memory_order_relaxed); }
+
+    // ДОВЖИНА ДЛЯ ТАЙМЛАЙНУ. Для закритого сеансу це просто його довжина.
+    //
+    // Для живого — час від початку запису ДО ЗАРАЗ, а не до останньої
+    // мітки журналу. Мітки лягають на носій пачками по кілька секунд, і
+    // кінець, рахований по них, ріс стрибками — разом із ним смикалась і
+    // позиція, що в нього впиралась. Запис же йде рівно, у реальному часі,
+    // тож його край і є "зараз".
+    int64_t timeline_len_us() const;
+    int64_t start_wall_us() const { return start_wall_us_.load(std::memory_order_relaxed); }
+    bool live() const { return live_.load(std::memory_order_relaxed); }
 
 private:
     record::SessionIndex ix_;
     std::shared_ptr<PlaybackSource> ch_[kChannels];
     bool open_ = false;
 
+    std::string journal_;
+    std::atomic<int64_t> length_us_{0};
+    std::atomic<int64_t> start_wall_us_{0};
+    std::atomic<bool> live_{false};
+
     int64_t position_us_ = 0;
     double speed_ = 1.0;
     int64_t last_tick_ns_ = 0;
+    int64_t last_reload_ns_ = 0;
 
     void push_target();
+    void adopt();                 // перенести знімки з ix_ у атомарні поля
 };
 
 } // namespace vrx::source

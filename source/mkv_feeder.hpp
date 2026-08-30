@@ -18,6 +18,7 @@
 // останньої мітки журналу: далі неї дані можуть ще не дійти до носія, і
 // хвіст файлу буде недописаним кластером.
 
+#include <atomic>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -47,6 +48,10 @@ public:
     // триває далі.
     size_t read(uint8_t* out, size_t max);
 
+    // Чи це запис, що ЩЕ ПИШЕТЬСЯ. Для нього нуль із read() означає не
+    // кінець, а "поки що все": за секунду даних побільшає.
+    bool growing() const { return limit_.load(std::memory_order_relaxed) >= 0; }
+
     int64_t header_size() const { return (int64_t)header_.size(); }
     int64_t position() const { return pos_; }
     int64_t size() const { return size_; }
@@ -57,7 +62,8 @@ private:
     size_t header_sent_ = 0;
     int64_t pos_ = 0;
     int64_t size_ = 0;
-    int64_t limit_ = -1;
+    // Межу посуває годинник плеєра, поки подавач читає, — тож атомарна.
+    std::atomic<int64_t> limit_{-1};
 };
 
 } // namespace vrx::source

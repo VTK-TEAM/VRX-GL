@@ -107,6 +107,9 @@ public:
     void set_blocked_area(std::function<bool(int role, float cx, float cy)> cb);
     int mode(int role) const;
 
+    // Чи розгорнутий ряд кнопок на цій ролі.
+    bool menu_open(int role) const;
+
     bool start() override;
     void stop() override;
     void set_frame_size(int role, int width, int height) override;
