@@ -47,6 +47,7 @@ add_executable(vrx_gl
     control/phase_controller.cpp
     ui/pointer.cpp
     ui/screen_ui.cpp
+    ui/player_ui.cpp
     ui/screen_presets.cpp
     diag/link_monitor.cpp
     record/storage.cpp

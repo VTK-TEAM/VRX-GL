@@ -33,6 +33,7 @@
 #include "osd/telemetry/vt_telemetry_index.h"
 #include "osd/subtitle_writer.hpp"
 #include "source/player_session.hpp"
+#include "ui/player_ui.hpp"
 #include "record/session_index.hpp"
 #include "render/gl_renderer.hpp"
 #include "source/h265_source.hpp"
@@ -403,6 +404,21 @@ int main(int argc, char** argv) {
         screen_presets->set_telemetry(osd ? &osd->storage() : nullptr);
         screen_presets->start();
         renderer.add_overlay(screen_presets);   // під курсором
+
+        // Таймлайн плеєра — окремим шаром: пресети відповідають за вікна,
+        // і домішувати туди керування відтворенням означало б зробити
+        // найскладніший файл проєкту ще складнішим.
+        auto player_ui = std::make_shared<vrx::ui::PlayerUi>(vrx::ui::PlayerUi::Config{});
+        player_ui->attach(&pointer);
+        player_ui->attach_presets(screen_presets.get());
+        for (int r = 0; r < 2; ++r) player_ui->attach_player(r, players[r]);
+        player_ui->start();
+        renderer.add_overlay(player_ui);
+
+        screen_presets->set_blocked_area(
+            [player_ui](int role, float cx, float cy) {
+                return player_ui->hit_bar(role, cx, cy);
+            });
     }
 
     // Кнопка редактора стоїть у спільному ряду з пресетами, через одне

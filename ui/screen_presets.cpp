@@ -272,6 +272,7 @@ struct ScreenPresets::Impl {
     // нічого не знають і знати не мусять: їхня справа — вікна й розкладка,
     // а відкрити сеанс і завести декодери має той, хто ними володіє.
     std::function<void(int role, int mode)> on_mode;
+    std::function<bool(int role, float cx, float cy)> blocked;
     uint32_t dirty_mask = 0;
     int64_t last_edit = 0;
 
@@ -548,6 +549,10 @@ void ScreenPresets::set_telemetry(VtTelemetryStorage* tlm) { impl_->tlm = tlm; }
 
 void ScreenPresets::attach_scene(render::Scene* s) { impl_->scene = s; }
 
+void ScreenPresets::set_blocked_area(std::function<bool(int, float, float)> cb) {
+    impl_->blocked = std::move(cb);
+}
+
 void ScreenPresets::set_on_mode(std::function<void(int, int)> cb) {
     impl_->on_mode = std::move(cb);
 }
@@ -683,6 +688,9 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
                 }
             }
             if (clicked) d.seen_clicks = p.clicks;
+
+            // Чужий шар (таймлайн плеєра) забирає натискання собі.
+            if (d.blocked && d.blocked(role, cx, cy)) on_button = true;
 
             // --- 3) ліва кнопка: ОБРАТИ вікно (і почати перетяг) ---
             if (p.left && !d.was_left) {                 // натиснули
