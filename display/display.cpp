@@ -20,10 +20,13 @@
 #include <cstdlib>
 #include <ctime>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <map>
+#include <memory>
 #include <mutex>
+#include <set>
 #include <thread>
 #include <vector>
 
@@ -189,6 +192,42 @@ void force_edid_refresh(const std::string& card_path) {
     ::closedir(dir);
 }
 
+// Ім'я типу коннектора так, як його пише ядро в /sys/class/drm.
+// Потрібне не для краси: повне ім'я ("HDMI-A-1") — сталий ключ, за яким
+// зберігаються розкладки вікон конкретного екрана.
+const char* connector_type_name(uint32_t t) {
+    switch (t) {
+        case DRM_MODE_CONNECTOR_HDMIA:       return "HDMI-A";
+        case DRM_MODE_CONNECTOR_HDMIB:       return "HDMI-B";
+        case DRM_MODE_CONNECTOR_DisplayPort: return "DP";
+        case DRM_MODE_CONNECTOR_eDP:         return "eDP";
+        case DRM_MODE_CONNECTOR_DSI:         return "DSI";
+        case DRM_MODE_CONNECTOR_LVDS:        return "LVDS";
+        case DRM_MODE_CONNECTOR_VGA:         return "VGA";
+        case DRM_MODE_CONNECTOR_VIRTUAL:     return "Virtual";
+        default:                             return "conn";
+    }
+}
+
+// ПРАВИЛО РОЛЕЙ. Менше число — вагоміша заявка на "основний".
+//
+// Роль визначає ТИП КОННЕКТОРА, а не історія підключень: HDMI основний
+// завжди, коли він є. Лишився один вивід — він основний, який би не був.
+//
+// Ціна цього правила прийнята свідомо: повернення HDMI розжалує DP назад,
+// а кожна зміна основного скидає петлю фази, і камера захоплюється заново
+// кілька секунд. Липка промоція цього не мала б, але вона суперечила б
+// самому правилу.
+int role_rank(uint32_t connector_type) {
+    switch (connector_type) {
+        case DRM_MODE_CONNECTOR_HDMIA:
+        case DRM_MODE_CONNECTOR_HDMIB:       return 0;
+        case DRM_MODE_CONNECTOR_DisplayPort:
+        case DRM_MODE_CONNECTOR_eDP:         return 1;
+        default:                             return 2;
+    }
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------
@@ -199,29 +238,9 @@ struct Display::Impl {
     Config cfg;
     int fd = -1;
     bool master_taken = false;
+    struct gbm_device* gbm = nullptr;
 
-    uint32_t connector_id = 0;
-    uint32_t crtc_id = 0;
-    uint32_t plane_id = 0;
-    drmModeModeInfo mode{};
-    uint32_t mode_blob = 0;
-
-    PropTable plane_props, crtc_props, conn_props;
-
-    OutputState state_{};
-
-
-    // КІЛЬЦЕ ЦІЛЬОВИХ БУФЕРІВ.
-    //
-    // Володіє ними дисплей, і це не питання зручності: вимоги до
-    // сканування (пристрій, формати, вирівнювання) знає він, і він же
-    // єдиний знає, який буфер зараз читає сканер. Раніше буфери виділяв
-    // рендерер — і для цього відкривав ту саму карту ДРУГИМ дескриптором,
-    // робив на ній свій GBM, експортував dmabuf, а дисплей імпортував їх
-    // назад. Уся ця подорож існувала лише тому, що володіння було
-    // розділене навпіл.
-    //
-    // П'ять станів, і кожен означає конкретну заборону:
+    // П'ять станів буфера, і кожен означає конкретну заборону:
     //   Free      нічий, можна віддати рендереру
     //   Drawing   рендерер малює прямо зараз
     //   Pending   намальований, чекає своєї черги на коміт
@@ -237,207 +256,133 @@ struct Display::Impl {
         Slot slot = Slot::Free;
     };
 
-    struct gbm_device* gbm = nullptr;
-    std::vector<RingBuf> ring;
-    int idx_pending = -1, idx_in_flight = -1, idx_current = -1;
+    // ОДИН ВИВІД: коннектор, CRTC, плейн і ВЛАСНЕ кільце буферів.
+    //
+    // Кільце саме власне, а не спільне: розміри екранів різні, а буфер
+    // сканується тим CRTC, під який виділявся. Спільний пул означав би
+    // або буфери за найбільшим екраном (марна смуга пам'яті), або
+    // перевиділення на кожен показ.
+    //
+    // Вимір частоти розгортки теж тут: у кожного виводу свій кварц, і
+    // спільного лічильника vblank'ів не існує в принципі.
+    struct Output {
+        Impl* owner = nullptr;      // маршрутизація подій: flip знає лише цей вказівник
+        int slot_no = -1;
+
+        uint32_t connector_id = 0;
+        uint32_t connector_type = 0;
+        uint32_t crtc_id = 0;
+        uint32_t plane_id = 0;
+        drmModeModeInfo mode{};
+        uint32_t mode_blob = 0;
+        PropTable plane_props, crtc_props, conn_props;
+
+        OutputState state{};
+        PresentStats st{};
+
+        std::vector<RingBuf> ring;
+        int idx_pending = -1, idx_in_flight = -1, idx_current = -1;
+        bool modeset_done = false;
+
+        int64_t hz_anchor_ns = 0;
+        uint32_t hz_anchor_seq = 0;
+        bool hz_seq_valid = false;
+
+        bool live() const { return state.generation != 0; }
+    };
+
+    // СЛОТИ, А НЕ СПИСОК, І ВОНИ НІКОЛИ НЕ ПЕРЕНУМЕРОВУЮТЬСЯ.
+    //
+    // Слот, що звільнився (монітор від'єднали), лишається порожнім і
+    // чекає на наступного — замість того щоб зсувати сусідів. Причина
+    // проста: номер слота лежить у виданому рендереру Target, і зсув
+    // номерів повернув би буфер у ЧУЖЕ кільце. Ролі при цьому
+    // переставляються скільки завгодно — вони живуть окремо, у
+    // primary_slot.
+    std::vector<std::unique_ptr<Output>> outs;
+    int primary_slot = -1;
 
     // БУФЕРИ, ЯКІ РОЗІБРАЛИ З-ПІД РЕНДЕРЕРА.
     //
     // Монітор можуть висмикнути в будь-яку мить, зокрема посеред проходу
     // GPU. Знищити буфер у стані Drawing означало б закрити дескриптор і
-    // віддати пам'ять, поки в неї пишуть. Сьогодні це не падає лише тому,
-    // що імпорт dmabuf у EGL тримає власне посилання — тобто інваріант
-    // тримається на поведінці драйвера, а не на нашому коді.
+    // віддати пам'ять, поки в неї пишуть. Тому такі буфери переїжджають
+    // сюди й чекають, поки рендерер поверне їх через present().
     //
-    // Тому такі буфери переїжджають сюди й чекають, поки рендерер поверне
-    // їх через present(). Він поверне обов'язково: цикл віддає ціль на
-    // кожній ітерації, а розбіжність generation він побачить уже після.
+    // Список СПІЛЬНИЙ на всі виводи: ключ тут дескриптор dmabuf, а він
+    // унікальний, і кільця, з якого буфер прийшов, на той момент уже
+    // немає.
     std::vector<RingBuf> retired;
 
-    // Скільки буферів виділено й ще не звільнено. Рівно глибина кільця в
-    // сталому режимі; якщо після замін монітора росте — тече.
+    // Скільки буферів виділено й ще не звільнено. У сталому режимі —
+    // сума глибин кілець усіх живих виводів; якщо після замін монітора
+    // росте, значить тече.
     int live_bufs = 0;
 
     mutable std::mutex mtx;
-    PresentStats st{};
-    
-
-    // Анкер вікна, на якому міряється точна частота розгортки.
-    int64_t hz_anchor_ns = 0;
-    uint32_t hz_anchor_seq = 0;
-    bool hz_seq_valid = false;
 
     std::thread event_thread;
     std::atomic<bool> running{false};
-    bool modeset_done = false;
 
-    // Гаряча заміна монітора.
     int udev_fd = -1;
     std::atomic<uint32_t> generation_{0};
-    std::atomic<bool> has_output{false};
     std::atomic<bool> refreshing{false};
+
+    // Скільки виводів піднято. Атомарне, бо його читає рендерер поза
+    // локом, щоб не будити м'ютекс на кожен кадр.
+    std::atomic<int> live_count{0};
 
     FlipCallback on_flip_cb;
 
-    bool configure_output();
+    int64_t last_poll_ns = 0;
 
-    // Знімає поточний вивід, лишаючи карту відкритою. Саме цим
-    // відрізняється від close(): дескриптор картки, майстер і потік
-    // подій переживають заміну монітора.
-    void teardown_output() {
-        if (fd >= 0 && plane_id && plane_props.has("FB_ID")) {
-            drmModeAtomicReq* req = drmModeAtomicAlloc();
-            drmModeAtomicAddProperty(req, plane_id, plane_props["FB_ID"], 0);
-            drmModeAtomicAddProperty(req, plane_id, plane_props["CRTC_ID"], 0);
-            drmModeAtomicCommit(fd, req, DRM_MODE_ATOMIC_ALLOW_MODESET, nullptr);
-            drmModeAtomicFree(req);
-        }
-        if (fd >= 0) {
-            if (mode_blob) drmModeDestroyPropertyBlob(fd, mode_blob);
-        }
-        mode_blob = 0;
-
-        {
-            std::lock_guard<std::mutex> lock(mtx);
-            // Буфери належать конкретному траєкту виводу: після заміни
-            // монітора вони недійсні, навіть якщо роздільність збіглася.
-            destroy_ring();
-            // Вимір частоти прив'язаний до конкретного тракту розгортки:
-            // після заміни монітора продовжувати старе вікно не можна.
-            hz_seq_valid = false;
-            st.measured_hz = 0;
-            st.last_present_ns = 0;
-        }
-
-        connector_id = crtc_id = plane_id = 0;
-        plane_props = crtc_props = conn_props = PropTable{};
-        mode = drmModeModeInfo{};
-        modeset_done = false;
-        state_ = OutputState{};
-        state_.name = "немає виводу";
-        has_output.store(false, std::memory_order_release);
-    }
-
-    const OutputState& info() const { return state_; }
-
-    // Опис буфера кільця у вигляді звичайного кадру — тим самим типом,
-    // яким описуються кадри джерел, щоб рендерер не мав окремої гілки.
-    Frame frame_of(int i) const {
-        Frame f;
-        f.fourcc = state_.fourcc;
-        f.modifier = state_.modifier;
-        f.width = state_.width;
-        f.height = state_.height;
-        f.n_planes = 1;
-        f.fd[0] = ring[i].fd;
-        f.stride[0] = ring[i].stride;
-        f.offset[0] = 0;
-        return f;
-    }
-
-    bool acquire(Target& out) {
-        std::lock_guard<std::mutex> lock(mtx);
-        if (!has_output.load(std::memory_order_acquire)) return false;
-
-        for (size_t i = 0; i < ring.size(); ++i) {
-            if (ring[i].slot != Slot::Free) continue;
-            ring[i].slot = Slot::Drawing;
-            out.index = (int)i;
-            out.generation = state_.generation;
-            out.frame = frame_of((int)i);
-            return true;
-        }
-        return false;      // усі зайняті — чекати на розгортку
-    }
-
-    // Намальоване стає pending; віддати залізу спробує try_commit().
-    bool queue(const Target& t) {
-        {
-            std::lock_guard<std::mutex> lock(mtx);
-
-            // ЗВІЛЬНЕННЯ ПЕРШЕ, перевірка наявності виводу після. Порядок
-            // не косметичний: коли монітор висмикнули, has_output вже
-            // false, і рання відмова лишила б буфер із розібраного кільця
-            // висіти до самого close(). А розбіжність generation цей
-            // випадок ловить сама — teardown обнуляє стан.
-            if (t.generation != state_.generation) {
-                // Буфер від попередньої конфігурації виводу. Показувати
-                // його вже нікуди — але саме зараз він нарешті вільний
-                // від GPU, тож це єдиний момент, коли його можна чесно
-                // звільнити.
-                release_retired(t.frame.fd[0]);
-                return false;
-            }
-            if (!has_output.load(std::memory_order_acquire)) return false;
-            if (t.index < 0 || (size_t)t.index >= ring.size()) return false;
-            if (ring[t.index].slot != Slot::Drawing) return false;
-
-            // Попередній непоказаний кадр витісняється — рахуємо як дроп,
-            // щоб деградацію було видно, а не доводилось здогадуватись.
-            if (idx_pending >= 0) {
-                ring[idx_pending].slot = Slot::Free;
-                st.dropped++;
-            }
-            ring[t.index].slot = Slot::Pending;
-            idx_pending = t.index;
-        }
-        try_commit();
-        return true;
-    }
-
-    // Віддати залізу наступний кадр, якщо є що і якщо можна.
+    // КОННЕКТОРИ, ЯКІ НЕ ВДАЛОСЯ ПІДНЯТИ, і коли пробувати знову.
     //
-    // Кличеться з ДВОХ місць: із queue() і з on_flip(). На один CRTC може
-    // бути лише ОДИН flip у польоті — другий коміт до підтвердження
-    // першого поверне EBUSY. Тому коли queue() застав зайнято, кадр чекає
-    // в pending, і штовхнути його має саме підтвердження попереднього.
-    // Без цього кадр лишався б у черзі до наступного виклику ззовні.
-    void try_commit() {
-        int idx = -1;
-        bool need_modeset = false;
-        {
-            std::lock_guard<std::mutex> lock(mtx);
-            if (idx_in_flight >= 0 || idx_pending < 0) return;
-            idx = idx_pending;
-            idx_pending = -1;
-            ring[idx].slot = Slot::InFlight;
-            idx_in_flight = idx;
-            need_modeset = !modeset_done;
-        }
+    // Без цього кожні дві секунди ми повторювали б підняття коннектора,
+    // якому не знайшлося ні вільного CRTC, ні плейна — а разом із ним і
+    // скидання кешу EDID, тобто пів секунди сну на коннектор ПРЯМО в
+    // потоці подій. Той самий клас, що вже лікували паузою в сторожі
+    // джерела й у монтуванні носія.
+    std::map<uint32_t, int64_t> add_retry_ns;
 
-        // Коміт робиться БЕЗ локу: це ioctl, і тримати на ньому м'ютекс,
-        // який потрібен потоку подій, означало б їх зіштовхнути.
-        if (!commit(idx, need_modeset)) {
-            std::lock_guard<std::mutex> lock(mtx);
-            ring[idx].slot = Slot::Free;
-            idx_in_flight = -1;
-            return;
-        }
-        modeset_done = true;
+    // Діагностика: примусове розбирання виводу за таймером.
+    int test_teardown_ms = getenv("VRX_TEST_TEARDOWN")
+                         ? atoi(getenv("VRX_TEST_TEARDOWN")) : 0;
+    int64_t last_test_ns = 0;
+
+    // --- доступ до виводів (усе під mtx, якщо не сказано інакше) ---
+
+    Output* at(int slot) {
+        if (slot < 0 || (size_t)slot >= outs.size()) return nullptr;
+        Output* o = outs[(size_t)slot].get();
+        return (o && o->live()) ? o : nullptr;
     }
+
+    Output* primary() { return at(primary_slot); }
 
     // --- кільце буферів ---
 
-    bool create_ring() {
-        destroy_ring();
+    bool create_ring(Output& o) {
+        destroy_ring(o);
         if (!gbm) return false;
 
         const int n = cfg.buffers > 0 ? cfg.buffers : 2;
-        ring.resize(n);
+        o.ring.resize(n);
         for (int i = 0; i < n; ++i) {
-            RingBuf& b = ring[i];
+            RingBuf& b = o.ring[i];
 
             // SCANOUT обов'язковий: без нього буфер намалюється, але
             // показати його не вийде — у сканування інші вимоги до
             // вирівнювання й розміщення. RENDERING — щоб у нього могло
             // писати GL.
-            b.bo = gbm_bo_create(gbm, state_.width, state_.height, state_.fourcc,
+            b.bo = gbm_bo_create(gbm, o.state.width, o.state.height, o.state.fourcc,
                                  GBM_BO_USE_SCANOUT | GBM_BO_USE_RENDERING);
             if (!b.bo) {
                 std::fprintf(stderr,
-                    "[дисплей] gbm_bo_create(%dx%d, 0x%08x) провалився\n",
-                    state_.width, state_.height, state_.fourcc);
-                destroy_ring();
+                    "[дисплей] %s: gbm_bo_create(%dx%d, 0x%08x) провалився\n",
+                    o.state.connector.c_str(), o.state.width, o.state.height,
+                    o.state.fourcc);
+                destroy_ring(o);
                 return false;
             }
             b.fd = gbm_bo_get_fd(b.bo);
@@ -449,19 +394,19 @@ struct Display::Impl {
             if (drmPrimeFDToHandle(fd, b.fd, &handles[0]) != 0) {
                 std::fprintf(stderr, "[дисплей] drmPrimeFDToHandle: %s\n",
                              std::strerror(errno));
-                destroy_ring();
+                destroy_ring(o);
                 return false;
             }
             strides[0] = b.stride;
-            if (drmModeAddFB2(fd, state_.width, state_.height, state_.fourcc,
+            if (drmModeAddFB2(fd, o.state.width, o.state.height, o.state.fourcc,
                               handles, strides, offsets, &b.fb_id, 0) != 0) {
                 std::fprintf(stderr, "[дисплей] drmModeAddFB2: %s\n",
                              std::strerror(errno));
-                destroy_ring();
+                destroy_ring(o);
                 return false;
             }
         }
-        idx_pending = idx_in_flight = idx_current = -1;
+        o.idx_pending = o.idx_in_flight = o.idx_current = -1;
         return true;
     }
 
@@ -483,14 +428,15 @@ struct Display::Impl {
         return "?";
     }
 
-    void destroy_ring() {
+    void destroy_ring(Output& o) {
         int held = 0;
-        if (!ring.empty()) {
+        if (!o.ring.empty()) {
             std::string st_str;
-            for (const RingBuf& b : ring) { st_str += slot_name(b.slot); st_str += " "; }
-            std::fprintf(stderr, "[дисплей] стан кільця на розбиранні: %s\n", st_str.c_str());
+            for (const RingBuf& b : o.ring) { st_str += slot_name(b.slot); st_str += " "; }
+            std::fprintf(stderr, "[дисплей] %s: стан кільця на розбиранні: %s\n",
+                         o.state.connector.c_str(), st_str.c_str());
         }
-        for (RingBuf& b : ring) {
+        for (RingBuf& b : o.ring) {
             if (b.slot == Slot::Drawing) {
                 // У ньому ЗАРАЗ малюють — звільнимо, коли повернуть.
                 retired.push_back(b);
@@ -499,14 +445,14 @@ struct Display::Impl {
             }
             free_buf(b);
         }
-        if (!ring.empty()) {
+        if (!o.ring.empty()) {
             std::fprintf(stderr,
-                "[дисплей] кільце розібрано: %d звільнено одразу, %d чекає рендерера"
+                "[дисплей] %s: кільце розібрано: %d звільнено одразу, %d чекає рендерера"
                 " | живих буферів %d\n",
-                (int)ring.size() - held, held, live_bufs);
+                o.state.connector.c_str(), (int)o.ring.size() - held, held, live_bufs);
         }
-        ring.clear();
-        idx_pending = idx_in_flight = idx_current = -1;
+        o.ring.clear();
+        o.idx_pending = o.idx_in_flight = o.idx_current = -1;
     }
 
     // Повернувся буфер від попередньої конфігурації виводу. Ключ —
@@ -534,38 +480,145 @@ struct Display::Impl {
         retired.clear();
     }
 
-    // --- внутрішнє ---
+    // --- видача й показ ---
 
+    // Опис буфера кільця у вигляді звичайного кадру — тим самим типом,
+    // яким описуються кадри джерел, щоб рендерер не мав окремої гілки.
+    Frame frame_of(const Output& o, int i) const {
+        Frame f;
+        f.fourcc = o.state.fourcc;
+        f.modifier = o.state.modifier;
+        f.width = o.state.width;
+        f.height = o.state.height;
+        f.n_planes = 1;
+        f.fd[0] = o.ring[i].fd;
+        f.stride[0] = o.ring[i].stride;
+        f.offset[0] = 0;
+        return f;
+    }
 
-    bool commit(int idx, bool allow_modeset) {
+    bool acquire(int slot, Target& out) {
+        std::lock_guard<std::mutex> lock(mtx);
+        Output* o = at(slot);
+        if (!o) return false;
+
+        for (size_t i = 0; i < o->ring.size(); ++i) {
+            if (o->ring[i].slot != Slot::Free) continue;
+            o->ring[i].slot = Slot::Drawing;
+            out.index = (int)i;
+            out.screen = o->slot_no;
+            out.generation = o->state.generation;
+            out.frame = frame_of(*o, (int)i);
+            return true;
+        }
+        return false;      // усі зайняті — чекати на розгортку
+    }
+
+    // Намальоване стає pending; віддати залізу спробує try_commit().
+    bool queue(const Target& t) {
+        Output* o = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+
+            // ЗВІЛЬНЕННЯ ПЕРШЕ, перевірка наявності виводу після. Порядок
+            // не косметичний: коли монітор висмикнули, виводу вже немає, і
+            // рання відмова лишила б буфер із розібраного кільця висіти до
+            // самого close(). А розбіжність generation цей випадок ловить
+            // сама — teardown обнуляє стан.
+            Output* cand = (t.screen >= 0 && (size_t)t.screen < outs.size())
+                         ? outs[(size_t)t.screen].get() : nullptr;
+            if (!cand || t.generation != cand->state.generation) {
+                // Буфер від попередньої конфігурації виводу. Показувати
+                // його вже нікуди — але саме зараз він нарешті вільний
+                // від GPU, тож це єдиний момент, коли його можна чесно
+                // звільнити.
+                release_retired(t.frame.fd[0]);
+                return false;
+            }
+            if (t.index < 0 || (size_t)t.index >= cand->ring.size()) return false;
+            if (cand->ring[t.index].slot != Slot::Drawing) return false;
+
+            // Попередній непоказаний кадр витісняється — рахуємо як дроп,
+            // щоб деградацію було видно, а не доводилось здогадуватись.
+            if (cand->idx_pending >= 0) {
+                cand->ring[cand->idx_pending].slot = Slot::Free;
+                cand->st.dropped++;
+            }
+            cand->ring[t.index].slot = Slot::Pending;
+            cand->idx_pending = t.index;
+            o = cand;
+        }
+        try_commit(*o);
+        return true;
+    }
+
+    // Віддати залізу наступний кадр, якщо є що і якщо можна.
+    //
+    // Кличеться з ДВОХ місць: із queue() і з on_flip(). На один CRTC може
+    // бути лише ОДИН flip у польоті — другий коміт до підтвердження
+    // першого поверне EBUSY. Тому коли queue() застав зайнято, кадр чекає
+    // в pending, і штовхнути його має саме підтвердження попереднього.
+    void try_commit(Output& o) {
+        // ВСЕ, ЩО ЧИТАЄ КІЛЬЦЕ, ЗНІМАЄТЬСЯ ТУТ, ПІД ЛОКОМ.
+        //
+        // Сам ioctl робиться без лока — тримати на ньому м'ютекс, який
+        // потрібен потоку подій, означало б їх зіштовхнути. Але тоді й
+        // читати ring[idx] у commit() не можна: поки ми поза локом, потік
+        // подій може розібрати кільце (висмикнули монітор), і ми читали б
+        // звільнену пам'ять вектора. Тому копіюємо ВСЕ потрібне ще під
+        // локом, а далі працюємо зі значеннями.
+        int idx = -1;
+        uint32_t fb_id = 0;
+        bool need_modeset = false;
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            if (o.idx_in_flight >= 0 || o.idx_pending < 0) return;
+            idx = o.idx_pending;
+            o.idx_pending = -1;
+            o.ring[idx].slot = Slot::InFlight;
+            o.idx_in_flight = idx;
+            fb_id = o.ring[idx].fb_id;
+            need_modeset = !o.modeset_done;
+        }
+
+        if (!commit(o, fb_id, need_modeset)) {
+            std::lock_guard<std::mutex> lock(mtx);
+            if (idx >= 0 && (size_t)idx < o.ring.size()) o.ring[idx].slot = Slot::Free;
+            o.idx_in_flight = -1;
+            return;
+        }
+        o.modeset_done = true;
+    }
+
+    bool commit(Output& o, uint32_t fb_id, bool allow_modeset) {
         drmModeAtomicReq* req = drmModeAtomicAlloc();
         if (!req) return false;
 
         // Цільовий буфер завжди на весь екран: кроп буває лише в
         // кадрів від декодера, а ці ми виділяємо самі.
-        const Rect vis{0, 0, state_.width, state_.height};
+        const Rect vis{0, 0, o.state.width, o.state.height};
 
         if (allow_modeset) {
-            drmModeAtomicAddProperty(req, crtc_id, crtc_props["MODE_ID"], mode_blob);
-            drmModeAtomicAddProperty(req, crtc_id, crtc_props["ACTIVE"], 1);
-            drmModeAtomicAddProperty(req, connector_id, conn_props["CRTC_ID"], crtc_id);
+            drmModeAtomicAddProperty(req, o.crtc_id, o.crtc_props["MODE_ID"], o.mode_blob);
+            drmModeAtomicAddProperty(req, o.crtc_id, o.crtc_props["ACTIVE"], 1);
+            drmModeAtomicAddProperty(req, o.connector_id, o.conn_props["CRTC_ID"], o.crtc_id);
         }
 
-        drmModeAtomicAddProperty(req, plane_id, plane_props["FB_ID"], ring[idx].fb_id);
-        drmModeAtomicAddProperty(req, plane_id, plane_props["CRTC_ID"], crtc_id);
+        drmModeAtomicAddProperty(req, o.plane_id, o.plane_props["FB_ID"], fb_id);
+        drmModeAtomicAddProperty(req, o.plane_id, o.plane_props["CRTC_ID"], o.crtc_id);
 
         // CRTC_* — звичайні пікселі екрана.
-        drmModeAtomicAddProperty(req, plane_id, plane_props["CRTC_X"], 0);
-        drmModeAtomicAddProperty(req, plane_id, plane_props["CRTC_Y"], 0);
-        drmModeAtomicAddProperty(req, plane_id, plane_props["CRTC_W"], state_.width);
-        drmModeAtomicAddProperty(req, plane_id, plane_props["CRTC_H"], state_.height);
+        drmModeAtomicAddProperty(req, o.plane_id, o.plane_props["CRTC_X"], 0);
+        drmModeAtomicAddProperty(req, o.plane_id, o.plane_props["CRTC_Y"], 0);
+        drmModeAtomicAddProperty(req, o.plane_id, o.plane_props["CRTC_W"], o.state.width);
+        drmModeAtomicAddProperty(req, o.plane_id, o.plane_props["CRTC_H"], o.state.height);
 
         // SRC_* — формат 16.16 з фіксованою комою, тобто <<16. Класична
         // пастка: переплутавши, отримуєш чорний екран без жодної помилки.
-        drmModeAtomicAddProperty(req, plane_id, plane_props["SRC_X"], (uint64_t)vis.x << 16);
-        drmModeAtomicAddProperty(req, plane_id, plane_props["SRC_Y"], (uint64_t)vis.y << 16);
-        drmModeAtomicAddProperty(req, plane_id, plane_props["SRC_W"], (uint64_t)vis.w << 16);
-        drmModeAtomicAddProperty(req, plane_id, plane_props["SRC_H"], (uint64_t)vis.h << 16);
+        drmModeAtomicAddProperty(req, o.plane_id, o.plane_props["SRC_X"], (uint64_t)vis.x << 16);
+        drmModeAtomicAddProperty(req, o.plane_id, o.plane_props["SRC_Y"], (uint64_t)vis.y << 16);
+        drmModeAtomicAddProperty(req, o.plane_id, o.plane_props["SRC_W"], (uint64_t)vis.w << 16);
+        drmModeAtomicAddProperty(req, o.plane_id, o.plane_props["SRC_H"], (uint64_t)vis.h << 16);
 
         uint32_t flags = DRM_MODE_ATOMIC_NONBLOCK | DRM_MODE_PAGE_FLIP_EVENT;
         if (allow_modeset) {
@@ -573,15 +626,23 @@ struct Display::Impl {
             flags = DRM_MODE_ATOMIC_ALLOW_MODESET | DRM_MODE_PAGE_FLIP_EVENT;
         }
 
-        int ret = drmModeAtomicCommit(fd, req, flags, this);
+        // Користувацькі дані події — САМ ВИВІД. Так підтвердження
+        // розгортки знаходить своє кільце, не питаючи ні в кого.
+        int ret = drmModeAtomicCommit(fd, req, flags, &o);
         drmModeAtomicFree(req);
 
         if (ret != 0) {
             // Поки ми готували коміт, потік подій міг зняти вивід:
             // монітор висмикнули. Це не помилка, це гонка з гарячою
             // заміною, і кадр однаково не було куди показувати.
-            if (has_output.load(std::memory_order_acquire)) {
-                std::fprintf(stderr, "[дисплей] atomic commit%s: %s\n",
+            bool still_live;
+            {
+                std::lock_guard<std::mutex> lock(mtx);
+                still_live = o.live();
+            }
+            if (still_live) {
+                std::fprintf(stderr, "[дисплей] %s: atomic commit%s: %s\n",
+                             o.state.connector.c_str(),
                              allow_modeset ? " (modeset)" : "", std::strerror(errno));
             }
             return false;
@@ -591,7 +652,8 @@ struct Display::Impl {
 
     // Викликається з потоку подій після ПІДТВЕРДЖЕННЯ показу.
     // seq — лічильник розгорток від ядра.
-    void on_flip(int64_t when_ns, unsigned seq) {
+    void on_flip(Output& o, int64_t when_ns, unsigned seq) {
+        bool is_primary = false;
         {
             std::lock_guard<std::mutex> lock(mtx);
 
@@ -604,43 +666,50 @@ struct Display::Impl {
             //
             // Лічильник, а не кількість подій: якщо ми пропустили
             // розгортку, seq це врахує, а підрахунок подій — ні.
-            if (hz_seq_valid) {
-                const uint32_t dseq = seq - hz_anchor_seq;   // беззнакове, коректне через переповнення
-                const int64_t span = when_ns - hz_anchor_ns;
+            if (o.hz_seq_valid) {
+                const uint32_t dseq = seq - o.hz_anchor_seq;   // беззнакове, коректне через переповнення
+                const int64_t span = when_ns - o.hz_anchor_ns;
                 if (span > 1000000000LL && dseq > 0) {
-                    st.measured_hz = double(dseq) * 1e9 / double(span);
+                    o.st.measured_hz = double(dseq) * 1e9 / double(span);
                     // Переанкорення: щоб оцінка йшла за повільним дрейфом
                     // кварцу, а не усереднювала весь час роботи.
                     if (span > 30000000000LL) {
-                        hz_anchor_ns = when_ns;
-                        hz_anchor_seq = seq;
+                        o.hz_anchor_ns = when_ns;
+                        o.hz_anchor_seq = seq;
                     }
                 }
             } else {
-                hz_anchor_ns = when_ns;
-                hz_anchor_seq = seq;
-                hz_seq_valid = true;
+                o.hz_anchor_ns = when_ns;
+                o.hz_anchor_seq = seq;
+                o.hz_seq_valid = true;
             }
+
             // Кадр, що був на екрані, більше не читається сканером —
             // САМЕ ТУТ він звільняється, і саме про цю мить рендереру
             // треба знати. Не після коміту: після коміту буфер ще
             // сканується, і малювати в нього означало б рвати картинку.
-            if (idx_current >= 0) ring[idx_current].slot = Slot::Free;
-            idx_current = idx_in_flight;
-            if (idx_current >= 0) ring[idx_current].slot = Slot::Current;
-            idx_in_flight = -1;
+            if (o.idx_current >= 0) o.ring[o.idx_current].slot = Slot::Free;
+            o.idx_current = o.idx_in_flight;
+            if (o.idx_current >= 0) o.ring[o.idx_current].slot = Slot::Current;
+            o.idx_in_flight = -1;
 
-            st.presented++;
-            st.last_present_ns = when_ns;
+            o.st.presented++;
+            o.st.last_present_ns = when_ns;
+
+            is_primary = (o.slot_no == primary_slot);
         }
 
-        // Наступний кадр, якщо він уже чекає. Робиться тут, а не в
-        // present(): один CRTC тримає лише один flip у польоті, тож
-        // штовхнути чергу може саме підтвердження попереднього.
-        try_commit();
+        // Наступний кадр, якщо він уже чекає.
+        try_commit(o);
 
-        // Колбек ОСТАННІМ і поза локом: він будить рендерер, а той одразу
-        // піде питати буфер — стан має бути вже узгоджений.
+        // КОЛБЕК — ЛИШЕ ВІД ОСНОВНОГО, і поза локом.
+        //
+        // Він задає такт рендереру: прокидання, дедлайн опиту джерел і
+        // вимір фази відлічуються саме від цієї мітки. Додатковий екран
+        // має власну розгортку з власним кварцом, і будити нею рендерер
+        // означало б вести камеру по двох незалежних сітках одночасно.
+        if (!is_primary) return;
+
         FlipCallback cb;
         {
             std::lock_guard<std::mutex> lock(mtx);
@@ -648,6 +717,55 @@ struct Display::Impl {
         }
         if (cb) cb(when_ns);
     }
+
+    // --- налаштування виводів ---
+
+    bool configure_all(bool probe_new);
+    bool configure_one(drmModeRes* res, drmModeConnector* conn);
+    void assign_roles();
+
+    // Знімає ОДИН вивід, лишаючи карту й решту екранів недоторканими.
+    void teardown_output(Output& o) {
+        if (fd >= 0 && o.plane_id && o.plane_props.has("FB_ID")) {
+            drmModeAtomicReq* req = drmModeAtomicAlloc();
+            drmModeAtomicAddProperty(req, o.plane_id, o.plane_props["FB_ID"], 0);
+            drmModeAtomicAddProperty(req, o.plane_id, o.plane_props["CRTC_ID"], 0);
+            drmModeAtomicCommit(fd, req, DRM_MODE_ATOMIC_ALLOW_MODESET, nullptr);
+            drmModeAtomicFree(req);
+        }
+        if (fd >= 0 && o.mode_blob) drmModeDestroyPropertyBlob(fd, o.mode_blob);
+        o.mode_blob = 0;
+
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            // Буфери належать конкретному траєкту виводу: після заміни
+            // монітора вони недійсні, навіть якщо роздільність збіглася.
+            destroy_ring(o);
+            // Вимір частоти прив'язаний до конкретного тракту розгортки.
+            o.hz_seq_valid = false;
+            o.st = PresentStats{};
+
+            o.connector_id = o.crtc_id = o.plane_id = 0;
+            o.plane_props = o.crtc_props = o.conn_props = PropTable{};
+            o.mode = drmModeModeInfo{};
+            o.modeset_done = false;
+            const std::string was = o.state.connector;
+            o.state = OutputState{};
+            o.state.connector = was;      // ім'я лишаємо для логів
+            o.state.name = "немає виводу";
+        }
+    }
+
+    void teardown_all() {
+        for (auto& up : outs) {
+            if (up && up->live()) teardown_output(*up);
+        }
+        std::lock_guard<std::mutex> lock(mtx);
+        primary_slot = -1;
+        live_count.store(0, std::memory_order_release);
+    }
+
+    // --- цикл подій ---
 
     void event_loop() {
         drmEventContext ctx{};
@@ -660,8 +778,10 @@ struct Display::Impl {
             // отруювала б і вимір частоти, і вимір фази, і розрахунок
             // дедлайну опиту, бо всі три відлічуються звідси.
             // Годинник той самий, CLOCK_MONOTONIC (DRM_CAP_TIMESTAMP_MONOTONIC).
+            if (!data) return;
+            Output* o = static_cast<Output*>(data);
             const int64_t ts = int64_t(tv_sec) * 1000000000LL + int64_t(tv_usec) * 1000LL;
-            static_cast<Impl*>(data)->on_flip(ts > 0 ? ts : now_ns(), seq);
+            o->owner->on_flip(*o, ts > 0 ? ts : now_ns(), seq);
         };
 
         while (running.load(std::memory_order_relaxed)) {
@@ -689,51 +809,30 @@ struct Display::Impl {
             //   - виводу може не бути, хоч кабель на місці. Наприклад
             //     зонд конектора не вдався при старті. Події тоді не
             //     буде НІКОЛИ — кабель ніхто не чіпає, — і станція
-            //     лишилася б без картинки назавжди. Спіймано на
-            //     примусовому розбиранні: вивід не піднявся жодного разу
-            //     за 24 секунди, бо чекати не було на що.
+            //     лишилася б без картинки назавжди.
             {
                 const int64_t t = now_ns();
-                const int64_t every = has_output.load(std::memory_order_acquire)
-                                    ? 5000000000LL    // вивід є: рідка страховка
-                                    : 1000000000LL;   // виводу немає: пробуємо частіше
-                if (udev_fd < 0 || !has_output.load(std::memory_order_acquire)) {
-                    if (t - last_poll_ns > every) {
-                        last_poll_ns = t;
-                        recheck = true;
-                    }
+                if (t - last_poll_ns > 2000000000LL) {
+                    last_poll_ns = t;
+                    recheck = true;
                 }
             }
 
             if (recheck) handle_hotplug();
 
-            // ПЕРЕВІРКА ВІДКЛАДЕНОГО ЗВІЛЬНЕННЯ, лише для діагностики:
-            // VRX_TEST_TEARDOWN=<мс> змушує розбирати й піднімати вивід
-            // за таймером.
-            //
-            // Кабелем цей шлях не перевірити: коли монітор висмикують,
-            // спершу зупиняються розгортки, рендерер добиває кадр і стає
-            // чекати — тобто до розбирання він уже нічого не тримає.
-            // А небезпечне вікно існує: буфер у нього в руках ~15 мс із
-            // 17, і uevent може прилетіти саме туди. Таймер б'є в
-            // випадковий момент циклу й влучає в нього майже завжди.
+            // ДІАГНОСТИКА: VRX_TEST_TEARDOWN=<мс> змушує розбирати й
+            // піднімати виводи за таймером. Кабелем цей шлях не
+            // перевірити: коли монітор висмикують, спершу зупиняються
+            // розгортки, рендерер добиває кадр і стає чекати — тобто до
+            // розбирання він уже нічого не тримає. А небезпечне вікно
+            // існує: буфер у нього в руках ~15 мс із 17.
             if (test_teardown_ms > 0) {
                 const int64_t t = now_ns();
                 if (t - last_test_ns > (int64_t)test_teardown_ms * 1000000LL) {
                     last_test_ns = t;
-
-                    // ЗАТРИМКИ ТУТ БУТИ НЕ МОЖЕ. Спроба зсунути момент
-                    // розбирання через usleep у цьому потоці зіпсувала
-                    // сам вимір: поки він спить, flip'и не обробляються,
-                    // дедлайн опиту зсувається, і рендерер починає
-                    // малювати одразу після захоплення — буфер проскакує
-                    // Drawing за мілісекунди. 52 розбирання, нуль влучань.
-                    //
-                    // Тримати буфер довше має РЕНДЕРЕР: VRX_TEST_HOLD_MS.
-
-                    std::fprintf(stderr, "[тест] примусове розбирання виводу\n");
-                    teardown_output();
-                    configure_output();
+                    std::fprintf(stderr, "[тест] примусове розбирання виводів\n");
+                    teardown_all();
+                    configure_all(true);
                 }
             }
         }
@@ -742,37 +841,36 @@ struct Display::Impl {
     // Реакція на подію підсистеми drm. Подія каже лише "щось сталося",
     // тож стан з'ясовуємо самі й діємо лише на РЕАЛЬНУ зміну: uevent-и
     // сиплються й на власні modeset-и, і зациклитись тут дуже легко.
+    //
+    // ПОШТУЧНО, А НЕ ЦІЛКОМ. Зникнення додаткового екрана не має
+    // торкатися основного: там іде показ, і перебудова його кільця
+    // коштувала б пілоту вікна без картинки рівно ні за що.
     void handle_hotplug() {
         if (refreshing.load(std::memory_order_acquire)) return;
-        const bool have = has_output.load(std::memory_order_acquire);
 
-        if (have) {
-            // Наш коннектор ще на місці? drmModeGetConnectorCurrent НЕ
-            // ініціює зчитування EDID по DDC — саме те, що треба для
-            // частої перевірки.
-            drmModeConnector* c = drmModeGetConnectorCurrent(fd, connector_id);
+        // 1) Хто з наявних відпав. drmModeGetConnectorCurrent НЕ ініціює
+        //    зчитування EDID по DDC — саме те, що треба для частої
+        //    перевірки.
+        bool lost = false;
+        for (auto& up : outs) {
+            if (!up || !up->live()) continue;
+            drmModeConnector* c = drmModeGetConnectorCurrent(fd, up->connector_id);
             const bool alive = c && c->connection == DRM_MODE_CONNECTED;
             if (c) drmModeFreeConnector(c);
-            if (alive) return;
+            if (alive) continue;
 
-            std::fprintf(stderr, "[дисплей] монітор відключено\n");
-            teardown_output();
-            return;
+            std::fprintf(stderr, "[дисплей] монітор відключено: %s\n",
+                         up->state.connector.c_str());
+            teardown_output(*up);
+            lost = true;
         }
 
-        // Виводу немає — пробуємо підняти. Якщо ще нічого не під'єднано,
-        // configure_output() тихо повернеться з невдачею.
-        if (configure_output()) {
-            std::fprintf(stderr, "[дисплей] монітор підключено: %s\n", state_.name.c_str());
-        }
+        // 2) Чи з'явився хтось новий. Повний зонд дорогий, тож робимо
+        //    його лише тут — раз на дві секунди або на uevent.
+        const bool added = configure_all(true);
+
+        if (lost || added) assign_roles();
     }
-
-    int64_t last_poll_ns = 0;
-
-    // Діагностика: примусове розбирання виводу за таймером.
-    int test_teardown_ms = getenv("VRX_TEST_TEARDOWN")
-                         ? atoi(getenv("VRX_TEST_TEARDOWN")) : 0;
-    int64_t last_test_ns = 0;
 };
 
 // ---------------------------------------------------------------------
@@ -833,74 +931,126 @@ bool Display::open() {
         std::fprintf(stderr, "[дисплей] uevent-сокет не відкрився — гарячої заміни не буде\n");
     }
 
-    d.running.store(true, std::memory_order_relaxed);
-    d.event_thread = std::thread([&d] { d.event_loop(); });
-
-    // Дисплея може ще не бути: увімкнуть монітор — підхопимо самі.
-    if (!d.configure_output()) {
+    // ВИВОДИ ПІДНІМАЮТЬСЯ ДО СТАРТУ ПОТОКУ ПОДІЙ.
+    //
+    // Раніше потік стартував першим, і configure_output() міг піти
+    // одночасно з двох боків: із головного потоку тут і з потоку подій
+    // за таймером. Прапорець refreshing прикривав лише зчитування EDID,
+    // а решта — зонд, вибір режиму, modeset, створення кільця — цілком
+    // могла перетнутися сама з собою.
+    if (!d.configure_all(true)) {
         std::fprintf(stderr, "[дисплей] виводу поки немає, чекаю підключення монітора\n");
     }
+    d.assign_roles();
+
+    d.running.store(true, std::memory_order_relaxed);
+    d.event_thread = std::thread([&d] { d.event_loop(); });
     return true;
 }
 
-// Підбирає коннектор, режим, CRTC і плейн та робить modeset.
-// Викликається і на старті, і при кожній гарячій заміні монітора.
-bool Display::Impl::configure_output() {
-    Impl& d = *this;
-    if (d.fd < 0) return false;
+// Перебирає коннектори й піднімає ті, що під'єднані, але ще не мають
+// виводу. Повертає true, якщо хоч один додано.
+bool Display::Impl::configure_all(bool probe_new) {
+    if (fd < 0) return false;
 
-    // Починаємо з чистого аркуша: після заміни монітора id коннектора,
-    // CRTC і плейна майже напевно інші, а пошук нижче спирається на те,
-    // що вони обнулені.
-    d.teardown_output();
+    drmModeRes* res = drmModeGetResources(fd);
+    if (!res) {
+        std::fprintf(stderr, "[дисплей] drmModeGetResources: %s\n", std::strerror(errno));
+        return false;
+    }
+
+    // Кого ми вже ведемо — щоб не піднімати вдруге.
+    std::set<uint32_t> known;
+    for (auto& up : outs) {
+        if (up && up->live()) known.insert(up->connector_id);
+    }
 
     // Кеш EDID у драйвері скидаємо ДО зонда, інакше піднімемо режим
     // попереднього монітора. Прапорець тримає handle_hotplug осторонь:
     // ці записи самі породжують uevent-и, і без нього ми б нескінченно
     // переналаштовувались на власні ж події.
-    d.refreshing.store(true, std::memory_order_release);
-    force_edid_refresh(d.cfg.card);
-    d.refreshing.store(false, std::memory_order_release);
+    //
+    // Робиться лише коли справді щось шукаємо: скидання коштує пів
+    // секунди на коннектор, і робити його раз на дві секунди просто так
+    // означало б тримати екран у постійному перезонді.
+    bool refreshed = false;
+    bool added = false;
 
-    drmModeRes* res = drmModeGetResources(d.fd);
-    if (!res) {
-        std::fprintf(stderr, "[дисплей] drmModeGetResources: %s\n", std::strerror(errno));
-        teardown_output();
-        return false;
-    }
-
-    // --- коннектор: перший підключений ---
-    drmModeConnector* conn = nullptr;
     for (int i = 0; i < res->count_connectors; ++i) {
-        drmModeConnector* c = drmModeGetConnector(d.fd, res->connectors[i]);
-        if (!c) continue;
-        if (c->connection == DRM_MODE_CONNECTED && c->count_modes > 0) {
-            conn = c;
-            break;
+        if (!probe_new) break;
+
+        // Дешева перевірка перед дорогою: чи взагалі є що піднімати.
+        drmModeConnector* cur = drmModeGetConnectorCurrent(fd, res->connectors[i]);
+        const bool maybe = cur && cur->connection == DRM_MODE_CONNECTED;
+        const uint32_t cid = cur ? cur->connector_id : 0;
+        if (cur) drmModeFreeConnector(cur);
+        if (!maybe || known.count(cid)) continue;
+
+        const auto rt = add_retry_ns.find(cid);
+        if (rt != add_retry_ns.end() && rt->second > now_ns()) continue;
+
+        if (!refreshed) {
+            refreshing.store(true, std::memory_order_release);
+            force_edid_refresh(cfg.card);
+            refreshing.store(false, std::memory_order_release);
+            refreshed = true;
         }
-        drmModeFreeConnector(c);
+
+        drmModeConnector* conn = drmModeGetConnector(fd, res->connectors[i]);
+        if (!conn) continue;
+        if (conn->connection == DRM_MODE_CONNECTED && conn->count_modes > 0) {
+            if (configure_one(res, conn)) {
+                added = true;
+                add_retry_ns.erase(cid);
+            } else {
+                add_retry_ns[cid] = now_ns() + 5000000000LL;   // 5 с
+            }
+        }
+        drmModeFreeConnector(conn);
     }
-    if (!conn) {
-        // МОВЧКИ: сюди ми приходимо щоразу, поки монітора немає.
-        drmModeFreeResources(res);
-        return false;
+
+    drmModeFreeResources(res);
+    return added;
+}
+
+// Піднімає ОДИН вивід на вже підтвердженому коннекторі.
+bool Display::Impl::configure_one(drmModeRes* res, drmModeConnector* conn) {
+    // Куди його покласти: вільний слот або новий у кінці. Слоти не
+    // перенумеровуються, тож зайняті пропускаємо.
+    int slot = -1;
+    for (size_t i = 0; i < outs.size(); ++i) {
+        if (!outs[i] || !outs[i]->live()) { slot = (int)i; break; }
     }
-    d.connector_id = conn->connector_id;
+    if (slot < 0) {
+        slot = (int)outs.size();
+        outs.push_back(nullptr);
+    }
+    if (!outs[(size_t)slot]) outs[(size_t)slot] = std::make_unique<Output>();
+
+    Output& o = *outs[(size_t)slot];
+    o.owner = this;
+    o.slot_no = slot;
+    o.connector_id = conn->connector_id;
+    o.connector_type = conn->connector_type;
+
+    char cname[64];
+    std::snprintf(cname, sizeof(cname), "%s-%u",
+                  connector_type_name(conn->connector_type), conn->connector_type_id);
 
     // --- режим: той, що просить дисплей ---
     const drmModeModeInfo* chosen = nullptr;
-    if (d.cfg.want_width > 0 && d.cfg.want_height > 0) {
+    if (cfg.want_width > 0 && cfg.want_height > 0) {
         for (int i = 0; i < conn->count_modes; ++i) {
             const drmModeModeInfo& m = conn->modes[i];
-            if (m.hdisplay == d.cfg.want_width && m.vdisplay == d.cfg.want_height) {
+            if (m.hdisplay == cfg.want_width && m.vdisplay == cfg.want_height) {
                 chosen = &m;
                 break;
             }
         }
         if (!chosen) {
             std::fprintf(stderr,
-                "[дисплей] режим %dx%d не знайдено, беру PREFERRED\n",
-                d.cfg.want_width, d.cfg.want_height);
+                "[дисплей] %s: режим %dx%d не знайдено, беру PREFERRED\n",
+                cname, cfg.want_width, cfg.want_height);
         }
     }
     if (!chosen) {
@@ -914,15 +1064,12 @@ bool Display::Impl::configure_output() {
     if (!chosen) chosen = &conn->modes[0];   // PREFERRED не позначений — беремо перший
 
     // --- стеля роздільності ---
-    //
-    // Спрацьовує лише коли режим обрано НЕ на пряме прохання: явний
-    // want_* означає, що просили саме це.
-    const bool asked_explicitly = (d.cfg.want_width > 0 && d.cfg.want_height > 0 &&
-                                   chosen->hdisplay == d.cfg.want_width &&
-                                   chosen->vdisplay == d.cfg.want_height);
-    const bool over_cap = d.cfg.max_width > 0 && d.cfg.max_height > 0 &&
-                          (chosen->hdisplay > d.cfg.max_width ||
-                           chosen->vdisplay > d.cfg.max_height);
+    const bool asked_explicitly = (cfg.want_width > 0 && cfg.want_height > 0 &&
+                                   chosen->hdisplay == cfg.want_width &&
+                                   chosen->vdisplay == cfg.want_height);
+    const bool over_cap = cfg.max_width > 0 && cfg.max_height > 0 &&
+                          (chosen->hdisplay > cfg.max_width ||
+                           chosen->vdisplay > cfg.max_height);
     if (over_cap && !asked_explicitly) {
         // Найбільший режим у межах стелі; за рівної площі — з вищою
         // частотою. Площа, а не ширина: 1920x1080 має перемагати
@@ -932,7 +1079,7 @@ bool Display::Impl::configure_output() {
         int best_hz = -1;
         for (int i = 0; i < conn->count_modes; ++i) {
             const drmModeModeInfo& m = conn->modes[i];
-            if (m.hdisplay > d.cfg.max_width || m.vdisplay > d.cfg.max_height) continue;
+            if (m.hdisplay > cfg.max_width || m.vdisplay > cfg.max_height) continue;
             const long area = (long)m.hdisplay * m.vdisplay;
             const int hz = (int)m.vrefresh;
             if (area > best_area || (area == best_area && hz > best_hz)) {
@@ -943,73 +1090,81 @@ bool Display::Impl::configure_output() {
         }
         if (best) {
             std::fprintf(stderr,
-                "[дисплей] монітор просить %dx%d — це понад стелю %dx%d,"
-                " беру %dx%d@%d (зведення коштує смуги пам'яті, а вона росте з площею)\n",
-                chosen->hdisplay, chosen->vdisplay,
-                d.cfg.max_width, d.cfg.max_height,
+                "[дисплей] %s: монітор просить %dx%d — це понад стелю %dx%d, беру %dx%d@%d\n",
+                cname, chosen->hdisplay, chosen->vdisplay,
+                cfg.max_width, cfg.max_height,
                 best->hdisplay, best->vdisplay, best->vrefresh);
             chosen = best;
         } else {
             // Панель узагалі не має режиму в межах стелі. Працюємо на
             // тому, що є: чорний екран гірший за дорогий.
             std::fprintf(stderr,
-                "[дисплей] жодного режиму в межах %dx%d, лишаю %dx%d\n",
-                d.cfg.max_width, d.cfg.max_height, chosen->hdisplay, chosen->vdisplay);
+                "[дисплей] %s: жодного режиму в межах %dx%d, лишаю %dx%d\n",
+                cname, cfg.max_width, cfg.max_height, chosen->hdisplay, chosen->vdisplay);
         }
     }
 
-    d.mode = *chosen;
+    o.mode = *chosen;
 
     // --- опускаємо частоту розгортки, не чіпаючи піксельний клок ---
     //
-    // Рядкова частота (clock/htotal) лишається незмінною — саме до неї
-    // підлаштовується приймач сигналу. Росте лише кількість рядків у
-    // кадрі, тобто задній порт. Деталі й причина — у Config.
-    if (d.cfg.target_refresh_hz > 1.0 && d.mode.htotal && d.mode.vtotal) {
-        const uint16_t was = d.mode.vtotal;
-        const double line_hz = double(d.mode.clock) * 1000.0 / d.mode.htotal;
+    // Робиться на ОБОХ виводах, а не лише на основному, і це навмисно:
+    // додатковий може стати основним просто тому, що HDMI помер. Якби
+    // його розгортку не було підготовано заздалегідь, промоція тягла б
+    // за собою modeset — тобто зміну режиму й перестворення буферів
+    // рівно тоді, коли пілот щойно втратив монітор.
+    if (cfg.target_refresh_hz > 1.0 && o.mode.htotal && o.mode.vtotal) {
+        const uint16_t was = o.mode.vtotal;
+        const double line_hz = double(o.mode.clock) * 1000.0 / o.mode.htotal;
         const double before = line_hz / was;
-        const long want = std::lround(line_hz / d.cfg.target_refresh_hz);
-        const long limit = std::lround(d.mode.vtotal * (1.0 + d.cfg.vtotal_max_growth));
+        const long want = std::lround(line_hz / cfg.target_refresh_hz);
+        const long limit = std::lround(o.mode.vtotal * (1.0 + cfg.vtotal_max_growth));
 
-        if (want <= d.mode.vtotal) {
-            // Підняти частоту так не можна: рядки лише додаються.
+        if (want <= o.mode.vtotal) {
             std::fprintf(stderr,
-                "[дисплей] %.3f Гц не нижче за поточні %.3f — режим лишаю як є\n",
-                d.cfg.target_refresh_hz, before);
+                "[дисплей] %s: %.3f Гц не нижче за поточні %.3f — режим лишаю як є\n",
+                cname, cfg.target_refresh_hz, before);
         } else if (want > limit) {
             std::fprintf(stderr,
-                "[дисплей] %.3f Гц вимагає vtotal %ld проти %u — надто далеко, лишаю як є\n",
-                d.cfg.target_refresh_hz, want, was);
+                "[дисплей] %s: %.3f Гц вимагає vtotal %ld проти %u — надто далеко\n",
+                cname, cfg.target_refresh_hz, want, was);
         } else {
-            d.mode.vtotal = (uint16_t)want;
-            const double after = line_hz / d.mode.vtotal;
-            d.mode.vrefresh = (uint32_t)(after + 0.5);
+            o.mode.vtotal = (uint16_t)want;
+            const double after = line_hz / o.mode.vtotal;
+            o.mode.vrefresh = (uint32_t)(after + 0.5);
             std::fprintf(stderr,
-                "[дисплей] vtotal %u -> %ld (+%ld рядків), частота %.3f -> %.3f Гц"
+                "[дисплей] %s: vtotal %u -> %ld (+%ld рядків), частота %.3f -> %.3f Гц"
                 " | рядкова %.3f кГц і клок %u кГц незмінні\n",
-                was, want, want - was, before, after,
-                line_hz / 1000.0, d.mode.clock);
+                cname, was, want, want - was, before, after,
+                line_hz / 1000.0, o.mode.clock);
         }
     }
 
-    // --- CRTC: той, що може живити цей коннектор ---
-    for (int i = 0; i < conn->count_encoders && !d.crtc_id; ++i) {
-        drmModeEncoder* enc = drmModeGetEncoder(d.fd, conn->encoders[i]);
+    // --- CRTC: той, що може живити цей коннектор і ще ВІЛЬНИЙ ---
+    //
+    // Зайнятість перевіряється явно: сусідній екран уже тримає свій
+    // CRTC, і забрати його означало б погасити працюючий монітор.
+    std::set<uint32_t> busy_crtc, busy_plane;
+    for (auto& up : outs) {
+        if (!up || up.get() == &o || !up->live()) continue;
+        busy_crtc.insert(up->crtc_id);
+        busy_plane.insert(up->plane_id);
+    }
+
+    o.crtc_id = 0;
+    for (int i = 0; i < conn->count_encoders && !o.crtc_id; ++i) {
+        drmModeEncoder* enc = drmModeGetEncoder(fd, conn->encoders[i]);
         if (!enc) continue;
         for (int j = 0; j < res->count_crtcs; ++j) {
-            if (enc->possible_crtcs & (1u << j)) {
-                d.crtc_id = res->crtcs[j];
-                break;
-            }
+            if (!(enc->possible_crtcs & (1u << j))) continue;
+            if (busy_crtc.count(res->crtcs[j])) continue;
+            o.crtc_id = res->crtcs[j];
+            break;
         }
         drmModeFreeEncoder(enc);
     }
-    if (!d.crtc_id) {
-        std::fprintf(stderr, "[дисплей] не знайшовся CRTC для коннектора\n");
-        drmModeFreeConnector(conn);
-        drmModeFreeResources(res);
-        teardown_output();
+    if (!o.crtc_id) {
+        std::fprintf(stderr, "[дисплей] %s: вільного CRTC немає\n", cname);
         return false;
     }
 
@@ -1017,23 +1172,24 @@ bool Display::Impl::configure_output() {
     // possible_crtcs у плейнів.
     int crtc_index = -1;
     for (int j = 0; j < res->count_crtcs; ++j) {
-        if (res->crtcs[j] == d.crtc_id) { crtc_index = j; break; }
+        if (res->crtcs[j] == o.crtc_id) { crtc_index = j; break; }
     }
 
     // --- плейн: primary на цьому CRTC ---
-    drmModePlaneRes* planes = drmModeGetPlaneResources(d.fd);
+    drmModePlaneRes* planes = drmModeGetPlaneResources(fd);
     std::vector<uint32_t> formats;
+    o.plane_id = 0;
     if (planes) {
-        for (uint32_t i = 0; i < planes->count_planes && !d.plane_id; ++i) {
-            drmModePlane* p = drmModeGetPlane(d.fd, planes->planes[i]);
+        for (uint32_t i = 0; i < planes->count_planes && !o.plane_id; ++i) {
+            drmModePlane* p = drmModeGetPlane(fd, planes->planes[i]);
             if (!p) continue;
-            bool on_our_crtc = crtc_index >= 0 && (p->possible_crtcs & (1u << crtc_index));
-            if (on_our_crtc) {
-                PropTable pp = read_props(d.fd, p->plane_id, DRM_MODE_OBJECT_PLANE);
+            const bool on_our_crtc = crtc_index >= 0 && (p->possible_crtcs & (1u << crtc_index));
+            if (on_our_crtc && !busy_plane.count(p->plane_id)) {
+                PropTable pp = read_props(fd, p->plane_id, DRM_MODE_OBJECT_PLANE);
                 auto it = pp.value.find("type");
-                bool is_primary = it != pp.value.end() && it->second == DRM_PLANE_TYPE_PRIMARY;
+                const bool is_primary = it != pp.value.end() && it->second == DRM_PLANE_TYPE_PRIMARY;
                 if (is_primary) {
-                    d.plane_id = p->plane_id;
+                    o.plane_id = p->plane_id;
                     for (uint32_t k = 0; k < p->count_formats; ++k) {
                         formats.push_back(p->formats[k]);
                     }
@@ -1043,126 +1199,197 @@ bool Display::Impl::configure_output() {
         }
         drmModeFreePlaneResources(planes);
     }
-    if (!d.plane_id) {
-        std::fprintf(stderr, "[дисплей] не знайшовся primary-плейн на CRTC %u\n", d.crtc_id);
-        drmModeFreeConnector(conn);
-        drmModeFreeResources(res);
-        teardown_output();
+    if (!o.plane_id) {
+        std::fprintf(stderr, "[дисплей] %s: не знайшовся primary-плейн на CRTC %u\n",
+                     cname, o.crtc_id);
+        o.crtc_id = 0;
         return false;
     }
 
-    d.plane_props = read_props(d.fd, d.plane_id, DRM_MODE_OBJECT_PLANE);
-    d.crtc_props  = read_props(d.fd, d.crtc_id,  DRM_MODE_OBJECT_CRTC);
-    d.conn_props  = read_props(d.fd, d.connector_id, DRM_MODE_OBJECT_CONNECTOR);
+    o.plane_props = read_props(fd, o.plane_id, DRM_MODE_OBJECT_PLANE);
+    o.crtc_props  = read_props(fd, o.crtc_id,  DRM_MODE_OBJECT_CRTC);
+    o.conn_props  = read_props(fd, o.connector_id, DRM_MODE_OBJECT_CONNECTOR);
 
-    if (drmModeCreatePropertyBlob(d.fd, &d.mode, sizeof(d.mode), &d.mode_blob) != 0) {
-        std::fprintf(stderr, "[дисплей] drmModeCreatePropertyBlob: %s\n", std::strerror(errno));
-        drmModeFreeConnector(conn);
-        drmModeFreeResources(res);
-        teardown_output();
+    if (drmModeCreatePropertyBlob(fd, &o.mode, sizeof(o.mode), &o.mode_blob) != 0) {
+        std::fprintf(stderr, "[дисплей] %s: drmModeCreatePropertyBlob: %s\n",
+                     cname, std::strerror(errno));
+        o.crtc_id = o.plane_id = 0;
         return false;
     }
 
     // --- пінимо колір ---
     // Імена властивостей різні: mainline дає стандартну "max bpc", ядра
-    // Rockchip BSP — вендорні "color_depth"/"color_format". Шукаємо
-    // обидва варіанти й спокійно живемо, якщо немає жодного.
+    // Rockchip BSP — вендорні "color_depth"/"color_format".
     {
         drmModeAtomicReq* req = drmModeAtomicAlloc();
         bool any = false;
 
-        if (d.conn_props.has("max bpc")) {
-            drmModeAtomicAddProperty(req, d.connector_id, d.conn_props["max bpc"],
-                                      d.cfg.color_depth_bits);
+        if (o.conn_props.has("max bpc")) {
+            drmModeAtomicAddProperty(req, o.connector_id, o.conn_props["max bpc"],
+                                     cfg.color_depth_bits);
             any = true;
-        } else if (d.conn_props.has("color_depth")) {
-            const char* want = d.cfg.color_depth_bits >= 10 ? "30bit" : "24bit";
+        } else if (o.conn_props.has("color_depth")) {
+            const char* want = cfg.color_depth_bits >= 10 ? "30bit" : "24bit";
             uint64_t v = 0;
-            if (enum_value_by_name(d.fd, d.conn_props["color_depth"], want, &v)) {
-                drmModeAtomicAddProperty(req, d.connector_id, d.conn_props["color_depth"], v);
+            if (enum_value_by_name(fd, o.conn_props["color_depth"], want, &v)) {
+                drmModeAtomicAddProperty(req, o.connector_id, o.conn_props["color_depth"], v);
                 any = true;
             }
         }
 
-        if (d.conn_props.has("color_format")) {
+        if (o.conn_props.has("color_format")) {
             uint64_t v = 0;
-            if (enum_value_by_name(d.fd, d.conn_props["color_format"],
-                                    color_format_name(d.cfg.color_format), &v)) {
-                drmModeAtomicAddProperty(req, d.connector_id, d.conn_props["color_format"], v);
+            if (enum_value_by_name(fd, o.conn_props["color_format"],
+                                   color_format_name(cfg.color_format), &v)) {
+                drmModeAtomicAddProperty(req, o.connector_id, o.conn_props["color_format"], v);
                 any = true;
             }
         }
 
         if (any) {
-            int r = drmModeAtomicCommit(d.fd, req, DRM_MODE_ATOMIC_ALLOW_MODESET, nullptr);
-            if (r != 0) {
+            if (drmModeAtomicCommit(fd, req, DRM_MODE_ATOMIC_ALLOW_MODESET, nullptr) != 0) {
                 std::fprintf(stderr,
-                    "[дисплей] не вдалося запінити колір (%s) — лишаю як є\n",
-                    std::strerror(errno));
+                    "[дисплей] %s: не вдалося запінити колір (%s) — лишаю як є\n",
+                    cname, std::strerror(errno));
             }
         }
         drmModeAtomicFree(req);
     }
 
-    // --- метадані шару ---
-    d.state_.width = d.mode.hdisplay;
-    d.state_.height = d.mode.vdisplay;
-    // vrefresh у drmModeModeInfo — округлені герци; рахуємо точніше з
-    // піксельного клока й повних розмірів, бо саме дробова частина
-    // визначає дрейф відносно джерела.
-    if (d.mode.htotal && d.mode.vtotal) {
-        d.state_.refresh_mhz =
-            (int)((int64_t)d.mode.clock * 1000000LL / (d.mode.htotal * d.mode.vtotal));
-    } else {
-        d.state_.refresh_mhz = d.mode.vrefresh * 1000;
+    // --- метадані шару. Пишуться ПІД ЛОКОМ: state читають з інших
+    //     потоків, а name і connector це std::string. ---
+    {
+        std::lock_guard<std::mutex> lock(mtx);
+        o.state.width = o.mode.hdisplay;
+        o.state.height = o.mode.vdisplay;
+        // vrefresh у drmModeModeInfo — округлені герци; рахуємо точніше з
+        // піксельного клока й повних розмірів, бо саме дробова частина
+        // визначає дрейф відносно джерела.
+        if (o.mode.htotal && o.mode.vtotal) {
+            o.state.refresh_mhz =
+                (int)((int64_t)o.mode.clock * 1000000LL / (o.mode.htotal * o.mode.vtotal));
+        } else {
+            o.state.refresh_mhz = o.mode.vrefresh * 1000;
+        }
+        o.state.supported_formats = formats;
+        o.state.fourcc = DRM_FORMAT_XRGB8888;
+        o.state.modifier = DRM_FORMAT_MOD_LINEAR;
+        o.state.colorspace = ColorSpace::BT709;
+        o.state.color_range = ColorRange::Full;
+        o.state.color_format = cfg.color_format;
+        o.state.connector = cname;
+
+        char buf[160];
+        std::snprintf(buf, sizeof(buf), "%s %dx%d@%.3f",
+                      cname, o.state.width, o.state.height, o.state.refresh_hz());
+        o.state.name = buf;
+
+        // Буфери під цю геометрію. Робиться ТУТ, а не при відкритті: до
+        // появи монітора невідомо ні розміру, ні формату.
+        if (!create_ring(o)) {
+            // Нічого не звільняємо руками: teardown_output зробить це
+            // сам, а він бере цей самий лок — тому кличемо його ПІСЛЯ
+            // виходу зі scope.
+            o.state.generation = 0;
+        } else {
+            // Рендерер стежить саме за цим номером: змінився — значить
+            // геометрія виводу інша, і буфери треба перестворити.
+            o.state.generation = generation_.fetch_add(1, std::memory_order_release) + 1;
+        }
     }
-    d.state_.supported_formats = formats;
-    d.state_.fourcc = DRM_FORMAT_XRGB8888;
-    d.state_.modifier = DRM_FORMAT_MOD_LINEAR;
-    d.state_.colorspace = ColorSpace::BT709;
-    d.state_.color_range = ColorRange::Full;
-    d.state_.color_format = d.cfg.color_format;
 
-    char buf[128];
-    std::snprintf(buf, sizeof(buf), "%s %dx%d@%.3f",
-                  conn->connector_type == DRM_MODE_CONNECTOR_HDMIA ? "HDMI-A" : "conn",
-                  d.state_.width, d.state_.height, d.state_.refresh_hz());
-    d.state_.name = buf;
+    if (!o.live()) {
+        std::fprintf(stderr, "[дисплей] %s: кільце буферів не виділилось\n", cname);
+        teardown_output(o);
+        return false;
+    }
 
-    drmModeFreeConnector(conn);
-    drmModeFreeResources(res);
+    // РЕЖИМ СТАВИМО ОДРАЗУ, А ПЛЕЙН ГАСИМО.
+    //
+    // Дві причини, і обидві практичні.
+    //
+    // Перша: поки в цей вивід нічого не показали, він сканує те, що
+    // лишив попередній власник карти — X або попередня сесія. На
+    // додатковому екрані це видно найкраще: VOP лишався ACTIVE із вікном
+    // на весь екран і НУЛЬОВОЮ адресою буфера, тобто сканував порожнечу.
+    //
+    // Друга, важливіша: опущені до 59 Гц режими не мають сенсу, поки їх
+    // не застосовано. Якби modeset відкладався до першого показаного
+    // кадру, то додатковий екран стояв би на своїх стокових 60 Гц — і
+    // промоція його в основні (помер HDMI) означала б зміну режиму рівно
+    // тоді, коли пілот щойно втратив монітор. Саме цього ми й уникали,
+    // опускаючи обидва.
+    //
+    // CRTC вмикається з режимом, але БЕЗ плейна: екран чорний, розгортка
+    // вже правильна, а перший кадр буде звичайним фліпом.
+    {
+        drmModeAtomicReq* req = drmModeAtomicAlloc();
+        bool done = false;
+        if (req) {
+            drmModeAtomicAddProperty(req, o.crtc_id, o.crtc_props["MODE_ID"], o.mode_blob);
+            drmModeAtomicAddProperty(req, o.crtc_id, o.crtc_props["ACTIVE"], 1);
+            drmModeAtomicAddProperty(req, o.connector_id, o.conn_props["CRTC_ID"], o.crtc_id);
+            drmModeAtomicAddProperty(req, o.plane_id, o.plane_props["FB_ID"], 0);
+            drmModeAtomicAddProperty(req, o.plane_id, o.plane_props["CRTC_ID"], 0);
+            done = drmModeAtomicCommit(fd, req, DRM_MODE_ATOMIC_ALLOW_MODESET, nullptr) == 0;
+            drmModeAtomicFree(req);
+        }
 
+        if (done) {
+            // Режим уже стоїть — першому кадру modeset не потрібен.
+            o.modeset_done = true;
+        } else {
+            // Драйвер не прийняв активний CRTC без плейна. Не біда:
+            // просто гасимо плейн, а режим поставиться першим кадром.
+            std::fprintf(stderr,
+                "[дисплей] %s: CRTC без плейна не прийнято (%s) —"
+                " режим стане з першим кадром\n", cname, std::strerror(errno));
+            drmModeAtomicReq* off = drmModeAtomicAlloc();
+            if (off) {
+                drmModeAtomicAddProperty(off, o.plane_id, o.plane_props["FB_ID"], 0);
+                drmModeAtomicAddProperty(off, o.plane_id, o.plane_props["CRTC_ID"], 0);
+                drmModeAtomicCommit(fd, off, DRM_MODE_ATOMIC_ALLOW_MODESET, nullptr);
+                drmModeAtomicFree(off);
+            }
+        }
+    }
 
     std::fprintf(stderr,
-        "[дисплей] %s | crtc=%u plane=%u | %d форматів | колір: %s %d біт | бюджет кадру %.2f мс\n",
-        d.state_.name.c_str(), d.crtc_id, d.plane_id, (int)formats.size(),
-        color_format_name(d.cfg.color_format), d.cfg.color_depth_bits,
-        d.state_.frame_time_ns() / 1e6);
+        "[дисплей] %s | crtc=%u plane=%u | %d форматів | колір: %s %d біт"
+        " | бюджет кадру %.2f мс | слот %d\n",
+        o.state.name.c_str(), o.crtc_id, o.plane_id, (int)formats.size(),
+        color_format_name(cfg.color_format), cfg.color_depth_bits,
+        o.state.frame_time_ns() / 1e6, slot);
+    return true;
+}
 
+// Роль визначає ТИП коннектора: HDMI основний, коли він є; лишився один
+// вивід — він основний, який би не був.
+void Display::Impl::assign_roles() {
+    std::lock_guard<std::mutex> lock(mtx);
 
-    // Буфери під цю геометрію. Робиться ТУТ, а не при відкритті: до
-    // появи монітора невідомо ні розміру, ні формату.
-    //
-    // ТУТ НІЧОГО НЕ ЗВІЛЬНЯЄТЬСЯ, і це навмисно. conn та res віддані вище
-    // (рядки 1132-1133), і повторне звільнення в цій гілці псувало купу —
-    // рівно тоді, коли не вистачило пам'яті на кільце, тобто коли станція
-    // й так у делікатному стані. Найімовірніший шлях сюди — брак CMA при
-    // перепідключенні монітора з більшою роздільністю.
-    //
-    // teardown_output() тут теж викликати НЕ МОЖНА: він бере той самий
-    // m'ютекс, а ми вже під ним, і це був би миттєвий дедлок. Прибирання
-    // й так станеться: потік подій повторює configure_output() раз на
-    // секунду, поки виводу немає, а той починається саме з teardown.
-    {
-        std::lock_guard<std::mutex> lock(d.mtx);
-        if (!d.create_ring()) return false;
+    int best = -1, best_rank = 99;
+    int live = 0;
+    for (auto& up : outs) {
+        if (!up || !up->live()) continue;
+        live++;
+        const int r = role_rank(up->connector_type);
+        if (r < best_rank) { best_rank = r; best = up->slot_no; }
     }
 
-    // Рендерер стежить саме за цим номером: змінився — значить
-    // геометрія виводу інша, і буфери треба перестворити.
-    d.state_.generation = generation_.fetch_add(1, std::memory_order_release) + 1;
-    d.has_output.store(true, std::memory_order_release);
-    return true;
+    const int was = primary_slot;
+    primary_slot = best;
+    live_count.store(live, std::memory_order_release);
+
+    for (auto& up : outs) {
+        if (up) up->state.primary = (up->slot_no == primary_slot);
+    }
+
+    if (was != primary_slot) {
+        const Output* p = (primary_slot >= 0) ? outs[(size_t)primary_slot].get() : nullptr;
+        std::fprintf(stderr, "[дисплей] ОСНОВНИЙ тепер: %s (екранів живих %d)\n",
+                     p ? p->state.name.c_str() : "немає", live);
+    }
 }
 
 void Display::close() {
@@ -1173,19 +1400,10 @@ void Display::close() {
     }
 
     if (d.fd >= 0) {
-        // Вимикаємо плейн явно, інакше на екрані лишиться останній кадр
-        // і наступна сесія побачить "застряглий" плейн.
-        if (d.plane_id && d.plane_props.has("FB_ID")) {
-            drmModeAtomicReq* req = drmModeAtomicAlloc();
-            drmModeAtomicAddProperty(req, d.plane_id, d.plane_props["FB_ID"], 0);
-            drmModeAtomicAddProperty(req, d.plane_id, d.plane_props["CRTC_ID"], 0);
-            drmModeAtomicCommit(d.fd, req, DRM_MODE_ATOMIC_ALLOW_MODESET, nullptr);
-            drmModeAtomicFree(req);
-        }
-
-        if (d.mode_blob) {
-            drmModeDestroyPropertyBlob(d.fd, d.mode_blob);
-            d.mode_blob = 0;
+        // Вимикаємо плейни явно, інакше на екранах лишиться останній
+        // кадр і наступна сесія побачить "застряглі" плейни.
+        for (auto& up : d.outs) {
+            if (up && up->live()) d.teardown_output(*up);
         }
         if (d.master_taken) {
             drmDropMaster(d.fd);
@@ -1201,29 +1419,68 @@ void Display::close() {
         d.fd = -1;
     }
 
-    d.destroy_ring();
-    d.free_all_retired();
+    {
+        std::lock_guard<std::mutex> lock(d.mtx);
+        d.outs.clear();
+        d.primary_slot = -1;
+        d.live_count.store(0, std::memory_order_release);
+        d.free_all_retired();
+    }
     if (d.gbm) { gbm_device_destroy(d.gbm); d.gbm = nullptr; }
-    d.modeset_done = false;
-    d.state_ = {};
 }
 
-PresentStats Display::stats() const {
+int Display::screen_count() const {
     std::lock_guard<std::mutex> lock(impl_->mtx);
-    PresentStats s = impl_->st;
-    s.live_bufs = impl_->live_bufs;
-    s.retired_bufs = (int)impl_->retired.size();
-    s.generation = impl_->state_.generation;
-    return s;
+    return (int)impl_->outs.size();
+}
+
+int Display::primary_screen() const {
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    return impl_->primary_slot;
+}
+
+OutputState Display::state(int screen) const {
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    Impl::Output* o = impl_->at(screen);
+    return o ? o->state : OutputState{};
 }
 
 OutputState Display::state() const {
     std::lock_guard<std::mutex> lock(impl_->mtx);
-    return impl_->state_;
+    Impl::Output* o = impl_->primary();
+    return o ? o->state : OutputState{};
 }
 
+PresentStats Display::stats(int screen) const {
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    Impl::Output* o = impl_->at(screen);
+    PresentStats s = o ? o->st : PresentStats{};
+    s.live_bufs = impl_->live_bufs;
+    s.retired_bufs = (int)impl_->retired.size();
+    s.generation = o ? o->state.generation : 0;
+    return s;
+}
 
-bool Display::acquire(Target& out) { return impl_->acquire(out); }
+PresentStats Display::stats() const {
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    Impl::Output* o = impl_->primary();
+    PresentStats s = o ? o->st : PresentStats{};
+    s.live_bufs = impl_->live_bufs;
+    s.retired_bufs = (int)impl_->retired.size();
+    s.generation = o ? o->state.generation : 0;
+    return s;
+}
+
+bool Display::acquire(int screen, Target& out) { return impl_->acquire(screen, out); }
+
+bool Display::acquire(Target& out) {
+    int p;
+    {
+        std::lock_guard<std::mutex> lock(impl_->mtx);
+        p = impl_->primary_slot;
+    }
+    return p >= 0 && impl_->acquire(p, out);
+}
 
 bool Display::present(const Target& t) { return impl_->queue(t); }
 
