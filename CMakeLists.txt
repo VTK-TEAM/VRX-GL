@@ -54,6 +54,8 @@ add_executable(vrx_gl
     record/mkv_seek.cpp
     record/session_index.cpp
     record/recorder.cpp
+    osd/ass_track.cpp
+    osd/telemetry_log.cpp
     osd/osd.cpp
     osd/osd_version.cpp
     osd/subtitle_writer.cpp

@@ -32,6 +32,7 @@
 #include "osd/local_channels.hpp"
 #include "osd/telemetry/vt_telemetry_index.h"
 #include "osd/subtitle_writer.hpp"
+#include "osd/telemetry_log.hpp"
 #include "source/player_session.hpp"
 #include "ui/player_ui.hpp"
 #include "record/session_index.hpp"
@@ -568,6 +569,17 @@ int main(int argc, char** argv) {
         }
         ~PlayerClock() { run.store(false); if (th.joinable()) th.join(); }
     } player_clock(players);
+
+    // Лог телеметрії: сирі значення поруч із відео. На відміну від
+    // субтитрів, він не прив'язаний до розкладки — тому й придатний і для
+    // нашого плеєра, і для майбутньої програми на комп'ютері.
+    std::unique_ptr<vrx::osd::TelemetryLog> tlm_log;
+    if (osd && kRecordEnabled) {
+        vrx::osd::TelemetryLog::Config lc;
+        lc.session = session;
+        tlm_log = std::make_unique<vrx::osd::TelemetryLog>(lc, osd->storage(), storage);
+        tlm_log->start();
+    }
 
     std::unique_ptr<vrx::osd::SubtitleWriter> subs;
     std::unique_ptr<vrx::osd::LocalChannels> local_ch;
