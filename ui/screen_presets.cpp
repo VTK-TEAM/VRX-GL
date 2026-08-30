@@ -122,7 +122,7 @@ render::OverlayImage make_lock_button(bool locked) {
     img.rgba.assign((size_t)size * size * 4, 0);
     draw_button_bg(img, false, size);
 
-    const uint8_t r = locked ? 250 : 120, g = locked ? 190 : 190, b = locked ? 90 : 120;
+    const uint8_t r = locked ? 250 : 140, g = locked ? 190 : 145, b = locked ? 90 : 155;
     const uint8_t a = locked ? 255 : 200;
 
     // Корпус
@@ -826,13 +826,13 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
                     if (n > 0) d.shot_flash_ms[role] = now_ms();
                     std::fprintf(stderr, "[екрани] знімок ефіру: каналів %d\n", n);
                 } else if (b == d.lock_button()) {
-                    bool& lk = d.locked[d.active_of(role)][role];
-                    lk = !lk;
+                    bool& flag = d.locked[d.active_of(role)][role];
+                    flag = !flag;
                     d.mark_dirty(role);
                     std::fprintf(stderr, "[екрани] пресет %d на %s екрані: %s\n",
                                  d.active_of(role) + 1,
                                  role == render::Scene::kPrimary ? "основному" : "додатковому",
-                                 lk ? "ЗАМКНЕНО" : "відкрито");
+                                 flag ? "ЗАМКНЕНО" : "відкрито");
                 } else if (b == d.play_button()) {
                     // ПЛЕЄР НА ЦЬОМУ ЕКРАНІ. Другий екран лишається на
                     // ефірі — або має свій плеєр, це дозволено.

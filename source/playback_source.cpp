@@ -63,19 +63,26 @@ struct PlaybackSource::Impl {
     std::condition_variable room;   // місце звільнилось у черзі
     std::deque<Item> queue;
     Item current;                     // що показуємо зараз
-    int64_t anchor_us = 0;            // якір файлу, щоб PTS перевести в час сеансу
 
     // Ціль у часі СЕАНСУ. Кадр із черги стає поточним, поки його власний
     // час не перевищує цілі.
     std::atomic<int64_t> target_us{-1};
     std::atomic<float> aspect{0.f};      // пропорція останнього кадру
-    int64_t session_start_us = 0;
+
+    // ЯКІР І ПОЧАТОК СЕАНСУ — АТОМАРНІ.
+    //
+    // Їх пише перемотка (потік годинника), а читає показ, переводячи PTS
+    // кадру в час сеансу. Детектор гонок ловить це першим і не дарма:
+    // зсунутий якір означає кадр, покладений не на ту секунду.
+    std::atomic<int64_t> anchor_us{0};
+    std::atomic<int64_t> session_start_us{0};
 
     // Час кадру в шкалі сеансу. Якір — момент, якому відповідає PTS=0 у
     // цьому файлі; звідси різні файли одного каналу лягають на спільну
     // вісь без жодних поправок.
     int64_t session_time(int64_t pts_us) const {
-        return anchor_us + pts_us - session_start_us;
+        return anchor_us.load(std::memory_order_relaxed) + pts_us -
+               session_start_us.load(std::memory_order_relaxed);
     }
 
     SourceStats st;
@@ -282,9 +289,9 @@ bool PlaybackSource::seek(const record::SessionIndex& ix, int64_t t_us) {
             anchor = f.anchor_us;
             if (!f.closed) limit = f.safe_bytes;
         }
-    d.anchor_us = anchor;
+    d.anchor_us.store(anchor, std::memory_order_relaxed);
+    d.session_start_us.store(ix.start_us(), std::memory_order_relaxed);
     d.cur_file = sp.name;
-    d.session_start_us = ix.start_us();
     d.target_us.store(t_us, std::memory_order_relaxed);
     return d.build(ix.dir() + "/" + sp.name, sp.byte_off, limit);
 }

@@ -66,7 +66,7 @@ public:
 
     void seek(int64_t t_us);
     void set_speed(double s);         // 0 = пауза, далі 0.2..10
-    double speed() const { return speed_; }
+    double speed() const { return speed_.load(std::memory_order_relaxed); }
 
     // Крок на ОДИН КАДР. Береться час наступного наявного кадру основного
     // каналу, а не умовна шістдесята частка: у записі бувають пропуски, і
@@ -81,7 +81,9 @@ public:
     // Стрибок на задану кількість мікросекунд від поточного місця.
     void jump(int64_t delta_us);
 
-    int64_t position_us() const { return position_us_; }
+    // ПОЗИЦІЯ Й ШВИДКІСТЬ АТОМАРНІ: позицію пише годинник і читає показ,
+    // швидкість міняє миша, а читають обидва.
+    int64_t position_us() const { return position_us_.load(std::memory_order_relaxed); }
 
     // Довжина й початок читаються з ПОТОКУ ПОКАЗУ, а журнал живого сеансу
     // перечитує годинник — тому атомарні знімки, а не посилання на індекс.
@@ -119,8 +121,8 @@ private:
     std::atomic<int64_t> start_wall_us_{0};
     std::atomic<bool> live_{false};
 
-    int64_t position_us_ = 0;
-    double speed_ = 1.0;
+    std::atomic<int64_t> position_us_{0};
+    std::atomic<double> speed_{1.0};
     int64_t last_tick_ns_ = 0;
     int64_t last_reload_ns_ = 0;
 
