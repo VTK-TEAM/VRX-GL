@@ -117,6 +117,7 @@ public:
     // Діагностика: чи є зараз сигнал, і який розмір кадру бачимо.
     bool has_signal() const override;
     float frame_aspect() const override;
+    bool snapshot(SourceFrame& out) const override;
 
     // Інтервали між кадрами на ВХОДІ декодера, мс. Порівняння з
     // інтервалами на виході (SourceStats) показує, чи створює декодер

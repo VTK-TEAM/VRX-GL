@@ -11,6 +11,8 @@
 // файлів (заміряно 0/5/68 мс) зникає сама.
 
 #include "record/session_index.hpp"
+#include "osd/telemetry_reader.hpp"
+#include "osd/telemetry/vt_telemetry_storage.h"
 #include "source/playback_source.hpp"
 
 #include <atomic>
@@ -80,6 +82,17 @@ public:
     int64_t start_wall_us() const { return start_wall_us_.load(std::memory_order_relaxed); }
     bool live() const { return live_.load(std::memory_order_relaxed); }
 
+    // ЗАПИСАНА ТЕЛЕМЕТРІЯ цього сеансу. Віддається OSD замість ефірної, і
+    // той малює з неї звичним шляхом. nullptr, якщо логу немає — тоді на
+    // екрані просто не буде телеметрії, а решта працює.
+    VtTelemetryStorage* telemetry() { return tlm_ok_ ? &tlm_store_ : nullptr; }
+
+    // Знімок УСІХ каналів у теку. Кодування йде на власному потоці: воно
+    // триває десятки мілісекунд на кадр, а показ чекати не може.
+    //
+    // Повертає кількість каналів, які мали що знімати.
+    int save_snapshots(const std::string& dir) const;
+
 private:
     record::SessionIndex ix_;
     std::shared_ptr<PlaybackSource> ch_[kChannels];
@@ -94,6 +107,10 @@ private:
     double speed_ = 1.0;
     int64_t last_tick_ns_ = 0;
     int64_t last_reload_ns_ = 0;
+
+    osd::TelemetryReader tlm_;
+    VtTelemetryStorage tlm_store_;
+    bool tlm_ok_ = false;
 
     void push_target();
     void adopt();                 // перенести знімки з ix_ у атомарні поля

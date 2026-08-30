@@ -105,6 +105,10 @@ public:
     // під ним лежить, — миша ж одна, і обидва шари бачать те саме
     // натискання.
     void set_blocked_area(std::function<bool(int role, float cx, float cy)> cb);
+
+    // Знімок ефіру. Куди складати файли, пресети не знають — це справа
+    // того, хто володіє носієм.
+    void set_on_shot(std::function<int(int role)> cb);
     int mode(int role) const;
 
     // Чи розгорнутий ряд кнопок на цій ролі.

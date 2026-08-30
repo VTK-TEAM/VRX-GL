@@ -331,6 +331,13 @@ bool PlaybackSource::acquire(SourceFrame& out) {
     return true;                            // dying вмирає поза локом
 }
 
+bool PlaybackSource::snapshot(SourceFrame& out) const {
+    std::lock_guard<std::mutex> lk(impl_->mtx);
+    if (!impl_->current.frame) return false;
+    out = *impl_->current.frame;
+    return true;
+}
+
 float PlaybackSource::frame_aspect() const {
     return impl_->aspect.load(std::memory_order_relaxed);
 }

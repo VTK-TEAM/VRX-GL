@@ -469,8 +469,17 @@ struct Osd::Impl {
         return buf;
     }
 
-    bool fetch_value(const OsdElementConfig& el, float* out) {
-        return vt_fetch_channel_value(storage, el.data_channel,
+    // СХОВИЩЕ ЗАЛЕЖИТЬ ВІД РОЛІ.
+    //
+    // Екран у режимі плеєра бере значення не з ефіру, а із записаного логу
+    // — і це єдина відмінність. Розкладка, іконки, правила приховування,
+    // кнопка вимикання лишаються тими самими, бо шлях малювання один.
+    VtTelemetryStorage* pb[kRoles] = {nullptr, nullptr};
+
+    bool fetch_value(const OsdElementConfig& el, float* out, int role) {
+        VtTelemetryStorage& src = (role >= 0 && role < kRoles && pb[role])
+                                      ? *pb[role] : storage;
+        return vt_fetch_channel_value(src, el.data_channel,
                                       el.channel_meta == OsdChannelMeta::AGE_S,
                                       el.channel_meta == OsdChannelMeta::RATE_HZ,
                                       out);
@@ -616,7 +625,7 @@ struct Osd::Impl {
             // працює однаково для VALUE, ENUM_SWITCH, BAR і HORIZON.
             if (el.hide_if_no_data && el.data_channel >= 0) {
                 float probe = 0.f;
-                if (!fetch_value(el, &probe)) continue;
+                if (!fetch_value(el, &probe, role)) continue;
             }
 
             switch (el.type) {
@@ -629,7 +638,7 @@ struct Osd::Impl {
                 if (el.data_channel >= 0) {
                     std::string value_str = "--";
                     float value = 0.f;
-                    if (fetch_value(el, &value)) {
+                    if (fetch_value(el, &value, role)) {
                         value_str = format_value(el, value);
                     }
                     x = emit_label_or_icon(dl, value_str, x, y, el.size_index, fw, fh);
@@ -644,7 +653,7 @@ struct Osd::Impl {
                 x = emit_label_or_icon(dl, el.label, x, y, el.size_index, fw, fh);
                 if (el.data_channel >= 0) {
                     float value = 0.f;
-                    const bool have = fetch_value(el, &value);
+                    const bool have = fetch_value(el, &value, role);
                     const std::string out = have ? eval_enum(el, value) : el.enum_default;
                     emit_label_or_icon(dl, out, x, y, el.size_index, fw, fh);
                 }
@@ -654,7 +663,7 @@ struct Osd::Impl {
             case OsdElementType::BAR:
                 if (el.data_channel >= 0) {
                     float value = el.bar_min;    // немає даних -> порожній бар
-                    fetch_value(el, &value);
+                    fetch_value(el, &value, role);
                     emit_bar(dl, el, value, fw, fh);
                 }
                 break;
@@ -662,7 +671,7 @@ struct Osd::Impl {
             case OsdElementType::HORIZON:
                 if (el.data_channel >= 0) {
                     float deg = 0.f;             // немає даних -> рівний горизонт
-                    fetch_value(el, &deg);
+                    fetch_value(el, &deg, role);
                     emit_horizon(dl, el, deg, fw, fh);
                 }
                 break;
@@ -713,6 +722,22 @@ struct Osd::Impl {
         }
 
         const double ms = (now_ns() - t0) / 1e6;
+
+        // У ПЛЕЄРІ ТЕЛЕМЕТРІЮ СТИСКАЄМО ВГОРУ.
+        //
+        // Унизу екрана лежать таймлайн і кнопки керування, і нижній ряд
+        // телеметрії опинявся б під ними. Стискаємо весь шар до верху —
+        // просто множенням координати, без збереження пропорцій: підписи
+        // трохи вужчають по вертикалі, і це помітно менше заважає, ніж
+        // затулена половина рядка.
+        //
+        // Робиться ПІСЛЯ збирання, одним проходом по готових прямокутниках:
+        // так під це не треба чіпати жоден із типів елементів окремо.
+        if (role >= 0 && role < kRoles && pb[role] && cfg.playback_squeeze < 1.0f) {
+            const float k = cfg.playback_squeeze;
+            for (auto& q : dl.quads)
+                for (int i = 0; i < 4; ++i) q.y[i] *= k;
+        }
 
         {
             std::lock_guard<std::mutex> lk(out_mtx);
@@ -847,6 +872,11 @@ bool Osd::acquire(int role, render::DrawList& out) {
 }
 
 VtTelemetryStorage& Osd::storage() { return impl_->storage; }
+
+void Osd::set_playback_storage(int role, VtTelemetryStorage* s) {
+    if (role < 0 || role >= Impl::kRoles) return;
+    impl_->pb[role] = s;
+}
 
 void Osd::set_notice(const std::string& msg) {
     std::lock_guard<std::mutex> lk(impl_->notice_mtx);

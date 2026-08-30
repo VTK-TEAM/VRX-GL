@@ -36,6 +36,7 @@
 #include "source/player_session.hpp"
 #include "ui/player_ui.hpp"
 #include "record/session_index.hpp"
+#include "record/snapshot.hpp"
 #include "render/gl_renderer.hpp"
 #include "source/h265_source.hpp"
 #include "source/mjpeg_source.hpp"
@@ -427,7 +428,7 @@ int main(int argc, char** argv) {
     // порожнє місце. В одноканальній збірці пресетів немає — тоді вона
     // перша й сама.
     vrx::ui::ScreenUi::Config ui_cfg;
-    ui_cfg.slot = kSingleChannel ? 0 : 8;
+    ui_cfg.slot = kSingleChannel ? 0 : 9;
     auto screen_ui = std::make_shared<vrx::ui::ScreenUi>(ui_cfg);
 
     // Кнопка редактора живе в іншому шарі, але в тому ж ряду кнопок — тож
@@ -469,9 +470,54 @@ int main(int argc, char** argv) {
         return vrx::record::list_sessions(drive.root);
     });
 
-    if (screen_presets) screen_presets->set_on_mode([&players, &storage](int role, int mode) {
+    // Знімок ЕФІРУ — з головного меню. Той самий набір каналів, але кадри
+    // беруться з живих джерел, а мітка часу — просто "зараз".
+    if (screen_presets) screen_presets->set_on_shot(
+        [&storage, &main_src, &pip_src, &cap_src, &players, &screen_presets](int role) {
+            const auto drive = storage.state();
+            if (!drive.usable()) return 0;
+
+            // Верхня кнопка знімає ТЕ, ЩО НА ЦЬОМУ ЕКРАНІ. У режимі плеєра
+            // живих вікон на ньому немає взагалі, і зберігати ефір було б
+            // несподіванкою: людина дивиться запис і знімає запис.
+            if (screen_presets->mode(role) == vrx::ui::ScreenPresets::kPlayer)
+                return players[role]->save_snapshots(drive.root + "/screenshots");
+
+            std::vector<std::pair<std::string, vrx::source::SourceFrame>> frames;
+            auto take = [&frames](const char* name,
+                                  const std::shared_ptr<vrx::source::FrameSource>& src) {
+                if (!src) return;
+                vrx::source::SourceFrame f;
+                if (src->snapshot(f)) frames.push_back({name, std::move(f)});
+            };
+            take("main", main_src);
+            take("sub", pip_src);
+            take("local", cap_src);
+
+            struct timespec ts;
+            clock_gettime(CLOCK_REALTIME, &ts);
+            const int64_t wall = ts.tv_sec * 1000000LL + ts.tv_nsec / 1000;
+            return vrx::record::save_set(std::move(frames),
+                                         drive.root + "/screenshots", wall);
+        });
+
+    // Знімок: окрема тека на носії, поруч із теками днів. Складати знімки
+    // до записів було б зручно лише доти, доки їх не треба знайти.
+    if (player_ui) player_ui->set_on_shot([&players, &storage](int role) {
+        const auto drive = storage.state();
+        if (!drive.usable()) return 0;
+        return players[role]->save_snapshots(drive.root + "/screenshots");
+    });
+
+    // Записана телеметрія підключається до OSD, щойно сеанс обрано.
+    if (player_ui) player_ui->set_on_opened([&players, &osd](int role) {
+        if (osd) osd->set_playback_storage(role, players[role]->telemetry());
+    });
+
+    if (screen_presets) screen_presets->set_on_mode([&players, &storage, &osd](int role, int mode) {
             if (role < 0 || role > 1) return;
             if (mode != vrx::ui::ScreenPresets::kPlayer) {
+                if (osd) osd->set_playback_storage(role, nullptr);
                 players[role]->close();
                 return;
             }
@@ -516,7 +562,7 @@ int main(int argc, char** argv) {
     // "пише" — це коли пише хоч один, а не лише основний.
     vrx::record::Recorder::Config rec2_cfg;
     rec2_cfg.session = session;
-        rec2_cfg.name = "pip";
+        rec2_cfg.name = "sub";
     rec2_cfg.codec = vrx::record::Recorder::Codec::MJPEG;
     rec2_cfg.udp_port = pip_cfg.udp_port;
     rec2_cfg.payload_type = pip_cfg.payload_type;
@@ -530,7 +576,7 @@ int main(int argc, char** argv) {
     if (cap_src) {
         vrx::record::Recorder::Config rec3_cfg;
         rec3_cfg.session = session;
-        rec3_cfg.name = "capture";
+        rec3_cfg.name = "local";
         rec3_cfg.codec = vrx::record::Recorder::Codec::MJPEG;
         rec3_cfg.udp_port = kCapPort;
         rec3_cfg.multicast_addr = kCapGroup;

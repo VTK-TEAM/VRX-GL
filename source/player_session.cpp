@@ -1,10 +1,18 @@
 #include "source/player_session.hpp"
+#include "record/snapshot.hpp"
 
+#include <cstdio>
 #include <ctime>
+#include <string>
+#include <sys/stat.h>
+#include <thread>
+#include <vector>
 
 namespace vrx::source {
 namespace {
-const char* kNames[PlayerSession::kChannels] = {"main", "pip", "capture"};
+// ІМЕНА КАНАЛІВ У ФАЙЛАХ. Вони ж потрапляють у назви записів, у журнал і
+// в назви знімків.
+const char* kNames[PlayerSession::kChannels] = {"main", "sub", "local"};
 const PlaybackSource::Codec kCodecs[PlayerSession::kChannels] = {
     PlaybackSource::Codec::H265,     // основний — з борту
     PlaybackSource::Codec::MJPEG,    // PiP
@@ -44,6 +52,12 @@ bool PlayerSession::open(const std::string& journal_path, int64_t t_us) {
     for (int i = 0; i < kChannels; ++i)
         ch_[i]->open(ix_, t_us);
 
+    // Лог телеметрії лежить поруч із журналом і зветься так само. Немає —
+    // не біда: сеанси, записані до появи логу, просто йдуть без телеметрії.
+    tlm_ok_ = tlm_.open(ix_.dir() + "/session_" + ix_.id() + "_tlm.bin");
+    std::fprintf(stderr, "[плеєр] телеметрія сеансу %s: %s\n",
+                 ix_.id().c_str(), tlm_ok_ ? "є" : "немає (старий запис)");
+
     open_ = true;
     position_us_ = t_us;
     last_tick_ns_ = 0;
@@ -60,6 +74,8 @@ void PlayerSession::close() {
     // Інакше довжина лишалась ненульовою, і плеєр при наступному вході
     // показував старий таймлайн замість списку — виглядало так, ніби вибір
     // не працює й уперто вмикається той самий запис.
+    tlm_.close();
+    tlm_ok_ = false;
     ix_ = record::SessionIndex{};
     journal_.clear();
     length_us_.store(0, std::memory_order_relaxed);
@@ -77,6 +93,19 @@ FrameSource* PlayerSession::channel(int i) {
 
 const char* PlayerSession::channel_name(int i) const {
     return (i >= 0 && i < kChannels) ? kNames[i] : "";
+}
+
+int PlayerSession::save_snapshots(const std::string& dir) const {
+    // Мить береться ОДНА на всі канали — та, що зараз на таймлайні.
+    const int64_t wall = start_wall_us_.load(std::memory_order_relaxed) + position_us_;
+
+    std::vector<std::pair<std::string, SourceFrame>> frames;
+    for (int i = 0; i < kChannels; ++i) {
+        if (!ch_[i]) continue;
+        SourceFrame f;
+        if (ch_[i]->snapshot(f)) frames.push_back({kNames[i], std::move(f)});
+    }
+    return record::save_set(std::move(frames), dir, wall);
 }
 
 int64_t PlayerSession::timeline_len_us() const {
@@ -129,6 +158,12 @@ void PlayerSession::tick() {
     }
     last_tick_ns_ = now;
     push_target();
+
+    // Телеметрію ставимо на ту саму мить, що й кадри. Читач сам не робить
+    // нічого, поки номер кадру не змінився, тож виклик щотакту дешевий.
+    if (tlm_ok_)
+        tlm_.fill(start_wall_us_.load(std::memory_order_relaxed) + position_us_,
+                  tlm_store_);
 }
 
 void PlayerSession::seek(int64_t t_us) {

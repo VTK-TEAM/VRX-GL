@@ -98,14 +98,15 @@ render::OverlayImage make_font() {
 //
 // Колір скрізь однаковий, міняється лише прозорість — інакше згладжування
 // підмішує до країв чорне, і знак обростає брудною облямівкою.
-render::OverlayImage make_icon(const char* id, int kind) {
+render::OverlayImage make_icon(const char* id, int kind,
+                               uint8_t cr = 240, uint8_t cg = 240, uint8_t cb = 240) {
     const int S = 64;
     render::OverlayImage img;
     img.id = std::string("player:ic_") + id;
     img.width = img.height = S;
     img.rgba.assign((size_t)S * S * 4, 0);
     for (size_t i = 0; i < img.rgba.size(); i += 4) {
-        img.rgba[i + 0] = img.rgba[i + 1] = img.rgba[i + 2] = 240;
+        img.rgba[i + 0] = cr; img.rgba[i + 1] = cg; img.rgba[i + 2] = cb;
         img.rgba[i + 3] = 0;
     }
     auto on = [&](int x, int y) {
@@ -133,6 +134,23 @@ render::OverlayImage make_icon(const char* id, int kind) {
         case 1: bar(m + S / 12, bw * 2); bar(S - m - S / 12 - bw * 2, bw * 2); break;
         case 2: tri(m, S - m - bw - 2, true); bar(S - m - bw, bw); break;  // кадр уперед
         case 3: bar(m, bw); tri(m + bw + 2, S - m, false); break;          // кадр назад
+        case 4: {                                                          // знімок
+            // Корпус із видошукачем і кружком об'єктива — знак, який
+            // впізнають без підпису.
+            const int top = S / 3, bot = S - S / 5;
+            for (int y = top; y < bot; ++y)
+                for (int x = m - 2; x < S - m + 2; ++x) on(x, y);
+            for (int y = top - S / 10; y < top; ++y)
+                for (int x = S / 2 - S / 10; x < S / 2 + S / 10; ++x) on(x, y);
+            // Об'єктив вирізаємо, а не домальовуємо: на суцільному корпусі
+            // видно саме отвір, і знак читається одразу.
+            const float cx = S * 0.5f, cy = (top + bot) * 0.5f, r = S * 0.13f;
+            for (int y = top; y < bot; ++y)
+                for (int x = 0; x < S; ++x)
+                    if (std::hypot(float(x) - cx, float(y) - cy) < r)
+                        img.rgba[((size_t)y * S + x) * 4 + 3] = 0;
+            break;
+        }
         default: break;
     }
     return img;
@@ -197,7 +215,7 @@ struct Btn {
     int icon = -1;          // індекс картинки; -1 = підпис
 };
 
-enum { kJump = 0, kPlay, kStep, kSpeedDown, kSpeedUp, kSpeedShow };
+enum { kJump = 0, kPlay, kStep, kSpeedDown, kSpeedUp, kSpeedShow, kShot };
 
 // Сходинки швидкості. Не безперервний повзунок: у полі треба влучати, а
 // не підбирати, і шість значень покривають усе — від розгляду по кадрах
@@ -213,7 +231,7 @@ struct PlayerUi::Impl {
 
     std::vector<render::OverlayImage> images;
     int i_track = 0, i_fill = 1, i_knob = 2, i_font = 3, i_pad = 4;
-    int i_play = 5, i_pause = 6, i_next = 7, i_prev = 8;
+    int i_play = 5, i_pause = 6, i_next = 7, i_prev = 8, i_shot = 9, i_shot_ok = 10;
 
     std::atomic<int> rw[kRoles] = {};
     std::atomic<int> rh[kRoles] = {};
@@ -222,10 +240,13 @@ struct PlayerUi::Impl {
     uint64_t seen_btn_clicks = 0;
     uint64_t seen_list_clicks = 0;
     std::function<std::vector<record::SessionBrief>()> sessions_cb;
+    std::function<void(int)> opened_cb;
+    std::function<int(int)> shot_cb;
     std::vector<record::SessionBrief> list;
     int64_t list_at_ns = 0;
     int scroll = 0;
     int64_t seen_wheel = 0;
+    int64_t shot_flash_ns[kRoles] = {0, 0};
     double resume_speed[kRoles] = {1.0, 1.0};   // куди повертатись із паузи
     char speed_lbl[kRoles][8] = {};             // підпис швидкості, живе між кадрами
     bool was_left = false;
@@ -244,6 +265,10 @@ struct PlayerUi::Impl {
         images.push_back(make_icon("pause", 1));
         images.push_back(make_icon("next", 2));
         images.push_back(make_icon("prev", 3));
+        images.push_back(make_icon("shot", 4));
+        // Зелений двійник тієї ж іконки: єдиний спосіб показати натискання,
+        // коли колір у прямокутника задається текстурою, а не окремо.
+        images.push_back(make_icon("shot_ok", 4, 90, 230, 120));
     }
 
     // Розкладка двох рядів кнопок. Один код і для малювання, і для
@@ -264,6 +289,7 @@ struct PlayerUi::Impl {
             {"-",   kSpeedDown, 0, 0,0,0,0},
             {speed_lbl[role], kSpeedShow, 0, 0,0,0,0},
             {"+",   kSpeedUp, 0, 0,0,0,0},
+            {"", kShot, 0, 0,0,0,0, i_shot},
         };
 
         const float th = cfg.btn_text;
@@ -398,6 +424,7 @@ void PlayerUi::draw_list(int role, render::DrawList& out, float sa) {
                     std::fprintf(stderr, "[плеєр] екран %d -> сеанс %s\n",
                                  role, b.id.c_str());
                     d.player[role]->open(b.journal, 0);
+                    if (d.opened_cb) d.opened_cb(role);
                     break;
                 }
             }
@@ -413,6 +440,14 @@ void PlayerUi::draw_list(int role, render::DrawList& out, float sa) {
         d.glyphs(out, session_row(b.power_on_us, b.length_us),
                  x + 0.012f, ry + (rowh - th) * 0.5f, th, cw);
     }
+}
+
+void PlayerUi::set_on_shot(std::function<int(int role)> cb) {
+    impl_->shot_cb = std::move(cb);
+}
+
+void PlayerUi::set_on_opened(std::function<void(int)> cb) {
+    impl_->opened_cb = std::move(cb);
 }
 
 void PlayerUi::set_sessions(std::function<std::vector<record::SessionBrief>()> cb) {
@@ -591,6 +626,12 @@ bool PlayerUi::acquire(int role, render::DrawList& out) {
                         else d.resume_speed[role] = kSpeeds[idx];
                         break;
                     }
+                    case kShot: {
+                        const int n = d.shot_cb ? d.shot_cb(role) : 0;
+                        if (n > 0) d.shot_flash_ns[role] = mono_ns();
+                        std::fprintf(stderr, "[знімок] екран %d: каналів %d\n", role, n);
+                        break;
+                    }
                     default: break;
                 }
                 break;
@@ -640,11 +681,14 @@ bool PlayerUi::acquire(int role, render::DrawList& out) {
     const float btn_cw = d.cfg.btn_text * (float(kCellW) / float(kCellH)) * sa;
     for (const Btn& b : btns) {
         push(b.kind == kSpeedShow ? d.i_track : d.i_pad, b.x, b.y, b.w, b.h);
-        if (b.icon >= 0) {
+        int icon = b.icon;
+        if (b.kind == kShot &&
+            mono_ns() - d.shot_flash_ns[role] < 700000000LL) icon = d.i_shot_ok;
+        if (icon >= 0) {
             // Іконка квадратна, тож по горизонталі стискаємо її під
             // пропорцію екрана — інакше знак поїде вшир.
             const float iw = b.h * sa, ix = b.x + (b.w - iw) * 0.5f;
-            push(b.icon, ix, b.y, iw, b.h);
+            push(icon, ix, b.y, iw, b.h);
             continue;
         }
         const float tw = btn_cw * (float)std::strlen(b.label);

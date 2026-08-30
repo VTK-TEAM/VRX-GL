@@ -807,6 +807,14 @@ void VideoSource::decode_latency(double* mn, double* avg, double* mx) const {
 
 bool VideoSource::has_signal() const { return impl_->signal_ok(); }
 
+bool VideoSource::snapshot(SourceFrame& out) const {
+    std::lock_guard<std::mutex> lk(impl_->mtx);
+    // Найсвіжіший із черги, а як черга порожня — той, що зараз на екрані.
+    if (!impl_->queue.empty()) { out = *impl_->queue.back(); return true; }
+    if (impl_->in_use) { out = *impl_->in_use; return true; }
+    return false;
+}
+
 float VideoSource::frame_aspect() const {
     const int w = impl_->fw.load(std::memory_order_relaxed);
     const int h = impl_->fh.load(std::memory_order_relaxed);

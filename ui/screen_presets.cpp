@@ -246,6 +246,34 @@ render::OverlayImage make_solid_locked() {
 }
 
 // Ручка меню — три смужки. Єдина кнопка, яку видно завжди.
+// Знімок: корпус фотоапарата з видошукачем і вирізаним об'єктивом.
+render::OverlayImage make_shot_button(bool flash) {
+    const int size = 48;
+    render::OverlayImage img;
+    img.id = flash ? "presets:shot1" : "presets:shot0";
+    img.width = img.height = size;
+    img.rgba.assign((size_t)size * size * 4, 0);
+    draw_button_bg(img, false, size);
+
+    const uint8_t r = flash ? 90 : 200, g = flash ? 230 : 210, b = flash ? 120 : 225;
+    const uint8_t a = 235;
+    const int m = size / 5, top = size / 3, bot = size - size / 5;
+    for (int y = top; y < bot; ++y)
+        for (int x = m; x < size - m; ++x) put(img.rgba, size, x, y, r, g, b, a);
+    for (int y = top - size / 10; y < top; ++y)
+        for (int x = size / 2 - size / 10; x < size / 2 + size / 10; ++x)
+            put(img.rgba, size, x, y, r, g, b, a);
+
+    // Об'єктив ВИРІЗАЄМО: на суцільному корпусі видно отвір, і знак
+    // читається одразу, без обведення.
+    const float cx = size * 0.5f, cy = (top + bot) * 0.5f, rad = size * 0.13f;
+    for (int y = top; y < bot; ++y)
+        for (int x = 0; x < size; ++x)
+            if (std::hypot(float(x) - cx, float(y) - cy) < rad)
+                img.rgba[((size_t)y * size + x) * 4 + 3] = 0;
+    return img;
+}
+
 render::OverlayImage make_menu_button(bool open) {
     const int size = 48;
     render::OverlayImage img;
@@ -301,6 +329,8 @@ struct ScreenPresets::Impl {
     int osd_idx = 0;       // +0 OSD вимкнено, +1 увімкнено
     int play_idx = 0;      // +0 ефір (знак "грати"), +1 плеєр (знак "стоп")
     int lock_idx = 0;      // +0 відкритий, +1 закритий
+    int shot_idx = 0;      // +0 звичайна, +1 зелена після натискання
+    int64_t shot_flash_ms[2] = {0, 0};   // kRoles оголошено нижче
     int btn_px = 48;
 
     // Геометрія КОЖНОГО екрана: частки рахуються від свого.
@@ -349,6 +379,7 @@ struct ScreenPresets::Impl {
     // а відкрити сеанс і завести декодери має той, хто ними володіє.
     std::function<void(int role, int mode)> on_mode;
     std::function<bool(int role, float cx, float cy)> blocked;
+    std::function<int(int role)> on_shot;
     uint32_t dirty_mask = 0;
     int64_t last_edit = 0;
 
@@ -404,6 +435,9 @@ struct ScreenPresets::Impl {
         lock_idx = (int)images.size();
         images.push_back(make_lock_button(false));
         images.push_back(make_lock_button(true));
+        shot_idx = (int)images.size();
+        images.push_back(make_shot_button(false));
+        images.push_back(make_shot_button(true));
     }
 
     // Розкладка однієї ролі з уже розібраного json.
@@ -593,10 +627,14 @@ struct ScreenPresets::Impl {
     // екрані), тож і стоять разом. Проміжок лишається далі, перед
     // кнопкою редактора, яка веде зовсім в інше місце — в окрему
     // програму (див. ScreenUi::Config::slot).
-    int osd_button() const { return cfg.preset_count; }
-    int play_button() const { return cfg.preset_count + 1; }
-    int lock_button() const { return cfg.preset_count + 2; }
-    int button_count() const { return cfg.preset_count + 3; }
+    // ПОРЯДОК У РЯДУ: пресети, замок, OSD, знімок, плеєр. Замок одразу за
+    // пресетами, бо він саме про них; далі те, що міняє показ, а плеєр
+    // останній — він міняє екран цілком.
+    int lock_button() const { return cfg.preset_count; }
+    int osd_button()  const { return cfg.preset_count + 1; }
+    int shot_button() const { return cfg.preset_count + 2; }
+    int play_button() const { return cfg.preset_count + 3; }
+    int button_count() const { return cfg.preset_count + 4; }
 
     void button_rect(int role, int b, float* x, float* y, float* w, float* h) const {
         const int W = rw[role].load(), H = rh[role].load();
@@ -643,6 +681,10 @@ void ScreenPresets::add_window(Window w) { impl_->windows.push_back(std::move(w)
 void ScreenPresets::set_telemetry(VtTelemetryStorage* tlm) { impl_->tlm = tlm; }
 
 void ScreenPresets::attach_scene(render::Scene* s) { impl_->scene = s; }
+
+void ScreenPresets::set_on_shot(std::function<int(int)> cb) {
+    impl_->on_shot = std::move(cb);
+}
 
 void ScreenPresets::set_blocked_area(std::function<bool(int, float, float)> cb) {
     impl_->blocked = std::move(cb);
@@ -775,6 +817,13 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
                                      role == render::Scene::kPrimary ? "основний" : "додатковий",
                                      b + 1);
                     }
+                } else if (b == d.shot_button()) {
+                    // Знімок ЕФІРУ. У плеєра своя кнопка й свій зміст:
+                    // там знімається обраний момент запису, тут — те, що
+                    // зараз у повітрі.
+                    const int n = d.on_shot ? d.on_shot(role) : 0;
+                    if (n > 0) d.shot_flash_ms[role] = now_ms();
+                    std::fprintf(stderr, "[екрани] знімок ефіру: каналів %d\n", n);
                 } else if (b == d.lock_button()) {
                     bool& lk = d.locked[d.active_of(role)][role];
                     lk = !lk;
@@ -795,7 +844,7 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
                     std::fprintf(stderr, "[екрани] %s екран -> %s\n",
                                  role == render::Scene::kPrimary ? "основний" : "додатковий",
                                  m == ScreenPresets::kPlayer ? "плеєр" : "ефір");
-                } else {
+                } else if (b == d.osd_button()) {
                     // OSD САМЕ ЦЬОГО ЕКРАНА — того, на якому кнопку
                     // натиснули. Своя кнопка на кожному, перемикати нічого
                     // не треба.
@@ -980,6 +1029,10 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
 
         d.button_rect(role, d.lock_button() + 1, &bx, &by, &bw, &bh);
         push(d.lock_idx + (d.locked[d.active_of(role)][role] ? 1 : 0), bx, by, bw, bh);
+
+        d.button_rect(role, d.shot_button() + 1, &bx, &by, &bw, &bh);
+        push(d.shot_idx + (now_ms() - d.shot_flash_ms[role] < 700 ? 1 : 0),
+             bx, by, bw, bh);
     }
     return true;
 }
