@@ -474,11 +474,13 @@ struct Osd::Impl {
     // Екран у режимі плеєра бере значення не з ефіру, а із записаного логу
     // — і це єдина відмінність. Розкладка, іконки, правила приховування,
     // кнопка вимикання лишаються тими самими, бо шлях малювання один.
-    VtTelemetryStorage* pb[kRoles] = {nullptr, nullptr};
+    // Атомарний: пише потік показу (коли обрано сеанс), читає потік OSD.
+    std::atomic<VtTelemetryStorage*> pb[kRoles] = {nullptr, nullptr};
 
     bool fetch_value(const OsdElementConfig& el, float* out, int role) {
-        VtTelemetryStorage& src = (role >= 0 && role < kRoles && pb[role])
-                                      ? *pb[role] : storage;
+        VtTelemetryStorage* p = (role >= 0 && role < kRoles)
+                                    ? pb[role].load(std::memory_order_acquire) : nullptr;
+        VtTelemetryStorage& src = p ? *p : storage;
         return vt_fetch_channel_value(src, el.data_channel,
                                       el.channel_meta == OsdChannelMeta::AGE_S,
                                       el.channel_meta == OsdChannelMeta::RATE_HZ,
@@ -733,7 +735,8 @@ struct Osd::Impl {
         //
         // Робиться ПІСЛЯ збирання, одним проходом по готових прямокутниках:
         // так під це не треба чіпати жоден із типів елементів окремо.
-        if (role >= 0 && role < kRoles && pb[role] && cfg.playback_squeeze < 1.0f) {
+        if (role >= 0 && role < kRoles &&
+            pb[role].load(std::memory_order_acquire) && cfg.playback_squeeze < 1.0f) {
             const float k = cfg.playback_squeeze;
             for (auto& q : dl.quads)
                 for (int i = 0; i < 4; ++i) q.y[i] *= k;
@@ -875,7 +878,7 @@ VtTelemetryStorage& Osd::storage() { return impl_->storage; }
 
 void Osd::set_playback_storage(int role, VtTelemetryStorage* s) {
     if (role < 0 || role >= Impl::kRoles) return;
-    impl_->pb[role] = s;
+    impl_->pb[role].store(s, std::memory_order_release);
 }
 
 void Osd::set_notice(const std::string& msg) {

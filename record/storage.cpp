@@ -18,6 +18,7 @@
 #include <sstream>
 #include <map>
 #include <mutex>
+#include <chrono>
 #include <thread>
 
 namespace vrx::record {
@@ -149,6 +150,7 @@ struct Storage::Impl {
     std::thread sync_thread;
     std::mutex sync_mtx;
     std::condition_variable sync_cv;
+    std::atomic<bool> sync_exited{false};   // потік скидання дійшов до кінця
     bool sync_requested = false;
     std::atomic<bool> sync_busy{false};
 
@@ -193,10 +195,31 @@ bool Storage::start() {
 void Storage::stop() {
     if (!impl_->running.exchange(false)) return;
     impl_->sync_cv.notify_all();
-    // Потік опитування може висіти в D-стані на мертвому носії. join()
-    // тоді не повернеться ніколи, тож потік відпускаємо — а стан лишиться
-    // живим доти, доки живий він сам.
-    if (impl_->sync_thread.joinable()) impl_->sync_thread.join();
+
+    // ЧЕКАЄМО ОБМЕЖЕНО, А НЕ ВІЧНО.
+    //
+    // Тут була помилка, і саме в тому місці, де її найважче помітити:
+    // відпускався потік ОПИТУВАННЯ, а join() стояв на потоці СКИДАННЯ —
+    // тобто рівно на тому, що зависає в syncfs() на щойно висмикнутій
+    // флешці. Виглядало правильно, читалось правильно, а закриття станції
+    // не поверталось ніколи.
+    //
+    // Даємо дві секунди на штатний вихід; не вийшов — відпускаємо. Impl
+    // тримається спільним вказівником, тож відпущений потік працює з живим
+    // об'єктом, а помирає разом із процесом.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (!impl_->sync_exited.load(std::memory_order_acquire) &&
+           std::chrono::steady_clock::now() < deadline) {
+        impl_->sync_cv.notify_all();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    if (impl_->sync_exited.load(std::memory_order_acquire)) {
+        if (impl_->sync_thread.joinable()) impl_->sync_thread.join();
+    } else {
+        std::fprintf(stderr, "[носій] скидання не завершилось за 2 с —"
+                             " відпускаю потік\n");
+        if (impl_->sync_thread.joinable()) impl_->sync_thread.detach();
+    }
     if (impl_->probe_thread.joinable()) impl_->probe_thread.detach();
 }
 
@@ -480,6 +503,7 @@ void Storage::Impl::sync_loop() {
                  (long long)took, dirty_before, VRX_RLOG_DIRTY());
         sync_busy.store(false, std::memory_order_release);
     }
+    sync_exited.store(true, std::memory_order_release);
 }
 
 std::string Storage::make_path(const std::string& stream_name,

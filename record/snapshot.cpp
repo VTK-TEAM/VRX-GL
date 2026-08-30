@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <ctime>
 #include <sys/stat.h>
+#include <atomic>
 #include <thread>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -141,8 +142,17 @@ int save_set(std::vector<std::pair<std::string, source::SourceFrame>> frames,
         f.first = path;
     }
 
-    // Кодування — десятки мілісекунд на кадр, тож окремий потік. Кадри
-    // тримають свої буфери живими самі, тож віддати їх туди безпечно.
+    // ОДИН ЗНІМОК ЗА РАЗ. Кодування триває десятки мілісекунд на кадр, і
+    // кожне натискання створювало власний потік — часте тиснення давало їх
+    // скільки завгодно, а разом із ними стільки ж змапованих буферів
+    // декодера. Поки попередній не дописався, новий не беремо; кнопка тоді
+    // не блимне, і це чесна відповідь.
+    static std::atomic<bool> busy{false};
+    if (busy.exchange(true)) {
+        std::fprintf(stderr, "[знімок] попередній ще пишеться\n");
+        return 0;
+    }
+
     const int n = (int)frames.size();
     std::thread([frames = std::move(frames)]() mutable {
         for (auto& f : frames) {
@@ -150,6 +160,7 @@ int save_set(std::vector<std::pair<std::string, source::SourceFrame>> frames,
             std::fprintf(stderr, "[знімок] %s%s\n", f.first.c_str(),
                          ok ? "" : " — НЕ ЗБЕРЕГЛОСЬ");
         }
+        busy.store(false);
     }).detach();
     return n;
 }
