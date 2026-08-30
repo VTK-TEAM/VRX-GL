@@ -27,7 +27,37 @@ int64_t now_ms() {
     return ts.tv_sec * 1000LL + ts.tv_nsec / 1000000;
 }
 
+int64_t now_mono_us() {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000000LL + ts.tv_nsec / 1000;
+}
+
+int64_t now_wall_us() {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return ts.tv_sec * 1000000LL + ts.tv_nsec / 1000;
+}
+
+// Час рівно в тому ж вигляді, що й мітка Matroska DateUTC: UTC,
+// мікросекунди. Формат однаковий НАВМИСНО — щоб журнал і заголовок
+// самого файлу можна було звірити очима, без перерахунків.
+std::string iso_utc(int64_t us) {
+    const time_t sec = (time_t)(us / 1000000);
+    struct tm tm {};
+    gmtime_r(&sec, &tm);
+    char buf[64];
+    const size_t n = strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", &tm);
+    std::snprintf(buf + n, sizeof(buf) - n, ".%06lldZ", (long long)(us % 1000000));
+    return buf;
+}
+
 } // namespace
+
+// Крок мітки звірки. П'ять секунд — той самий порядок, що й обіцянка
+// "±5 с" на втрату при висмикуванні: дрібніше не має сенсу, бо стільки
+// даних усе одно може не дійти до носія.
+constexpr int64_t kMarkMs = 5000;
 
 struct Recorder::Impl {
     Config cfg;
@@ -99,6 +129,9 @@ struct Recorder::Impl {
 
     // Поки не пройшов перший опорний кадр, буфери відкидаються.
     std::atomic<bool> seen_keyframe{false};
+    std::atomic<int64_t> last_pts_ns{-1};   // PTS останнього кадру, -1 = ще не було
+    int idx_fd = -1;                        // журнал сеансу, відкритий на дозапис
+    int64_t last_mark_ms = 0;
 
     uint32_t drive_generation = 0;
     int64_t last_sync_ms = 0;
@@ -137,6 +170,30 @@ struct Recorder::Impl {
     // заважає. Дані не розбираємо — питання лише "чи летить".
     int probe_fd = -1;
     int64_t last_packet_ms = 0;
+
+    // ЖУРНАЛ СЕАНСУ — те, чого в контейнері немає й не буде.
+    //
+    // Заміряно: Matroska несе DateUTC із мікросекундною точністю, і мітка
+    // ставиться саме на ПЕРШОМУ КАДРІ (перевірено дослідом із затриманим
+    // кадром — мітка з'їхала рівно на затримку). Тобто "коли почався" файл
+    // знає сам.
+    //
+    // А трьох інших речей у ньому немає ЧЕРЕЗ streamable=true, і це не
+    // недогляд, а свідома ціна за живучість: ні тривалості, ні таблиці
+    // переходів, ні причини обриву — навіть у штатно закритому файлі
+    // (перевірено: Duration N/A, Cues відсутні). Без них шматки не
+    // складаються в таймлайн: невідомо, де кінець куска й чи був провал.
+    //
+    // Тому поруч лягає index.jsonl — рядок на файл, лише дописуванням.
+    // Вирвана флешка псує щонайбільше ОСТАННІЙ рядок, а не весь журнал;
+    // файл без рядка все одно читається — його початок є в заголовку.
+    //
+    // Монотонний час пишемо ПОРУЧ із настінним навмисне: годинник станції
+    // виставляють руками, інтернету в полі немає. Поправлять його між
+    // двома файлами — настінні мітки розійдуться, монотонні ні.
+    std::string cur_path;
+    int64_t cur_open_wall_us = 0;
+    int64_t cur_open_mono_us = 0;
 
     Impl(Config c, Storage& s) : cfg(std::move(c)), storage(s) {}
 
@@ -281,6 +338,12 @@ struct Recorder::Impl {
 
         d->last_buffer_ms.store(now_ms(), std::memory_order_relaxed);
 
+        // PTS саме звідси, з виходу парсера: далі буфер іде просто в
+        // муксер, тож ця мітка й опиниться в контейнері. Знімати її після
+        // муксера було б пізно — там уже блоки, а не кадри.
+        if (GST_BUFFER_PTS_IS_VALID(buf))
+            d->last_pts_ns.store((int64_t)GST_BUFFER_PTS(buf), std::memory_order_relaxed);
+
         if (d->cfg.start_on_keyframe && !d->seen_keyframe.load(std::memory_order_acquire)) {
             if (GST_BUFFER_FLAG_IS_SET(buf, GST_BUFFER_FLAG_DELTA_UNIT)) {
                 return GST_PAD_PROBE_DROP;      // ще не опорний
@@ -319,6 +382,109 @@ struct Recorder::Impl {
             return;
         }
         reserved = want;
+    }
+
+    std::string cur_name() const {
+        const size_t slash = cur_path.rfind('/');
+        return slash == std::string::npos ? cur_path : cur_path.substr(slash + 1);
+    }
+
+    // Журнал тримається ВІДКРИТИМ на весь файл, а не відкривається на
+    // кожен рядок.
+    //
+    // Причина конкретна: носій змонтовано з flush (так робить udisks для
+    // знімних), і vfat при закритті файлу женеться виштовхнути його на
+    // диск. Відкривати-закривати журнал тричі на п'ять секунд означало б
+    // саджати блокуючий запис у цикл рекордера — рівно та помилка, через
+    // яку sync_file_range колись з'їв опитування проби, і рекордер вирішив,
+    // що сигнал зник.
+    //
+    // O_APPEND і один write() на рядок: ядро ставить зсув під замком
+    // іноду, тож три канали дописують в один файл, не перемішуючи рядків.
+    //
+    // fsync не робимо навмисно — на FAT32 він чіпає таблицю розміщення й
+    // каталог, тобто блокує саме тоді, коли носій і так захлинається.
+    // Рядок лягає в кеш і виходить із загальним скиданням, налаштованим на
+    // частку секунди; для обіцянки "±5 с" цього вистачає.
+    void index_write(const char* line) {
+        if (idx_fd < 0) return;
+        const int64_t t0 = now_ms();
+        const ssize_t n = ::write(idx_fd, line, std::strlen(line));
+        const int64_t took = now_ms() - t0;
+        if (n < 0) { ::close(idx_fd); idx_fd = -1; return; }
+        // Не «про всяк випадок»: якщо дозапис 120 байтів колись почне
+        // блокувати, це треба побачити в лозі, а не здогадуватись.
+        if (took > 200)
+            std::fprintf(stderr, "[запис %s] журнал: рядок писався %lld мс\n",
+                         cfg.name.c_str(), (long long)took);
+    }
+
+    // ДВА РЯДКИ НА ФАЙЛ, А НЕ ОДИН ПРИ ЗАКРИТТІ.
+    //
+    // Спокуса написати один підсумковий рядок, коли все відомо, розбивається
+    // об єдиний сценарій, заради якого весь цей запис і будувався: флешку
+    // висмикують. Висмикування — це і є "не закрився", тож підсумкового
+    // рядка не буде саме про той файл, який обірвався, тобто про найцікавіший.
+    //
+    // Тому рядок "open" лягає на носій одразу, а "close" його доповнює.
+    // Читач зшиває їх за іменем файлу; файл із "open" без "close" — це
+    // обірваний запис, і це видно, а не здогадується.
+    void index_open() {
+        const size_t slash = cur_path.rfind('/');
+        if (slash == std::string::npos) return;
+        if (idx_fd < 0)
+            idx_fd = ::open((cur_path.substr(0, slash) + "/index.jsonl").c_str(),
+                            O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+
+        char buf[512];
+        std::snprintf(buf, sizeof(buf),
+            "{\"event\":\"open\",\"file\":\"%s\",\"channel\":\"%s\","
+            "\"opened\":\"%s\",\"opened_mono_us\":%lld}\n",
+            cur_name().c_str(), cfg.name.c_str(),
+            iso_utc(cur_open_wall_us).c_str(), (long long)cur_open_mono_us);
+        index_write(buf);
+    }
+
+    // МІТКА ЗВІРКИ, раз на п'ять секунд.
+    //
+    // Одного якоря на початку файлу мало. Файли перевідкриваються, потоки
+    // зникають і повертаються, і кожен новий файл починає відлік з нуля —
+    // а разом усе це має скластися в один таймлайн. Мітка каже просту річ:
+    // "у цю настінну мить у цьому файлі був ось такий PTS і ось стільки
+    // байтів". Маючи такі пари, програвач вирівнює точно, а не за
+    // припущенням, що PTS і годинник не розійшлись.
+    //
+    // Байти тут не для звіту: у файлі, обірваному висмикнутою флешкою,
+    // саме вони кажуть, доки запис був цілим, — контейнер цього не знає,
+    // бо тривалості в ньому немає.
+    void index_mark() {
+        if (idx_fd < 0 || cur_path.empty()) return;
+        const int64_t pts = last_pts_ns.load(std::memory_order_relaxed);
+        char buf[512];
+        std::snprintf(buf, sizeof(buf),
+            "{\"event\":\"mark\",\"file\":\"%s\",\"channel\":\"%s\","
+            "\"wall\":\"%s\",\"mono_us\":%lld,\"pts_s\":%.3f,\"bytes\":%llu}\n",
+            cur_name().c_str(), cfg.name.c_str(),
+            iso_utc(now_wall_us()).c_str(), (long long)now_mono_us(),
+            pts < 0 ? -1.0 : pts / 1e9,
+            (unsigned long long)file_bytes.load(std::memory_order_relaxed));
+        index_write(buf);
+    }
+
+    void index_close(long long bytes, const char* why) {
+        if (cur_path.empty()) return;
+        char buf[512];
+        std::snprintf(buf, sizeof(buf),
+            "{\"event\":\"close\",\"file\":\"%s\",\"channel\":\"%s\","
+            "\"closed\":\"%s\",\"duration_s\":%.3f,\"bytes\":%lld,"
+            "\"reason\":\"%s\"}\n",
+            cur_name().c_str(), cfg.name.c_str(),
+            iso_utc(now_wall_us()).c_str(),
+            (now_mono_us() - cur_open_mono_us) / 1e6,
+            bytes, why ? why : "");
+        index_write(buf);
+        if (idx_fd >= 0) { ::close(idx_fd); idx_fd = -1; }
+        cur_path.clear();
     }
 
     bool open_file() {
@@ -420,6 +586,16 @@ struct Recorder::Impl {
             st.bytes = 0;
             st.files++;
         }
+        // Мітка часу знімається тут, а не на вході в open_file: між ними
+        // лежить mkdir на носії, який може блокуватись надовго, і той час
+        // до файлу стосунку не має.
+        cur_path = path;
+        cur_open_wall_us = now_wall_us();
+        cur_open_mono_us = now_mono_us();
+        last_pts_ns.store(-1, std::memory_order_relaxed);
+        last_mark_ms = now_ms();
+        index_open();
+
         std::fprintf(stderr, "[запис %s] почав: %s\n", cfg.name.c_str(), path.c_str());
         VRX_RLOG(cfg.name.c_str(), "ВІДКРИВ %s (файл №%u, підняття %lld мс)",
                  path.c_str(), st.files, (long long)(now_ms() - open_t0));
@@ -549,6 +725,8 @@ struct Recorder::Impl {
                  (long long)(now_ms() - close_t0), wrote / 1e6, VRX_RLOG_DIRTY(),
                  fail_streak);
 
+        index_close((long long)wrote, why);
+
         // Просимо скинути кеші одразу: файл щойно закрито, і саме зараз
         // втрата була б найприкрішою.
         storage.request_sync();
@@ -582,6 +760,11 @@ struct Recorder::Impl {
             }
             poll_probe();
             reserve_more();     // тримаємо резерв попереду записаного
+
+            if (pipeline && now - last_mark_ms >= kMarkMs) {
+                last_mark_ms = now;
+                index_mark();
+            }
 
             const DriveState drive = storage.state();
 
