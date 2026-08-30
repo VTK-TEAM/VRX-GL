@@ -72,6 +72,7 @@ private:
 
     void request_delete_confirm();
     void request_save_confirm();
+    void update_screen_button();
     void show_confirm(const std::string& text, std::function<void()> on_yes, Mode confirm_mode);
 
     void show_keyboard_for(TextField* field, std::function<void(const std::string&)> commit);
@@ -99,7 +100,15 @@ private:
     // --- Дані/рендер OSD ---
     AtlasFont atlas_font_;
     std::unique_ptr<ImageCache> image_cache_;
-    OsdDocument document_;
+    // ДВІ РОЗКЛАДКИ ТЕЛЕМЕТРІЇ — окремо для основного й додаткового
+    // екрана станції. Редагується та, що обрана перемикачем; збереження
+    // пише ОБИДВІ, бо вони одна пара й розходитись їм нема сенсу.
+    static constexpr int kRoles = 2;
+    OsdDocument document_[kRoles];
+    int edit_role_ = 0;                 // 0 основний, 1 додатковий
+
+    OsdDocument& doc() { return document_[edit_role_]; }
+    const OsdDocument& doc() const { return document_[edit_role_]; }
     OsdCatalog catalog_;
     IconCatalog icon_catalog_; // osd_icon_names.json — живить ICONS-режим keyboard_
     std::unique_ptr<CanvasRenderer> canvas_renderer_;
@@ -119,6 +128,7 @@ private:
 
     // --- Хром верхнього рівня ---
     Button save_button_;
+    Button screen_button_;
     Button exit_button_;
     Button add_button_;
     Button edit_button_;

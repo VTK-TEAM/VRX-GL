@@ -7,6 +7,13 @@
 
 namespace osdedit {
 
+namespace {
+// Дві розкладки телеметрії: основний екран станції й додатковий.
+constexpr const char* kPrimaryConfig   = "osd_config.json";
+constexpr const char* kSecondaryConfig = "osd_config2.json";
+} // namespace
+
+
 EditorApp::~EditorApp() {
     if (telemetry_running_) {
         telemetry_listener_.stop();
@@ -143,11 +150,26 @@ bool EditorApp::load_assets(const std::string& background_image_path) {
         return false;
     }
 
+    // ОСНОВНА розкладка — той самий файл, що й був. Її наявність
+    // обов'язкова: без неї редагувати нічого.
     try {
-        document_.load("osd_config.json");
+        document_[0].load(kPrimaryConfig);
     } catch (const std::exception& e) {
-        std::fprintf(stderr, "osd_config.json: %s\n", e.what());
+        std::fprintf(stderr, "%s: %s\n", kPrimaryConfig, e.what());
         return false;
+    }
+
+    // ДОДАТКОВА — окремий файл. Якщо його ще немає (а на станціях, які
+    // жили з одним екраном, його немає завжди), беремо КОПІЮ основної,
+    // а не порожнечу: інакше оператор, увімкнувши OSD на другому екрані,
+    // побачив би чисте поле й вирішив, що зламалось. Файл з'явиться на
+    // диску при першому ж збереженні.
+    try {
+        document_[1].load(kSecondaryConfig);
+    } catch (const std::exception&) {
+        document_[1] = document_[0];
+        document_[1].set_path(kSecondaryConfig);
+        std::fprintf(stderr, "%s не знайдено — почав із копії основної\n", kSecondaryConfig);
     }
 
     try {
@@ -242,7 +264,7 @@ void EditorApp::layout_chrome() {
     // край картинки, але цей край майже завжди порожній, а перекладати їх
     // кудись означало б знову забирати місце.
     const int bw = 92, bh = 34, gap = 8, x = 10;
-    const int total = bh * 3 + gap * 2;
+    const int total = bh * 4 + gap * 3;
     int y = (window_h_ - total) / 2;
     if (y < 8) y = 8;
 
@@ -260,7 +282,21 @@ void EditorApp::layout_chrome() {
     // ВИХІД. Раніше його не було взагалі: редактор жив у вікні з рамкою,
     // і закривали його хрестиком віконного менеджера. На станції без
     // робочого стола ні рамки, ні менеджера немає — вийти було б нічим.
-    exit_button_.bounds = SDL_Rect{x, y + (bh + gap) * 2, bw, bh};
+    // ПЕРЕМИКАЧ ЕКРАНА. Міняє редаговану розкладку НА ГАРЯЧУ: полотно
+    // одразу показує телеметрію того екрана, який обрано. Обидві живуть
+    // у пам'яті, тож перемикання нічого не читає з диска й не втрачає
+    // незбережених правок.
+    screen_button_.bounds = SDL_Rect{x, y + (bh + gap) * 2, bw, bh};
+    screen_button_.on_click = [this]() {
+        edit_role_ = (edit_role_ + 1) % kRoles;
+        selected_key_.clear();          // вибір належав іншій розкладці
+        update_screen_button();
+        set_status(edit_role_ == 0 ? "Редагую ОСНОВНИЙ екран"
+                                   : "Редагую ДОДАТКОВИЙ екран", false);
+    };
+    update_screen_button();
+
+    exit_button_.bounds = SDL_Rect{x, y + (bh + gap) * 3, bw, bh};
     exit_button_.label = "Вихід";
     exit_button_.bg_color = ui_color::DANGER;
     exit_button_.on_click = [this]() { running_ = false; };
@@ -378,6 +414,7 @@ void EditorApp::handle_mouse_down(int x, int y) {
 
     if (save_button_.handle_mouse_down(x, y)) return;
     if (add_button_.handle_mouse_down(x, y)) return;
+    if (screen_button_.handle_mouse_down(x, y)) return;
     if (exit_button_.handle_mouse_down(x, y)) return;
 
     if (mode_ == Mode::SELECTED) {
@@ -410,7 +447,7 @@ void EditorApp::deselect() {
 }
 
 void EditorApp::start_drag(int mouse_x, int mouse_y) {
-    OsdElement* el = document_.find_by_key(selected_key_);
+    OsdElement* el = doc().find_by_key(selected_key_);
     if (!el) { mode_ = Mode::IDLE; return; }
     int ex, ey;
     canvas_renderer_->canvas_norm_to_screen(el->l(), el->t(), &ex, &ey);
@@ -421,7 +458,7 @@ void EditorApp::start_drag(int mouse_x, int mouse_y) {
 
 void EditorApp::update_drag(int mouse_x, int mouse_y) {
     if (mode_ != Mode::DRAGGING) return;
-    OsdElement* el = document_.find_by_key(selected_key_);
+    OsdElement* el = doc().find_by_key(selected_key_);
     if (!el) return;
     SDL_Rect cr = canvas_renderer_->canvas_rect();
     if (cr.w <= 0 || cr.h <= 0) return;
@@ -447,7 +484,7 @@ void EditorApp::end_drag() {
 }
 
 void EditorApp::open_edit_dialog() {
-    OsdElement* el = document_.find_by_key(selected_key_);
+    OsdElement* el = doc().find_by_key(selected_key_);
     if (!el) { deselect(); return; }
     SDL_Rect area{window_w_ / 2 - 320, 50, 640, window_h_ - 100};
     edit_dialog_.build(
@@ -564,12 +601,12 @@ void EditorApp::add_element_from_catalog(int catalog_index) {
     const auto& entries = catalog_.entries();
     if (catalog_index < 0 || catalog_index >= static_cast<int>(entries.size())) return;
     const auto& entry = entries[static_cast<size_t>(catalog_index)];
-    std::string key = document_.make_unique_key(entry.key_prefix);
+    std::string key = doc().make_unique_key(entry.key_prefix);
     // Новий елемент завжди в центрі канви (0.5, 0.5) — користувач одразу
     // перетягне його мишею, куди треба; так простіше, ніж вгадувати
     // позицію кліку по кнопці "+" (та в кутку, а не на канві).
     OsdElement el = OsdElement::create_from_template(key, entry.tpl, 0.5f, 0.5f);
-    document_.add(std::move(el));
+    doc().add(std::move(el));
     select_element(key);
     set_status("Додано: " + key, false);
 }
@@ -578,21 +615,43 @@ void EditorApp::request_delete_confirm() {
     std::string key = selected_key_;
     show_confirm("Точно видалити елемент \"" + key + "\"?",
                  [this, key]() {
-                     document_.remove_by_key(key);
+                     doc().remove_by_key(key);
                      deselect();
                      set_status("Видалено: " + key, false);
                  },
                  Mode::CONFIRM_DELETE);
 }
 
+// Підпис і колір кнопки показують, ЯКУ розкладку зараз видно на полотні.
+void EditorApp::update_screen_button() {
+    screen_button_.label = (edit_role_ == 0) ? "Екран: ОСН" : "Екран: ДОД";
+    screen_button_.bg_color = (edit_role_ == 0) ? ui_color::ACCENT : ui_color::WARNING;
+}
+
 void EditorApp::request_save_confirm() {
-    show_confirm("Зберегти зміни в \"" + document_.path() + "\"?",
+    // ЗБЕРІГАЄМО ОБИДВІ РОЗКЛАДКИ ОДРАЗУ.
+    //
+    // Вони одна пара: перемикач між екранами діє на гарячу, і людина
+    // цілком може поправити основний, перемкнутись, поправити додатковий
+    // — і натиснути "Зберегти" один раз. Питати окремо про кожен файл
+    // означало б або губити половину правок, або двічі перепитувати.
+    show_confirm("Зберегти обидві розкладки — основну й додаткову?",
                  [this]() {
-                     try {
-                         document_.save();
-                         set_status("Збережено: " + document_.path(), false);
-                     } catch (const std::exception& e) {
-                         set_status(std::string("Помилка збереження: ") + e.what(), true);
+                     std::string done, failed;
+                     for (int r = 0; r < kRoles; ++r) {
+                         try {
+                             document_[r].save();
+                             if (!done.empty()) done += ", ";
+                             done += document_[r].path();
+                         } catch (const std::exception& e) {
+                             if (!failed.empty()) failed += "; ";
+                             failed += document_[r].path() + ": " + e.what();
+                         }
+                     }
+                     if (failed.empty()) {
+                         set_status("Збережено: " + done, false);
+                     } else {
+                         set_status("Помилка збереження: " + failed, true);
                      }
                  },
                  Mode::CONFIRM_SAVE);
@@ -708,7 +767,7 @@ void EditorApp::render_frame() {
         }
     }
 
-    last_hits_ = canvas_renderer_->render(renderer_, document_.elements(), selected_key_, *image_cache_, &telemetry_storage_);
+    last_hits_ = canvas_renderer_->render(renderer_, doc().elements(), selected_key_, *image_cache_, &telemetry_storage_);
 
     if ((mode_ == Mode::SELECTED || mode_ == Mode::DRAGGING) && !selected_key_.empty()) {
         for (auto& h : last_hits_) {
@@ -744,6 +803,7 @@ void EditorApp::render_frame() {
 
     save_button_.draw(renderer_, ui_font_);
     add_button_.draw(renderer_, ui_font_);
+    screen_button_.draw(renderer_, ui_font_);
     exit_button_.draw(renderer_, ui_font_);
 
     if (mode_ == Mode::SELECTED) {

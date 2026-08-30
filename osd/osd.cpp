@@ -48,9 +48,24 @@ int64_t now_ns() {
 struct Osd::Impl {
     Config cfg;
 
-    // Кадр, у частках якого віддаються квади. Ставить рендерер.
-    std::atomic<int> frame_w{0};
-    std::atomic<int> frame_h{0};
+    // РОЗКЛАДКА Й ЗНІМОК — НА КОЖНУ РОЛЬ ОКРЕМО.
+    //
+    // Розмір гліфа рахується від висоти кадру, тож один список квадів на
+    // два екрани різної висоти дав би на другому чужий масштаб тексту.
+    // Плюс за ТЗ телеметрія на екранах потрібна різна: основний дивиться
+    // пілот, додатковий — оператор.
+    //
+    // Спільними лишаються атлас, гліфи, картинки й саме сховище
+    // телеметрії: дані одні, різниться лише те, що з них показувати.
+    static constexpr int kRoles = 2;
+    struct RoleView {
+        std::vector<OsdElementConfig> elements;
+        std::atomic<int> fw{0}, fh{0};
+        float glyph_scale = 0.0f;    // 0, а не 1: щоб перший рядок у лог таки надрукувався
+        render::DrawList ready;
+        bool fresh = false;
+    };
+    RoleView views[kRoles];
 
     // Текстури: [0] завжди атлас, далі окремі картинки барів і горизонту.
     std::vector<render::OverlayImage> images;
@@ -58,7 +73,6 @@ struct Osd::Impl {
     int atlas_w = 0, atlas_h = 0;
 
     std::vector<OsdGlyphInfo> glyphs;
-    std::vector<OsdElementConfig> elements;
 
     // Потік 1: приймач телеметрії. Свій сокет, свій потік — усе всередині.
     VtTelemetryStorage storage;
@@ -72,19 +86,14 @@ struct Osd::Impl {
 
     // Опублікований знімок. Пишe збирач, читає рендерер.
     mutable std::mutex out_mtx;
-    render::DrawList ready;
-    static constexpr int kRoles = 2;
-    bool fresh[kRoles] = {false, false};
+
     uint64_t serial = 0;
 
     mutable std::mutex st_mtx;
     OsdStats st{};
 
-    // Масштаб гліфів для поточного екрана. Рахується на початку build(),
-    // читається під час неї ж — тобто живе в одному потоці. Нуль на
-    // старті, а не одиниця: інакше на цільовому екрані, де множник рівно
-    // 1.0, перший рядок у лог не надрукувався б, і перевірити масштаб
-    // можна було б лише на нецільовому.
+    // Масштаб гліфів РОЛІ, яку зараз збирає build(). Живе в одному
+    // потоці, тож поле, а не аргумент через увесь ланцюжок emit_*.
     float glyph_scale = 0.0f;
 
     // ПРИМУСОВИЙ НАПИС. Поки не порожній, збирач малює ЛИШЕ його по
@@ -176,10 +185,10 @@ struct Osd::Impl {
         return true;
     }
 
-    bool load_layout() {
-        std::ifstream f(cfg.config_json);
+    bool load_layout(const std::string& path, int role) {
+        std::ifstream f(path);
         if (!f.is_open()) {
-            std::fprintf(stderr, "[osd] не відкрився %s\n", cfg.config_json.c_str());
+            std::fprintf(stderr, "[osd] не відкрився %s\n", path.c_str());
             return false;
         }
         nlohmann::json j;
@@ -262,14 +271,14 @@ struct Osd::Impl {
                     }
                 }
 
-                elements.push_back(std::move(el));
+                views[role].elements.push_back(std::move(el));
             }
         } catch (const nlohmann::json::exception& e) {
-            std::fprintf(stderr, "[osd] помилка розбору %s: %s\n",
-                         cfg.config_json.c_str(), e.what());
+            std::fprintf(stderr, "[osd] помилка розбору %s: %s\n", path.c_str(), e.what());
             return false;
         }
-        std::fprintf(stderr, "[osd] елементів layout %zu\n", elements.size());
+        std::fprintf(stderr, "[osd] %s: елементів %zu (%s екран)\n", path.c_str(),
+                     views[role].elements.size(), role == 0 ? "основний" : "додатковий");
         return true;
     }
 
@@ -568,20 +577,27 @@ struct Osd::Impl {
 
     // --- збірка одного знімка ---
 
-    void build() {
-        const int fw = frame_w.load(std::memory_order_relaxed);
-        const int fh = frame_h.load(std::memory_order_relaxed);
+    void build_all() {
+        for (int r = 0; r < kRoles; ++r) build(r);
+    }
+
+    void build(int role) {
+        RoleView& v = views[role];
+        const int fw = v.fw.load(std::memory_order_relaxed);
+        const int fh = v.fh.load(std::memory_order_relaxed);
         if (fw <= 0 || fh <= 0) return;      // рендерер ще не сказав геометрію
+        if (v.elements.empty()) return;      // цій ролі показувати нічого
 
         const float scale = (cfg.layout_ref_height > 0)
                           ? float(fh) / float(cfg.layout_ref_height) : 1.0f;
-        if (scale != glyph_scale) {
+        glyph_scale = scale;
+        if (scale != v.glyph_scale) {
+            v.glyph_scale = scale;
             // Рядок один на зміну геометрії. Без нього перевірити масштаб
             // можна лише оком і лише маючи другий монітор.
             std::fprintf(stderr, "[osd] екран %dx%d -> масштаб гліфів %.3f"
                          " (розкладку робили на висоті %d)\n",
                          fw, fh, scale, cfg.layout_ref_height);
-            glyph_scale = scale;
         }
 
         const int64_t t0 = now_ns();
@@ -589,7 +605,7 @@ struct Osd::Impl {
         render::DrawList dl;
         dl.quads.reserve(512);
 
-        for (const auto& el : elements) {
+        for (const auto& el : v.elements) {
             float x = el.l;
             const float y = el.t;
 
@@ -701,13 +717,13 @@ struct Osd::Impl {
         {
             std::lock_guard<std::mutex> lk(out_mtx);
             dl.serial = ++serial;
-            ready = std::move(dl);
-            for (int r = 0; r < Impl::kRoles; ++r) fresh[r] = true;
+            v.ready = std::move(dl);
+            v.fresh = true;
         }
         {
             std::lock_guard<std::mutex> lk(st_mtx);
             st.builds++;
-            st.quads = ready.quads.size();
+            if (role == 0) st.quads = v.ready.quads.size();
             st.build_ms = st.build_ms == 0.0 ? ms : st.build_ms * 0.9 + ms * 0.1;
             st.packets = listener.packet_count();
             st.crc_fails = listener.crc_fail_count();
@@ -743,7 +759,7 @@ struct Osd::Impl {
     void loop() {
         while (running.load(std::memory_order_relaxed)) {
             try_listener(now_ns() / 1000000);
-            build();
+            build_all();
             std::unique_lock<std::mutex> lk(wake_mtx);
             wake_cv.wait_for(lk, std::chrono::milliseconds(cfg.rebuild_ms),
                              [this] { return !running.load(std::memory_order_relaxed); });
@@ -760,7 +776,18 @@ Osd::~Osd() { stop(); }
 bool Osd::init() {
     if (!impl_->load_atlas()) return false;
     if (!impl_->load_glyphs()) return false;
-    if (!impl_->load_layout()) return false;
+    // ОСНОВНА розкладка обов'язкова.
+    if (!impl_->load_layout(impl_->cfg.config_json, 0)) return false;
+
+    // ДОДАТКОВА — окремий файл. Немає його (а на станціях, що жили з
+    // одним екраном, немає завжди) — беремо ту саму розкладку, що й
+    // основна: краще показати те саме, ніж порожній екран, коли оператор
+    // увімкне OSD на другому.
+    if (!impl_->load_layout(impl_->cfg.config_json_secondary, 1)) {
+        impl_->views[1].elements = impl_->views[0].elements;
+        std::fprintf(stderr, "[osd] %s немає — додатковий екран бере розкладку основного\n",
+                     impl_->cfg.config_json_secondary.c_str());
+    }
     return true;
 }
 
@@ -797,9 +824,9 @@ void Osd::set_frame_size(int role, int width, int height) {
     //
     // Окремий збирач на кожен екран — наступний крок; тоді ж з'явиться і
     // окремий osd_config.json на роль.
-    if (role != 0) return;
-    impl_->frame_w.store(width, std::memory_order_relaxed);
-    impl_->frame_h.store(height, std::memory_order_relaxed);
+    if (role < 0 || role >= Impl::kRoles) return;
+    impl_->views[role].fw.store(width, std::memory_order_relaxed);
+    impl_->views[role].fh.store(height, std::memory_order_relaxed);
 }
 
 const std::vector<render::OverlayImage>& Osd::images() const {
@@ -812,9 +839,10 @@ bool Osd::acquire(int role, render::DrawList& out) {
     // Свіжість — ОКРЕМА НА КОЖНУ РОЛЬ. Рендерер питає нас двічі за кадр,
     // і спільний прапорець означав би, що новий список дістається лише
     // тому, хто спитав першим, а другий екран показує вчорашній.
-    if (!impl_->fresh[role]) return false;
-    out = impl_->ready;
-    impl_->fresh[role] = false;
+    Impl::RoleView& v = impl_->views[role];
+    if (!v.fresh) return false;
+    out = v.ready;
+    v.fresh = false;
     return true;
 }
 

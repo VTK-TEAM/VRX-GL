@@ -34,6 +34,7 @@ constexpr SDL_Color TEXT_MUTED  {150, 152, 160, 255};
 constexpr SDL_Color ACCENT      {70, 150, 230, 255};
 constexpr SDL_Color DANGER      {220, 70, 70, 255};
 constexpr SDL_Color SUCCESS     {70, 190, 120, 255};
+constexpr SDL_Color WARNING     {230, 160, 60, 255};
 }
 
 // ---------------------------------------------------------------- Widget

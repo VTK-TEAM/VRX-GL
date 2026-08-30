@@ -65,6 +65,11 @@ public:
         std::string glyph_bin = "osd_glyph_info.bin";
         std::string config_json = "osd_config.json";
 
+        // РОЗКЛАДКА ДОДАТКОВОГО ЕКРАНА. Окремий файл, бо телеметрія там
+        // потрібна інша: другий монітор дивиться оператор, а не пілот.
+        // Немає файлу — додатковий бере ту саму розкладку, що й основний.
+        std::string config_json_secondary = "osd_config2.json";
+
         // Порт телеметрії. POINT і STATION шлють на один і той самий,
         // розрізняти відправника не треба — id унікальні по ролі.
         uint16_t telemetry_port = 50122;
