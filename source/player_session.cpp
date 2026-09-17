@@ -13,6 +13,10 @@ namespace {
 // ІМЕНА КАНАЛІВ У ФАЙЛАХ. Вони ж потрапляють у назви записів, у журнал і
 // в назви знімків.
 const char* kNames[PlayerSession::kChannels] = {"main", "sub", "local"};
+
+// Читані назви — лише для імен знімків. Ключ каналу лишається сталим: за
+// ним плеєр шукає файли в журналі, і міняти його не можна.
+const char* kFileNames[PlayerSession::kChannels] = {"Osnovna", "Teplovizor", "Local"};
 const PlaybackSource::Codec kCodecs[PlayerSession::kChannels] = {
     PlaybackSource::Codec::H265,     // основний — з борту
     PlaybackSource::Codec::MJPEG,    // PiP
@@ -104,7 +108,7 @@ int PlayerSession::save_snapshots(const std::string& dir) const {
     for (int i = 0; i < kChannels; ++i) {
         if (!ch_[i]) continue;
         SourceFrame f;
-        if (ch_[i]->snapshot(f)) frames.push_back({kNames[i], std::move(f)});
+        if (ch_[i]->snapshot(f)) frames.push_back({kFileNames[i], std::move(f)});
     }
     return record::save_set(std::move(frames), dir, wall);
 }

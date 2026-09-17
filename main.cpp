@@ -490,9 +490,9 @@ int main(int argc, char** argv) {
                 vrx::source::SourceFrame f;
                 if (src->snapshot(f)) frames.push_back({name, std::move(f)});
             };
-            take("main", main_src);
-            take("sub", pip_src);
-            take("local", cap_src);
+            take("Osnovna", main_src);
+            take("Teplovizor", pip_src);
+            take("Local", cap_src);
 
             struct timespec ts;
             clock_gettime(CLOCK_REALTIME, &ts);
@@ -550,6 +550,7 @@ int main(int argc, char** argv) {
     vrx::record::Recorder::Config rec_cfg;
     rec_cfg.session = session;
     rec_cfg.name = "main";
+    rec_cfg.file_name = "Osnovna";
     rec_cfg.udp_port = h265_cfg.udp_port;
     rec_cfg.payload_type = h265_cfg.payload_type;
     vrx::record::Recorder recorder(rec_cfg, storage);
@@ -563,6 +564,7 @@ int main(int argc, char** argv) {
     vrx::record::Recorder::Config rec2_cfg;
     rec2_cfg.session = session;
         rec2_cfg.name = "sub";
+        rec2_cfg.file_name = "Teplovizor";
     rec2_cfg.codec = vrx::record::Recorder::Codec::MJPEG;
     rec2_cfg.udp_port = pip_cfg.udp_port;
     rec2_cfg.payload_type = pip_cfg.payload_type;
@@ -577,6 +579,7 @@ int main(int argc, char** argv) {
         vrx::record::Recorder::Config rec3_cfg;
         rec3_cfg.session = session;
         rec3_cfg.name = "local";
+        rec3_cfg.file_name = "Local";
         rec3_cfg.codec = vrx::record::Recorder::Codec::MJPEG;
         rec3_cfg.udp_port = kCapPort;
         rec3_cfg.multicast_addr = kCapGroup;

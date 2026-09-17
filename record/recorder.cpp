@@ -506,7 +506,8 @@ struct Recorder::Impl {
 
         // make_path МОЖЕ ЗАБЛОКУВАТИСЬ: усередині mkdir на носії, тобто
         // те саме блокуюче I/O. Скільки саме — видно лише звідси.
-        const std::string path = storage.make_path(cfg.name);
+        const std::string path = storage.make_path(
+            cfg.file_name.empty() ? cfg.name : cfg.file_name);
         if (path.empty()) {
             VRX_RLOG(cfg.name.c_str(), "НЕ ВІДКРИВ: шлях не склався (%lld мс)",
                      (long long)(now_ms() - open_t0));

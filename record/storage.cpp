@@ -5,6 +5,8 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <algorithm>
+#include <vector>
 #include <sys/statvfs.h>
 #include <unistd.h>
 
@@ -171,6 +173,7 @@ struct Storage::Impl {
     }
 
     void probe_loop();
+    void reclaim_space(const std::string& root, uint64_t free_now);
     void sync_loop();
     void probe_once();
     void mount_removable();
@@ -445,9 +448,81 @@ void Storage::Impl::probe_once() {
              free_b / 1073741824.0, VRX_RLOG_DIRTY());
 }
 
+// СТИРАННЯ НАЙСТАРІШОГО, щоб новому було куди лягати.
+//
+// Ідемо за часом зміни, а не за іменем: ім'я каже, коли запис ПОЧАВСЯ, а
+// нам важливо, коли він востаннє ріс. Файл, у який ще пишуть, має свіжий
+// час зміни навіть якщо почався годину тому, — і саме це береже його від
+// стирання, без жодного списку відкритих дескрипторів.
+//
+// Знімки не чіпаємо. Їх роблять навмисно, поштучно, і мовчки стерти те,
+// що людина зберегла руками, — найгірше, що тут можна зробити.
+void Storage::Impl::reclaim_space(const std::string& root, uint64_t free_now) {
+    if (cfg.keep_free_bytes == 0 || free_now >= cfg.keep_free_bytes) return;
+
+    struct Victim { std::string path; time_t mtime; uint64_t size; };
+    std::vector<Victim> all;
+    const time_t now = ::time(nullptr);
+
+    DIR* rd = ::opendir(root.c_str());
+    if (!rd) return;
+    while (dirent* de = ::readdir(rd)) {
+        if (de->d_name[0] == '.') continue;
+        if (std::strcmp(de->d_name, "screenshots") == 0) continue;
+        const std::string day = root + "/" + de->d_name;
+        DIR* dd = ::opendir(day.c_str());
+        if (!dd) continue;
+        while (dirent* fe = ::readdir(dd)) {
+            if (fe->d_name[0] == '.') continue;
+            const std::string path = day + "/" + fe->d_name;
+            struct stat st {};
+            if (::stat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) continue;
+            if (now - st.st_mtime < cfg.keep_recent_sec) continue;   // ще пишеться
+            all.push_back({path, st.st_mtime, (uint64_t)st.st_size});
+        }
+        ::closedir(dd);
+    }
+    ::closedir(rd);
+    if (all.empty()) return;
+
+    std::sort(all.begin(), all.end(),
+              [](const Victim& a, const Victim& b) { return a.mtime < b.mtime; });
+
+    // Звільняємо ВДВІЧІ більше за поріг: інакше стирання спрацьовувало б
+    // на кожному опитуванні, по файлу за раз, і носій жив би на самій межі.
+    const uint64_t target = cfg.keep_free_bytes * 2;
+    uint64_t freed = 0;
+    int removed = 0;
+    for (const Victim& v : all) {
+        if (free_now + freed >= target) break;
+        if (::unlink(v.path.c_str()) != 0) continue;
+        freed += v.size;
+        ++removed;
+    }
+    if (removed > 0) {
+        std::fprintf(stderr, "[носій] кільце: стерто %d найстаріших файлів,"
+                     " звільнено %.1f ГіБ (було вільно %.1f)\n",
+                     removed, freed / 1073741824.0, free_now / 1073741824.0);
+    }
+}
+
 void Storage::Impl::probe_loop() {
     while (running.load(std::memory_order_relaxed)) {
         probe_once();
+
+        // Після опитування, а не в ньому: стирання довге, а probe_once()
+        // тримає знімок стану.
+        {
+            std::string root;
+            uint64_t freeb = 0;
+            {
+                std::lock_guard<std::mutex> lk(state_mtx);
+                root = state.root;
+                freeb = state.free_bytes;
+            }
+            if (!root.empty()) reclaim_space(root, freeb);
+        }
+
         for (int slept = 0; slept < cfg.poll_ms && running.load(); slept += 100) {
             struct timespec ts{0, 100 * 1000000L};
             ::nanosleep(&ts, nullptr);
@@ -529,7 +604,12 @@ std::string Storage::make_path(const std::string& stream_name,
                      dir.c_str(), std::strerror(errno));
         return {};
     }
-    return dir + "/" + stamp + "_" + stream_name + "." + ext;
+    // ІМ'Я КАНАЛУ ПЕРШЕ, ЧАС У КІНЦІ.
+    //
+    // Так у списку файлів записи одного каналу стоять разом і читаються з
+    // першого погляду, а не розсипані за часом упереміш із чужими. Час на
+    // кінці все одно впорядковує їх усередині каналу.
+    return dir + "/" + stream_name + "_" + stamp + "." + ext;
 }
 
 } // namespace vrx::record
