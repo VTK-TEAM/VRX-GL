@@ -7,7 +7,7 @@
         "TYPE": "ENUM",
         "S": 1,
         "LABEL": "",
-        "DATACHANNEL": 21,
+        "DATACHANNEL": 7,
         "UNITS": "",
         "CASES": [
           {
@@ -27,7 +27,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "G",
-        "DATACHANNEL": 4,
+        "DATACHANNEL": 6,
         "DECIMALS": 1,
         "UNITS": "G"
       },
@@ -40,7 +40,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "CLB",
-        "DATACHANNEL": 17,
+        "DATACHANNEL": 5,
         "DECIMALS": 0,
         "UNITS": "km/h"
       },
@@ -53,7 +53,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "ALT",
-        "DATACHANNEL": 16,
+        "DATACHANNEL": 4,
         "DECIMALS": 0,
         "UNITS": "m"
       },
@@ -66,7 +66,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 20,
+        "DATACHANNEL": 3,
         "UNITS": "",
         "MIN": 1000,
         "MAX": 2000,
@@ -84,7 +84,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "THR",
-        "DATACHANNEL": 20,
+        "DATACHANNEL": 3,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -97,7 +97,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "DISARM.R",
-        "DATACHANNEL": 22,
+        "DATACHANNEL": 8,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -110,7 +110,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "ODO",
-        "DATACHANNEL": 18,
+        "DATACHANNEL": 14,
         "DECIMALS": 0,
         "UNITS": "m"
       },
@@ -123,7 +123,7 @@
         "TYPE": "ENUM",
         "S": 1,
         "LABEL": "",
-        "DATACHANNEL": 24,
+        "DATACHANNEL": 10,
         "DEFAULT": "",
         "CASES": [
           {
@@ -173,7 +173,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "TIME",
-        "DATACHANNEL": 19,
+        "DATACHANNEL": 12,
         "DECIMALS": 0,
         "UNITS": "",
         "FORMAT": "MM:SS"
@@ -187,7 +187,7 @@
         "TYPE": "ENUM",
         "S": 1,
         "LABEL": "",
-        "DATACHANNEL": 23,
+        "DATACHANNEL": 9,
         "DEFAULT": "",
         "CASES": [
           {
@@ -352,7 +352,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "PID",
-        "DATACHANNEL": 5,
+        "DATACHANNEL": 11,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -365,7 +365,7 @@
         "TYPE": "HORIZON",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 13,
+        "DATACHANNEL": 0,
         "UNITS": "",
         "BASE_IMAGE": "img/horizont_0.png",
         "POINTER_IMAGE": "img/horizont_1.png"
@@ -379,7 +379,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "ROLL",
-        "DATACHANNEL": 13,
+        "DATACHANNEL": 0,
         "DECIMALS": 1,
         "UNITS": "°"
       },
@@ -392,7 +392,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "YAW",
-        "DATACHANNEL": 15,
+        "DATACHANNEL": 2,
         "DECIMALS": 1,
         "UNITS": "°"
       },
@@ -405,7 +405,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "PITCH",
-        "DATACHANNEL": 14,
+        "DATACHANNEL": 1,
         "DECIMALS": 1,
         "UNITS": "°"
       },
@@ -418,7 +418,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "mAh",
-        "DATACHANNEL": 0,
+        "DATACHANNEL": 98,
         "DECIMALS": 0,
         "UNITS": "mAh"
       },
@@ -431,7 +431,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "AGE",
-        "DATACHANNEL": 2,
+        "DATACHANNEL": 96,
         "DECIMALS": 0,
         "UNITS": "s",
         "META": "AGE_S"
@@ -445,7 +445,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "<fpv_battery>",
-        "DATACHANNEL": 2,
+        "DATACHANNEL": 96,
         "DECIMALS": 1,
         "UNITS": "V"
       },
@@ -458,7 +458,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 2,
+        "DATACHANNEL": 96,
         "UNITS": "",
         "MIN": 9.0,
         "MAX": 12.6,
@@ -476,7 +476,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "<fpv_current>",
-        "DATACHANNEL": 1,
+        "DATACHANNEL": 97,
         "DECIMALS": 0,
         "UNITS": "A"
       },
@@ -489,7 +489,7 @@
         "TYPE": "ENUM",
         "S": 1,
         "LABEL": "",
-        "DATACHANNEL": 2,
+        "DATACHANNEL": 96,
         "UNITS": "",
         "CASES": [
           {
@@ -513,26 +513,13 @@
       "group": "Батарея й живлення"
     },
     {
-      "display_name": "Живлення плати (борт, текст)",
-      "key_prefix": "power_supply_A_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "A.PWR",
-        "DATACHANNEL": 35,
-        "DECIMALS": 1,
-        "UNITS": "V"
-      },
-      "group": "Батарея й живлення"
-    },
-    {
       "display_name": "Живлення плати (земля, текст)",
       "key_prefix": "power_supply_G_value",
       "template": {
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "G.PWR",
-        "DATACHANNEL": 36,
+        "DATACHANNEL": 384,
         "DECIMALS": 1,
         "UNITS": "V"
       },
@@ -545,7 +532,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "GPS.ALT",
-        "DATACHANNEL": 10,
+        "DATACHANNEL": 68,
         "DECIMALS": 0,
         "UNITS": "m"
       },
@@ -558,7 +545,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "DIST",
-        "DATACHANNEL": 3,
+        "DATACHANNEL": 71,
         "DECIMALS": 0,
         "UNITS": "m"
       },
@@ -571,7 +558,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "LON",
-        "DATACHANNEL": 9,
+        "DATACHANNEL": 67,
         "DECIMALS": 5,
         "UNITS": "°"
       },
@@ -584,7 +571,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "CRS",
-        "DATACHANNEL": 12,
+        "DATACHANNEL": 70,
         "DECIMALS": 0,
         "UNITS": "°"
       },
@@ -597,7 +584,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "<gps_sat>",
-        "DATACHANNEL": 7,
+        "DATACHANNEL": 65,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -610,7 +597,7 @@
         "TYPE": "ENUM",
         "S": 1,
         "LABEL": "FIX ",
-        "DATACHANNEL": 6,
+        "DATACHANNEL": 64,
         "DEFAULT": "NO FIX",
         "CASES": [
           {
@@ -635,7 +622,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "SPD",
-        "DATACHANNEL": 11,
+        "DATACHANNEL": 69,
         "DECIMALS": 0,
         "UNITS": "km/h"
       },
@@ -648,7 +635,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "LAT",
-        "DATACHANNEL": 8,
+        "DATACHANNEL": 66,
         "DECIMALS": 5,
         "UNITS": "°"
       },
@@ -661,7 +648,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 51,
+        "DATACHANNEL": 192,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -679,7 +666,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "C1",
-        "DATACHANNEL": 51,
+        "DATACHANNEL": 192,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -692,7 +679,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 60,
+        "DATACHANNEL": 201,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -710,7 +697,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "C10",
-        "DATACHANNEL": 60,
+        "DATACHANNEL": 201,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -723,7 +710,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 61,
+        "DATACHANNEL": 202,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -741,7 +728,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "C11",
-        "DATACHANNEL": 61,
+        "DATACHANNEL": 202,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -754,7 +741,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 62,
+        "DATACHANNEL": 203,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -772,7 +759,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "C12",
-        "DATACHANNEL": 62,
+        "DATACHANNEL": 203,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -785,7 +772,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 63,
+        "DATACHANNEL": 204,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -803,7 +790,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "C13",
-        "DATACHANNEL": 63,
+        "DATACHANNEL": 204,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -816,7 +803,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 64,
+        "DATACHANNEL": 205,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -834,7 +821,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "C14",
-        "DATACHANNEL": 64,
+        "DATACHANNEL": 205,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -847,7 +834,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 65,
+        "DATACHANNEL": 206,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -865,7 +852,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "C15",
-        "DATACHANNEL": 65,
+        "DATACHANNEL": 206,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -878,7 +865,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 66,
+        "DATACHANNEL": 207,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -896,7 +883,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "C16",
-        "DATACHANNEL": 66,
+        "DATACHANNEL": 207,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -909,7 +896,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 67,
+        "DATACHANNEL": 208,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -927,7 +914,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "C17",
-        "DATACHANNEL": 67,
+        "DATACHANNEL": 208,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -940,7 +927,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 68,
+        "DATACHANNEL": 209,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -958,7 +945,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "C18",
-        "DATACHANNEL": 68,
+        "DATACHANNEL": 209,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -971,7 +958,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 52,
+        "DATACHANNEL": 193,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -989,7 +976,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "C2",
-        "DATACHANNEL": 52,
+        "DATACHANNEL": 193,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1002,7 +989,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 53,
+        "DATACHANNEL": 194,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -1020,7 +1007,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "C3",
-        "DATACHANNEL": 53,
+        "DATACHANNEL": 194,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1033,7 +1020,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 54,
+        "DATACHANNEL": 195,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -1051,7 +1038,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "C4",
-        "DATACHANNEL": 54,
+        "DATACHANNEL": 195,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1064,7 +1051,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 55,
+        "DATACHANNEL": 196,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -1082,7 +1069,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "C5",
-        "DATACHANNEL": 55,
+        "DATACHANNEL": 196,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1095,7 +1082,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 56,
+        "DATACHANNEL": 197,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -1113,7 +1100,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "C6",
-        "DATACHANNEL": 56,
+        "DATACHANNEL": 197,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1126,7 +1113,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 57,
+        "DATACHANNEL": 198,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -1144,7 +1131,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "C7",
-        "DATACHANNEL": 57,
+        "DATACHANNEL": 198,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1157,7 +1144,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 58,
+        "DATACHANNEL": 199,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -1175,7 +1162,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "C8",
-        "DATACHANNEL": 58,
+        "DATACHANNEL": 199,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1188,7 +1175,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 59,
+        "DATACHANNEL": 200,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -1206,7 +1193,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "C9",
-        "DATACHANNEL": 59,
+        "DATACHANNEL": 200,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1219,7 +1206,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "P2 CH1 ",
-        "DATACHANNEL": 90,
+        "DATACHANNEL": 224,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1232,7 +1219,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "P2 CH10 ",
-        "DATACHANNEL": 99,
+        "DATACHANNEL": 233,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1245,7 +1232,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "P2 CH11 ",
-        "DATACHANNEL": 100,
+        "DATACHANNEL": 234,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1258,7 +1245,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "P2 CH12 ",
-        "DATACHANNEL": 101,
+        "DATACHANNEL": 235,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1271,7 +1258,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "P2 CH13 ",
-        "DATACHANNEL": 102,
+        "DATACHANNEL": 236,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1284,7 +1271,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "P2 CH14 ",
-        "DATACHANNEL": 103,
+        "DATACHANNEL": 237,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1297,7 +1284,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "P2 CH15 ",
-        "DATACHANNEL": 104,
+        "DATACHANNEL": 238,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1310,7 +1297,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "P2 CH16 ",
-        "DATACHANNEL": 105,
+        "DATACHANNEL": 239,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1323,7 +1310,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "P2 CH17 ",
-        "DATACHANNEL": 106,
+        "DATACHANNEL": 240,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1336,7 +1323,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "P2 CH18 ",
-        "DATACHANNEL": 107,
+        "DATACHANNEL": 241,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1349,7 +1336,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "P2 CH2 ",
-        "DATACHANNEL": 91,
+        "DATACHANNEL": 225,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1362,7 +1349,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "P2 CH3 ",
-        "DATACHANNEL": 92,
+        "DATACHANNEL": 226,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1375,7 +1362,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "P2 CH4 ",
-        "DATACHANNEL": 93,
+        "DATACHANNEL": 227,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1388,7 +1375,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "P2 CH5 ",
-        "DATACHANNEL": 94,
+        "DATACHANNEL": 228,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1401,7 +1388,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "P2 CH6 ",
-        "DATACHANNEL": 95,
+        "DATACHANNEL": 229,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1414,7 +1401,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "P2 CH7 ",
-        "DATACHANNEL": 96,
+        "DATACHANNEL": 230,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1427,7 +1414,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "P2 CH8 ",
-        "DATACHANNEL": 97,
+        "DATACHANNEL": 231,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1440,7 +1427,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "P2 CH9 ",
-        "DATACHANNEL": 98,
+        "DATACHANNEL": 232,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1453,7 +1440,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 69,
+        "DATACHANNEL": 288,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -1471,7 +1458,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "E1",
-        "DATACHANNEL": 69,
+        "DATACHANNEL": 288,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1484,7 +1471,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 78,
+        "DATACHANNEL": 297,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -1502,7 +1489,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "E10",
-        "DATACHANNEL": 78,
+        "DATACHANNEL": 297,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1515,7 +1502,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 79,
+        "DATACHANNEL": 298,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -1533,7 +1520,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "E11",
-        "DATACHANNEL": 79,
+        "DATACHANNEL": 298,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1546,7 +1533,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 80,
+        "DATACHANNEL": 299,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -1564,7 +1551,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "E12",
-        "DATACHANNEL": 80,
+        "DATACHANNEL": 299,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1577,7 +1564,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 81,
+        "DATACHANNEL": 300,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -1595,7 +1582,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "E13",
-        "DATACHANNEL": 81,
+        "DATACHANNEL": 300,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1608,7 +1595,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 82,
+        "DATACHANNEL": 301,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -1626,7 +1613,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "E14",
-        "DATACHANNEL": 82,
+        "DATACHANNEL": 301,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1639,7 +1626,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 83,
+        "DATACHANNEL": 302,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -1657,7 +1644,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "E15",
-        "DATACHANNEL": 83,
+        "DATACHANNEL": 302,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1670,7 +1657,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 84,
+        "DATACHANNEL": 303,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -1688,7 +1675,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "E16",
-        "DATACHANNEL": 84,
+        "DATACHANNEL": 303,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1701,7 +1688,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 85,
+        "DATACHANNEL": 304,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -1719,7 +1706,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "E17",
-        "DATACHANNEL": 85,
+        "DATACHANNEL": 304,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1732,7 +1719,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 86,
+        "DATACHANNEL": 305,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -1750,7 +1737,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "E18",
-        "DATACHANNEL": 86,
+        "DATACHANNEL": 305,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1763,7 +1750,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 70,
+        "DATACHANNEL": 289,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -1781,7 +1768,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "E2",
-        "DATACHANNEL": 70,
+        "DATACHANNEL": 289,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1794,7 +1781,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 71,
+        "DATACHANNEL": 290,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -1812,7 +1799,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "E3",
-        "DATACHANNEL": 71,
+        "DATACHANNEL": 290,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1825,7 +1812,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 72,
+        "DATACHANNEL": 291,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -1843,7 +1830,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "E4",
-        "DATACHANNEL": 72,
+        "DATACHANNEL": 291,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1856,7 +1843,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 73,
+        "DATACHANNEL": 292,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -1874,7 +1861,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "E5",
-        "DATACHANNEL": 73,
+        "DATACHANNEL": 292,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1887,7 +1874,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 74,
+        "DATACHANNEL": 293,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -1905,7 +1892,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "E6",
-        "DATACHANNEL": 74,
+        "DATACHANNEL": 293,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1918,7 +1905,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 75,
+        "DATACHANNEL": 294,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -1936,7 +1923,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "E7",
-        "DATACHANNEL": 75,
+        "DATACHANNEL": 294,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1949,7 +1936,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 76,
+        "DATACHANNEL": 295,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -1967,7 +1954,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "E8",
-        "DATACHANNEL": 76,
+        "DATACHANNEL": 295,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -1980,7 +1967,7 @@
         "TYPE": "BAR",
         "S": 0,
         "LABEL": "",
-        "DATACHANNEL": 77,
+        "DATACHANNEL": 296,
         "UNITS": "",
         "MIN": 172,
         "MAX": 1811,
@@ -1998,7 +1985,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "E9",
-        "DATACHANNEL": 77,
+        "DATACHANNEL": 296,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -2011,7 +1998,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "SRC",
-        "DATACHANNEL": 48,
+        "DATACHANNEL": 160,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -2024,7 +2011,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "RC.AGE",
-        "DATACHANNEL": 49,
+        "DATACHANNEL": 162,
         "DECIMALS": 0,
         "UNITS": "ms"
       },
@@ -2037,7 +2024,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "RSSI1",
-        "DATACHANNEL": 41,
+        "DATACHANNEL": 176,
         "DECIMALS": 0,
         "UNITS": "dBm"
       },
@@ -2050,7 +2037,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "RSSI2",
-        "DATACHANNEL": 42,
+        "DATACHANNEL": 177,
         "DECIMALS": 0,
         "UNITS": "dBm"
       },
@@ -2063,7 +2050,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "SNR",
-        "DATACHANNEL": 44,
+        "DATACHANNEL": 179,
         "DECIMALS": 0,
         "UNITS": "dB"
       },
@@ -2076,7 +2063,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "TXP",
-        "DATACHANNEL": 45,
+        "DATACHANNEL": 180,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -2089,7 +2076,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "DL.LQ",
-        "DATACHANNEL": 46,
+        "DATACHANNEL": 181,
         "DECIMALS": 0,
         "UNITS": "%"
       },
@@ -2102,7 +2089,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "DL.SNR",
-        "DATACHANNEL": 47,
+        "DATACHANNEL": 182,
         "DECIMALS": 0,
         "UNITS": "dB"
       },
@@ -2115,7 +2102,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "LQ",
-        "DATACHANNEL": 43,
+        "DATACHANNEL": 178,
         "DECIMALS": 0,
         "UNITS": "%"
       },
@@ -2128,37 +2115,11 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "E.AGE",
-        "DATACHANNEL": 50,
+        "DATACHANNEL": 165,
         "DECIMALS": 0,
         "UNITS": "ms"
       },
       "group": "Лінк ELRS"
-    },
-    {
-      "display_name": "BOSA монітор RX (борт, текст)",
-      "key_prefix": "bosa_rx_A_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "A.BRx",
-        "DATACHANNEL": 37,
-        "DECIMALS": 2,
-        "UNITS": "V"
-      },
-      "group": "Оптика: борт"
-    },
-    {
-      "display_name": "BOSA монітор TX (борт, текст)",
-      "key_prefix": "bosa_tx_A_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "A.BTx",
-        "DATACHANNEL": 38,
-        "DECIMALS": 2,
-        "UNITS": "V"
-      },
-      "group": "Оптика: борт"
     },
     {
       "display_name": "Оптика (борт): RX (текст)",
@@ -2167,7 +2128,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "ARx",
-        "DATACHANNEL": 29,
+        "DATACHANNEL": 323,
         "DECIMALS": 1,
         "UNITS": "dBm"
       },
@@ -2180,22 +2141,9 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "ATx",
-        "DATACHANNEL": 28,
+        "DATACHANNEL": 322,
         "DECIMALS": 1,
         "UNITS": "dBm"
-      },
-      "group": "Оптика: борт"
-    },
-    {
-      "display_name": "Оптика (борт): bias SFP (текст)",
-      "key_prefix": "optics_A_bias_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "A.B",
-        "DATACHANNEL": 27,
-        "DECIMALS": 1,
-        "UNITS": "mA"
       },
       "group": "Оптика: борт"
     },
@@ -2206,7 +2154,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "A.V",
-        "DATACHANNEL": 26,
+        "DATACHANNEL": 321,
         "DECIMALS": 2,
         "UNITS": "V"
       },
@@ -2219,37 +2167,11 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "A.T",
-        "DATACHANNEL": 25,
+        "DATACHANNEL": 320,
         "DECIMALS": 1,
         "UNITS": "°C"
       },
       "group": "Оптика: борт"
-    },
-    {
-      "display_name": "BOSA монітор RX (земля, текст)",
-      "key_prefix": "bosa_rx_G_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "G.BRx",
-        "DATACHANNEL": 39,
-        "DECIMALS": 2,
-        "UNITS": "V"
-      },
-      "group": "Оптика: земля"
-    },
-    {
-      "display_name": "BOSA монітор TX (земля, текст)",
-      "key_prefix": "bosa_tx_G_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "G.BTx",
-        "DATACHANNEL": 40,
-        "DECIMALS": 2,
-        "UNITS": "V"
-      },
-      "group": "Оптика: земля"
     },
     {
       "display_name": "Оптика (земля): RX (текст)",
@@ -2258,7 +2180,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "GRx",
-        "DATACHANNEL": 34,
+        "DATACHANNEL": 390,
         "DECIMALS": 1,
         "UNITS": "dBm"
       },
@@ -2271,22 +2193,9 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "GTx",
-        "DATACHANNEL": 33,
+        "DATACHANNEL": 389,
         "DECIMALS": 1,
         "UNITS": "dBm"
-      },
-      "group": "Оптика: земля"
-    },
-    {
-      "display_name": "Оптика (земля): bias SFP (текст)",
-      "key_prefix": "optics_G_bias_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "G.B",
-        "DATACHANNEL": 32,
-        "DECIMALS": 1,
-        "UNITS": "mA"
       },
       "group": "Оптика: земля"
     },
@@ -2297,7 +2206,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "G.V",
-        "DATACHANNEL": 31,
+        "DATACHANNEL": 388,
         "DECIMALS": 2,
         "UNITS": "V"
       },
@@ -2310,7 +2219,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "G.T",
-        "DATACHANNEL": 30,
+        "DATACHANNEL": 387,
         "DECIMALS": 1,
         "UNITS": "°C"
       },
@@ -2323,7 +2232,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "LOSS",
-        "DATACHANNEL": 201,
+        "DATACHANNEL": 529,
         "DECIMALS": 1,
         "UNITS": "dB"
       },
@@ -2336,7 +2245,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "H265",
-        "DATACHANNEL": 202,
+        "DATACHANNEL": 530,
         "DECIMALS": 0,
         "UNITS": "fps"
       },
@@ -2349,7 +2258,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "MJPG",
-        "DATACHANNEL": 203,
+        "DATACHANNEL": 531,
         "DECIMALS": 0,
         "UNITS": "fps"
       },
@@ -2362,7 +2271,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "Screen ",
-        "DATACHANNEL": 204,
+        "DATACHANNEL": 532,
         "DECIMALS": 1,
         "UNITS": "fps"
       },
@@ -2375,7 +2284,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "Drop ",
-        "DATACHANNEL": 208,
+        "DATACHANNEL": 536,
         "DECIMALS": 2,
         "UNITS": "fps"
       },
@@ -2389,7 +2298,7 @@
         "TYPE": "VALUE",
         "S": 1,
         "LABEL": "",
-        "DATACHANNEL": 213,
+        "DATACHANNEL": 541,
         "DECIMALS": 1,
         "UNITS": "GB",
         "HIDE_IF_NO_DATA": true
@@ -2403,7 +2312,7 @@
         "TYPE": "VALUE",
         "S": 1,
         "LABEL": "",
-        "DATACHANNEL": 211,
+        "DATACHANNEL": 539,
         "DECIMALS": 0,
         "UNITS": "",
         "FORMAT": "HH:MM"
@@ -2417,7 +2326,7 @@
         "TYPE": "VALUE",
         "S": 1,
         "LABEL": "",
-        "DATACHANNEL": 211,
+        "DATACHANNEL": 539,
         "DECIMALS": 0,
         "UNITS": "",
         "FORMAT": "HH:MM:SS"
@@ -2431,7 +2340,7 @@
         "TYPE": "VALUE",
         "S": 1,
         "LABEL": "",
-        "DATACHANNEL": 212,
+        "DATACHANNEL": 540,
         "DECIMALS": 0,
         "UNITS": "",
         "FORMAT": "DD.MM.YY"
@@ -2444,7 +2353,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "Late ",
-        "DATACHANNEL": 209,
+        "DATACHANNEL": 537,
         "DECIMALS": 2,
         "UNITS": "fps"
       },
@@ -2457,7 +2366,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "Lat ",
-        "DATACHANNEL": 207,
+        "DATACHANNEL": 535,
         "DECIMALS": 1,
         "UNITS": "ms"
       },
@@ -2470,7 +2379,7 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "Lost ",
-        "DATACHANNEL": 210,
+        "DATACHANNEL": 538,
         "DECIMALS": 0,
         "UNITS": ""
       },
@@ -2483,7 +2392,7 @@
         "TYPE": "ENUM",
         "S": 0,
         "LABEL": "PLL ",
-        "DATACHANNEL": 206,
+        "DATACHANNEL": 534,
         "DEFAULT": "----",
         "CASES": [
           {
@@ -2508,7 +2417,7 @@
         "TYPE": "ENUM",
         "S": 3,
         "LABEL": "",
-        "DATACHANNEL": 200,
+        "DATACHANNEL": 528,
         "DEFAULT": "",
         "CASES": [
           {
@@ -2533,50 +2442,11 @@
         "TYPE": "VALUE",
         "S": 0,
         "LABEL": "Disp ",
-        "DATACHANNEL": 205,
+        "DATACHANNEL": 533,
         "DECIMALS": 1,
         "UNITS": "fps"
       },
       "group": "Станція"
-    },
-    {
-      "display_name": "Діагностика: is_change-fallback лічильник",
-      "key_prefix": "tlm_ischange_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "Q.IC",
-        "DATACHANNEL": 88,
-        "DECIMALS": 0,
-        "UNITS": ""
-      },
-      "group": "Діагностика телеметрії"
-    },
-    {
-      "display_name": "Діагностика: soonest-fallback лічильник",
-      "key_prefix": "tlm_fallback_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "Q.FB",
-        "DATACHANNEL": 87,
-        "DECIMALS": 0,
-        "UNITS": ""
-      },
-      "group": "Діагностика телеметрії"
-    },
-    {
-      "display_name": "Діагностика: період TOS-пакетів (текст)",
-      "key_prefix": "tos_period_value",
-      "template": {
-        "TYPE": "VALUE",
-        "S": 0,
-        "LABEL": "TOS.MS",
-        "DATACHANNEL": 89,
-        "DECIMALS": 0,
-        "UNITS": "ms"
-      },
-      "group": "Діагностика телеметрії"
     },
     {
       "display_name": "Просто текст (без каналу)",
@@ -2599,6 +2469,526 @@
         "UNITS": ""
       },
       "group": "Написи й іконки"
+    },
+    {
+      "display_name": "Політ: час від старту (текст)",
+      "key_prefix": "flight_uptime",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "UP",
+        "DATACHANNEL": 13,
+        "DECIMALS": 0,
+        "UNITS": "с"
+      },
+      "group": "Політ"
+    },
+    {
+      "display_name": "Політ: завантаження CPU (текст)",
+      "key_prefix": "flight_cpu",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "CPU",
+        "DATACHANNEL": 18,
+        "DECIMALS": 0,
+        "UNITS": "%"
+      },
+      "group": "Політ"
+    },
+    {
+      "display_name": "Політ: температура MCU (текст)",
+      "key_prefix": "flight_core_temp",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "MCU",
+        "DATACHANNEL": 17,
+        "DECIMALS": 0,
+        "UNITS": "C"
+      },
+      "group": "Політ"
+    },
+    {
+      "display_name": "Політ: температура гіро (текст)",
+      "key_prefix": "flight_gyro_temp",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "GYR",
+        "DATACHANNEL": 15,
+        "DECIMALS": 0,
+        "UNITS": "C"
+      },
+      "group": "Політ"
+    },
+    {
+      "display_name": "Політ: температура баро (текст)",
+      "key_prefix": "flight_baro_temp",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "BAR",
+        "DATACHANNEL": 16,
+        "DECIMALS": 0,
+        "UNITS": "C"
+      },
+      "group": "Політ"
+    },
+    {
+      "display_name": "Політ: гіро відкалібровано (0/1)",
+      "key_prefix": "flight_gyro_cal",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "GCAL",
+        "DATACHANNEL": 19,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Політ"
+    },
+    {
+      "display_name": "Політ: акселерометр відкалібровано (0/1)",
+      "key_prefix": "flight_acc_cal",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "ACAL",
+        "DATACHANNEL": 20,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Політ"
+    },
+    {
+      "display_name": "GPS: HDOP (текст)",
+      "key_prefix": "gps_hdop",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "HDOP",
+        "DATACHANNEL": 72,
+        "DECIMALS": 1,
+        "UNITS": ""
+      },
+      "group": "GPS"
+    },
+    {
+      "display_name": "Живлення: рейка ESC увімкнена (0/1)",
+      "key_prefix": "pwr_esc_on",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "ESC",
+        "DATACHANNEL": 99,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Батарея й живлення"
+    },
+    {
+      "display_name": "Живлення: рейка камери увімкнена (0/1)",
+      "key_prefix": "pwr_cam_on",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "CAM",
+        "DATACHANNEL": 100,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Батарея й живлення"
+    },
+    {
+      "display_name": "Пульти: наскрізна затримка керування (текст)",
+      "key_prefix": "rc_delay",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "DLY",
+        "DATACHANNEL": 161,
+        "DECIMALS": 0,
+        "UNITS": "мс"
+      },
+      "group": "Пульти: службове"
+    },
+    {
+      "display_name": "Пульти: перемикань джерела (текст)",
+      "key_prefix": "rc_handover",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "HO",
+        "DATACHANNEL": 166,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Пульти: службове"
+    },
+    {
+      "display_name": "Пульти: failsafe активний (0/1)",
+      "key_prefix": "rc_failsafe",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "FS",
+        "DATACHANNEL": 167,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Пульти: службове"
+    },
+    {
+      "display_name": "Пульти: кадрів з Ethernet (текст)",
+      "key_prefix": "rc_frames_eth",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "ETH",
+        "DATACHANNEL": 168,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Пульти: службове"
+    },
+    {
+      "display_name": "Пульти: кадрів CRSF (текст)",
+      "key_prefix": "rc_frames_erls",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "CRSF",
+        "DATACHANNEL": 169,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Пульти: службове"
+    },
+    {
+      "display_name": "Станція: лічильник збірки (текст)",
+      "key_prefix": "station_build",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "BLD",
+        "DATACHANNEL": 385,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Станція"
+    },
+    {
+      "display_name": "Станція: SFP присутній (0/1)",
+      "key_prefix": "station_sfp_present",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "SFP",
+        "DATACHANNEL": 386,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Станція"
+    },
+    {
+      "display_name": "Версії: збірка борта (текст)",
+      "key_prefix": "ver_build_point",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "FW",
+        "DATACHANNEL": 448,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Станція"
+    },
+    {
+      "display_name": "Версії: Betaflight (текст)",
+      "key_prefix": "ver_bf",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "BF",
+        "DATACHANNEL": 449,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Станція"
+    },
+    {
+      "display_name": "Версії: протокол телеметрії (текст)",
+      "key_prefix": "ver_proto_tlm",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "TLM",
+        "DATACHANNEL": 452,
+        "DECIMALS": 0,
+        "UNITS": ""
+      },
+      "group": "Станція"
+    },
+    {
+      "display_name": "ESC 1: температура (текст)",
+      "key_prefix": "esc1_temp",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E1",
+        "DATACHANNEL": 128,
+        "DECIMALS": 0,
+        "UNITS": "C"
+      },
+      "group": "Батарея й живлення"
+    },
+    {
+      "display_name": "ESC 1: напруга (текст)",
+      "key_prefix": "esc1_volt",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E1",
+        "DATACHANNEL": 132,
+        "DECIMALS": 1,
+        "UNITS": "V"
+      },
+      "group": "Батарея й живлення"
+    },
+    {
+      "display_name": "ESC 1: струм (текст)",
+      "key_prefix": "esc1_amp",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E1",
+        "DATACHANNEL": 136,
+        "DECIMALS": 1,
+        "UNITS": "A"
+      },
+      "group": "Батарея й живлення"
+    },
+    {
+      "display_name": "ESC 1: оберти (текст)",
+      "key_prefix": "esc1_rpm",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E1",
+        "DATACHANNEL": 140,
+        "DECIMALS": 0,
+        "UNITS": "rpm"
+      },
+      "group": "Батарея й живлення"
+    },
+    {
+      "display_name": "Мотор 1: вихід міксера (текст)",
+      "key_prefix": "motor1_out",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "M1",
+        "DATACHANNEL": 144,
+        "DECIMALS": 2,
+        "UNITS": ""
+      },
+      "group": "Політ"
+    },
+    {
+      "display_name": "ESC 2: температура (текст)",
+      "key_prefix": "esc2_temp",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E2",
+        "DATACHANNEL": 129,
+        "DECIMALS": 0,
+        "UNITS": "C"
+      },
+      "group": "Батарея й живлення"
+    },
+    {
+      "display_name": "ESC 2: напруга (текст)",
+      "key_prefix": "esc2_volt",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E2",
+        "DATACHANNEL": 133,
+        "DECIMALS": 1,
+        "UNITS": "V"
+      },
+      "group": "Батарея й живлення"
+    },
+    {
+      "display_name": "ESC 2: струм (текст)",
+      "key_prefix": "esc2_amp",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E2",
+        "DATACHANNEL": 137,
+        "DECIMALS": 1,
+        "UNITS": "A"
+      },
+      "group": "Батарея й живлення"
+    },
+    {
+      "display_name": "ESC 2: оберти (текст)",
+      "key_prefix": "esc2_rpm",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E2",
+        "DATACHANNEL": 141,
+        "DECIMALS": 0,
+        "UNITS": "rpm"
+      },
+      "group": "Батарея й живлення"
+    },
+    {
+      "display_name": "Мотор 2: вихід міксера (текст)",
+      "key_prefix": "motor2_out",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "M2",
+        "DATACHANNEL": 145,
+        "DECIMALS": 2,
+        "UNITS": ""
+      },
+      "group": "Політ"
+    },
+    {
+      "display_name": "ESC 3: температура (текст)",
+      "key_prefix": "esc3_temp",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E3",
+        "DATACHANNEL": 130,
+        "DECIMALS": 0,
+        "UNITS": "C"
+      },
+      "group": "Батарея й живлення"
+    },
+    {
+      "display_name": "ESC 3: напруга (текст)",
+      "key_prefix": "esc3_volt",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E3",
+        "DATACHANNEL": 134,
+        "DECIMALS": 1,
+        "UNITS": "V"
+      },
+      "group": "Батарея й живлення"
+    },
+    {
+      "display_name": "ESC 3: струм (текст)",
+      "key_prefix": "esc3_amp",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E3",
+        "DATACHANNEL": 138,
+        "DECIMALS": 1,
+        "UNITS": "A"
+      },
+      "group": "Батарея й живлення"
+    },
+    {
+      "display_name": "ESC 3: оберти (текст)",
+      "key_prefix": "esc3_rpm",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E3",
+        "DATACHANNEL": 142,
+        "DECIMALS": 0,
+        "UNITS": "rpm"
+      },
+      "group": "Батарея й живлення"
+    },
+    {
+      "display_name": "Мотор 3: вихід міксера (текст)",
+      "key_prefix": "motor3_out",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "M3",
+        "DATACHANNEL": 146,
+        "DECIMALS": 2,
+        "UNITS": ""
+      },
+      "group": "Політ"
+    },
+    {
+      "display_name": "ESC 4: температура (текст)",
+      "key_prefix": "esc4_temp",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E4",
+        "DATACHANNEL": 131,
+        "DECIMALS": 0,
+        "UNITS": "C"
+      },
+      "group": "Батарея й живлення"
+    },
+    {
+      "display_name": "ESC 4: напруга (текст)",
+      "key_prefix": "esc4_volt",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E4",
+        "DATACHANNEL": 135,
+        "DECIMALS": 1,
+        "UNITS": "V"
+      },
+      "group": "Батарея й живлення"
+    },
+    {
+      "display_name": "ESC 4: струм (текст)",
+      "key_prefix": "esc4_amp",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E4",
+        "DATACHANNEL": 139,
+        "DECIMALS": 1,
+        "UNITS": "A"
+      },
+      "group": "Батарея й живлення"
+    },
+    {
+      "display_name": "ESC 4: оберти (текст)",
+      "key_prefix": "esc4_rpm",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "E4",
+        "DATACHANNEL": 143,
+        "DECIMALS": 0,
+        "UNITS": "rpm"
+      },
+      "group": "Батарея й живлення"
+    },
+    {
+      "display_name": "Мотор 4: вихід міксера (текст)",
+      "key_prefix": "motor4_out",
+      "template": {
+        "TYPE": "VALUE",
+        "S": 0,
+        "LABEL": "M4",
+        "DATACHANNEL": 147,
+        "DECIMALS": 2,
+        "UNITS": ""
+      },
+      "group": "Політ"
     }
   ],
   "groups": [
