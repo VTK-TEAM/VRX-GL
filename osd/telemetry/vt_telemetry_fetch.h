@@ -25,7 +25,7 @@ inline bool vt_fetch_channel_value(VtTelemetryStorage& storage, int channel_id,
                                     bool is_age_meta, bool is_rate_meta,
                                     float* out_value) {
     if (channel_id < 0) return false;
-    const uint8_t id = static_cast<uint8_t>(channel_id);
+    const uint16_t id = static_cast<uint16_t>(channel_id);
 
     uint32_t age_ms = 0;
     float value = 0.f;

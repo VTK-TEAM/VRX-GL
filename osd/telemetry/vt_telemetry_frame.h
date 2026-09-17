@@ -7,8 +7,10 @@
 // parse_frame() з прошивки UNI_DLOF_FIMWARES. Той самий поліном/таблиця і
 // той самий формат кадру — тримати руками в синхроні з прошивкою.
 //
-// Кадр: [type: 1][length: 1][payload: length][crc8: 1]
-// crc8 рахується від type + payload (БЕЗ length), той самий підхід, що і
+// Кадр: [pipe_id: 1][length: 1][payload: length][crc8: 1]
+// crc8 рахується від pipe_id + payload (БЕЗ length). Довжина поза сумою
+// навмисно: зіпсований pipe_id тоді не може пройти як валідний і розібратись
+// у чужий пайп, той самий підхід, що і
 // в telemetry_gui.py/telemetry_stats.py (референсні python-слухачі з того
 // самого архіву прошивки).
 namespace vt_telemetry {
@@ -40,17 +42,29 @@ inline uint8_t crc8_update(uint8_t init, const uint8_t* data, uint16_t len) {
     return crc;
 }
 
-// Значення type-байта в кадрі — той самий, що й VT_ethernet_pipe::DATA_TYPE/
-// HEARTBEAT_TYPE. VRX слухає лише телеметрію (DATA_TYPE); хартбіт (100)
-// прошивка й так шле на інший порт (HEARTBEAT_PORT=501), сюди по-хорошому
-// прилетіти не має, але про всяк випадок фільтруємо за типом, а не портом.
-constexpr uint8_t kDataType = 0;
-constexpr uint8_t kHeartbeatType = 100;
+// PIPE_ID — перший байт кадру. Простір ГЛОБАЛЬНИЙ, не залежить від порту:
+// протокол розрахований на ретранслятор, де потоки кількох бортів зводяться
+// в один, і значення, прив'язане до порту, зіткнулося б там одразу.
+//
+//   0          не використовувати (це значення поля, якого ніхто не заповнив)
+//   1…100      керування, id = номер борта
+//   101…254    телеметрія
+//   255        хартбіт
+//
+// Станція слухає лише телеметрію. Решту фільтруємо за pipe_id, а не за
+// портом: порт каже, куди прийшло, а pipe_id — що це насправді.
+constexpr uint8_t kPipeControl   = 1;
+constexpr uint8_t kPipeMsp       = 100;
+constexpr uint8_t kPipeTelemetry = 101;
+constexpr uint8_t kPipeHeartbeat = 255;
 
-constexpr uint16_t kFrameOverhead = 3; // type(1) + length(1) + crc8(1)
+constexpr uint16_t kFrameOverhead = 3; // pipe_id(1) + length(1) + crc8(1)
 
-// telemetry_sync_cls::ENTRY_SIZE — [id: 1][value: float32 LE] на кожен запис.
-constexpr uint8_t kEntrySize = 1u + sizeof(float);
+// Запис телеметрії протоколу v2: [id: 2 байти LE][value: float32 LE].
+//
+// Id став 16-бітним разом із розкладкою v2 — блоками по 64 за змістом, де
+// вже вживані номери сягають 526. В одному байті це не поміщається.
+constexpr uint8_t kEntrySize = 2u + sizeof(float);
 
 // Перевіряє довжину і CRC8 прийнятого UDP-пакета. raw_size — розмір усього
 // пакета (як прийшов з recv()). Повертає false і не чіпає out-параметри,
@@ -58,17 +72,17 @@ constexpr uint8_t kEntrySize = 1u + sizeof(float);
 // прошивки і в python-довідкових слухачах (тихо відкидати, не кидати
 // винятків на biту телеметрію).
 inline bool parse_frame(const uint8_t* raw, uint16_t raw_size,
-                         uint8_t* out_type, const uint8_t** out_payload, uint8_t* out_payload_size) {
+                         uint8_t* out_pipe, const uint8_t** out_payload, uint8_t* out_payload_size) {
     if (raw_size < kFrameOverhead) return false;
 
-    const uint8_t type = raw[0];
+    const uint8_t pipe = raw[0];
     const uint8_t length = raw[1];
     if (static_cast<uint16_t>(kFrameOverhead) + length != raw_size) return false;
 
-    const uint8_t crc = crc8_update(crc8_update_byte(0, type), &raw[2], length);
+    const uint8_t crc = crc8_update(crc8_update_byte(0, pipe), &raw[2], length);
     if (crc != raw[2 + length]) return false;
 
-    *out_type = type;
+    *out_pipe = pipe;
     *out_payload = &raw[2];
     *out_payload_size = length;
     return true;

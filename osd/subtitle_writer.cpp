@@ -9,6 +9,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <mutex>
 #include <sstream>
@@ -53,7 +54,7 @@ std::string format_ass_time(double seconds) {
 bool format_time_channel(int channel, float raw, char* out, size_t n) {
     const long v = (long)(raw + 0.5f);
     switch (channel) {
-        case VT_TLM_FLIGHT_TIME: {              // накопичено в армі, секунди
+        case VT_TLM_FLIGHT_TIME_S: {              // накопичено в армі, секунди
             if (v < 0) return false;
             if (v >= 3600) {
                 std::snprintf(out, n, "%ld:%02ld:%02ld", v / 3600, (v / 60) % 60, v % 60);
@@ -226,14 +227,23 @@ struct SubtitleWriter::Impl {
     // тримати другий список назв, який неминуче розсинхронізується.
     void load_debug_channels() {
         debug_channels.clear();
-        for (int ch = 0; ch <= VT_TLM_TOS_RX_PERIOD_MS; ++ch) {
-            debug_channels.push_back({vt_telemetry_channel_name(ch), ch});
+        // Увесь простір борта (0…511), а не до якогось останнього поля.
+        // У розкладці v2 номери йдуть блоками із запасами всередині, тож
+        // "останнього" каналу більше не існує — між блоками просто діри,
+        // і перебирати треба весь простір.
+        //
+        // Безіменні id не беремо: у налагоджувальних субтитрах рядок
+        // "UNKNOWN" на кожну дірку перетворив би їх на сміття.
+        for (int ch = 0; ch < (int)VT_TELEMETRY_CAPACITY; ++ch) {
+            const char* nm = vt_telemetry_channel_name(ch);
+            if (std::strcmp(nm, "UNKNOWN") == 0) continue;
+            debug_channels.push_back({nm, ch});
         }
         // Локальні канали — усі, а не лише два. У VRX сюди внесли
         // RECORDING_STATE і LINE_LOSS, а частоти лишились поза таблицею,
         // хоча саме вони й потрібні при розборі польоту: по них видно,
         // де загубились кадри — у лінку, в декодері чи вже на показі.
-        for (uint8_t ch : {VT_TLM_LOCAL_RECORDING_STATE, VT_TLM_LOCAL_LINE_LOSS,
+        for (uint16_t ch : {VT_TLM_LOCAL_RECORDING_STATE, VT_TLM_LOCAL_LINE_LOSS,
                            VT_TLM_LOCAL_H265_FPS, VT_TLM_LOCAL_MJPEG_FPS,
                            VT_TLM_LOCAL_H265_SHOWN_FPS, VT_TLM_LOCAL_DISPLAY_FPS,
                            VT_TLM_LOCAL_PHASE_LOCK, VT_TLM_LOCAL_LATENCY_MS,

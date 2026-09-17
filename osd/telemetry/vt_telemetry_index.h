@@ -6,170 +6,126 @@
 // перевірки імен каналів) на цьому й спіткнувся.
 #include <cstdint>
 
-// Дзеркало Core/VT_TLM/telemetry_index.h з прошивки UNI_DLOF_FIMWARES
-// (POINT/STATION, STM32). ТРИМАТИ РУЧНИМИ В СИНХРОНІ з прошивкою — ID тут
-// мають збігатись 1:1 з тим, що шле VT_ethernet_pipe/telemetry_sync_cls,
-// інакше VRX прочитає чуже поле як своє.
+// Дзеркало fw_telemetry.h із прошивки борта VTK-TEAM FIBER_WIND.
+// ТРИМАТИ РУЧНИМИ В СИНХРОНІ з прошивкою — id тут мають збігатись 1:1 з
+// тим, що борт кладе на дріт, інакше станція прочитає чуже поле як своє.
 //
-// 0..24 — дзеркало Betaflight tosTelemetryFieldId_e (1:1, той самий номер,
-// TOS про VT_TLM_* нічого не знає). 25+ — власні поля VRX/прошивки.
+// РОЗКЛАДКА v2 (2026-09-17), без сумісності з v1. Номери розкладені
+// БЛОКАМИ ПО 64 за змістом, усередині блоку суцільно, у кінці кожного —
+// запас. Сенс саме в запасі: нове поле лягає у свій блок і НІКОЛИ не
+// зсуває сусідів, тож нумерацію більше не доводиться заморожувати.
 //
-// ВАЖЛИВО: після розгортання на реальні пристрої ця нумерація
-// ЗАМОРОЖУЄТЬСЯ — далі можна лише ДОДАВАТИ нові id в кінець, ніколи не
-// переномеровувати/перевикористовувати наявні (це wire-протокол між уже
-// прошитими платами, зміна номера на льоту зламає сумісність).
+//    0…63   політ            192…319  канали пультів, по 32 на джерело
+//   64…95   GPS              320…351  оптика борта
+//   96…127  живлення борта   384…447  станція (борт лише резервує місце)
+//  128…159  ESC і мотори     448…511  версії протоколів і збірок
+//  160…191  керування, лінки 512+     простір станції, борт його не чіпає
+//
+// Версію самої розкладки борт шле каналом VT_TLM_PROTO_TELEMETRY_VER.
+// Він може сказати, що id перемістились, але не що змінився формат запису:
+// якби змінився, не прочиталось би нічого, включно з самим номером.
 typedef enum {
+    // ── 0…63 ПОЛІТ ───────────────────────────────────────────────────────
+    VT_TLM_ROLL                    = 0,   // Крен, °
+    VT_TLM_PITCH                   = 1,   // Тангаж, °
+    VT_TLM_YAW                     = 2,   // Рискання, °
+    VT_TLM_THROTTLE                = 3,   // Газ, мкс (rcCommand)
+    VT_TLM_EST_ALTITUDE            = 4,   // Оцінена висота (баро+GPS), м
+    VT_TLM_CLIMB_RATE              = 5,   // Вертикальна швидкість, км/год
+    VT_TLM_G_FORCE                 = 6,   // Навантаження, g (1.0 = висіння)
+    VT_TLM_ARM_STATUS              = 7,   // 0/1
+    VT_TLM_DISARM_REASON           = 8,   // flightLogDisarmReason_e, NA до першого роззброєння
+    VT_TLM_ARMING_DISABLE_REASON   = 9,   // молодший біт armingDisableFlags_e + 1, 0 = дозволено
+    VT_TLM_FLIGHT_MODE             = 10,  // 0 acro, 1 angle, 2 horizon
+    VT_TLM_CURRENT_PROFILE         = 11,  // індекс PID-профілю
+    VT_TLM_FLIGHT_TIME_S           = 12,  // с у армі, накопичено
+    VT_TLM_UPTIME_S                = 13,  // с від старту
+    VT_TLM_TRAVELLED_DIST_M        = 14,  // м (GPS)
+    VT_TLM_GYRO_TEMP               = 15,  // °C
+    VT_TLM_BARO_TEMP               = 16,  // °C
+    VT_TLM_CORE_TEMP               = 17,  // °C, кристал MCU
+    VT_TLM_CPU_LOAD                = 18,  // %
+    VT_TLM_GYRO_CALIBRATED         = 19,  // 0/1
+    VT_TLM_ACC_CALIBRATED          = 20,  // 0/1
 
-    VT_TLM_MAH_DRAWN                   = 0,  // Витрачений заряд, мАг
-    VT_TLM_AMPERAGE                    = 1,  // Струм, А
-    VT_TLM_VBAT_PRECISE                = 2,  // Напруга акума, В (нефільтрована)
+    // ── 64…95 GPS ────────────────────────────────────────────────────────
+    VT_TLM_GPS_FIX_TYPE            = 64,  // 0 / 2 / 3
+    VT_TLM_GPS_NUM_SAT             = 65,
+    VT_TLM_GPS_LAT                 = 66,  // °
+    VT_TLM_GPS_LON                 = 67,  // °
+    VT_TLM_GPS_ALT                 = 68,  // м
+    VT_TLM_GPS_SPEED               = 69,  // км/год
+    VT_TLM_GPS_COURSE              = 70,  // °
+    VT_TLM_GPS_DIST_TO_HOME        = 71,  // м
+    VT_TLM_GPS_HDOP                = 72,
 
-    VT_TLM_GPS_DISTANCE_TO_HOME        = 3,  // Відстань до точки старту, м (GPS_distanceToHome)
-    VT_TLM_G_FORCE                     = 4,  // Поточне G-навантаження (модуль вектора акселерометра), 1.0 = висіння
-    VT_TLM_CURRENT_PROFILE_INDEX       = 5,  // Індекс активного PID-профілю
+    // ── 96…127 ЖИВЛЕННЯ БОРТА ────────────────────────────────────────────
+    VT_TLM_VBAT                    = 96,  // В
+    VT_TLM_AMPERAGE                = 97,  // А
+    VT_TLM_MAH_DRAWN               = 98,  // мА·год
+    VT_TLM_ESC_POWER_ON            = 99,  // 0/1, стан рейки ESC
+    VT_TLM_CAMERA_POWER_ON         = 100, // 0/1, стан рейки камери
 
-    VT_TLM_GPS_FIX_TYPE                = 6,  // tosTelemetryGpsFixType_e (0=NONE,2=2D,3=3D)
-    VT_TLM_GPS_NUM_SAT                 = 7,  // Кількість супутників
-    VT_TLM_GPS_LATITUDE                = 8,  // Широта, град
-    VT_TLM_GPS_LONGITUDE               = 9,  // Довгота, град
-    VT_TLM_GPS_ALTITUDE                = 10, // Висота за GPS, м
-    VT_TLM_GPS_SPEED                   = 11, // Швидкість над землею, км/год
-    VT_TLM_GPS_GROUND_COURSE           = 12, // Курс за GPS, град
+    // ── 128…159 ESC І МОТОРИ, по 4 (id + номер мотора 0…3) ───────────────
+    VT_TLM_ESC_TEMP_0              = 128, // °C, розширена DShot-телеметрія
+    VT_TLM_ESC_VOLTAGE_0           = 132, // В
+    VT_TLM_ESC_CURRENT_0           = 136, // А
+    VT_TLM_ESC_RPM_0               = 140, // об/хв
+    VT_TLM_MOTOR_OUT_0             = 144, // 0…1, вихід міксера
 
-    VT_TLM_ROLL                        = 13, // Крен, град
-    VT_TLM_PITCH                       = 14, // Тангаж, град
-    VT_TLM_YAW                         = 15, // Рискання, град
+    // ── 160…191 КЕРУВАННЯ І ЛІНКИ ────────────────────────────────────────
+    VT_TLM_ACTIVE_RC_SOURCE        = 160, // 0 Ethernet, 1 резерв ELRS
+    VT_TLM_CONTROL_DELAY_MS        = 161, // наскрізна затримка керування
+    VT_TLM_RC1_AGE_MS              = 162,
+    VT_TLM_RC2_AGE_MS              = 163,
+    VT_TLM_RC3_AGE_MS              = 164,
+    VT_TLM_ERLS_AGE_MS             = 165,
+    VT_TLM_HANDOVER_COUNT          = 166, // скільки разів мінялось джерело
+    VT_TLM_FAILSAFE_ACTIVE         = 167, // 0/1
+    VT_TLM_RC_FRAMES_ETH           = 168,
+    VT_TLM_RC_FRAMES_ERLS          = 169,
+    VT_TLM_ERLS_RSSI1              = 176, // дБм (від'ємне)
+    VT_TLM_ERLS_RSSI2              = 177, // дБм
+    VT_TLM_ERLS_LQ                 = 178, // %
+    VT_TLM_ERLS_SNR                = 179, // дБ
+    VT_TLM_ERLS_TX_PWR             = 180, // мВт (індекс CRSF)
+    VT_TLM_ERLS_DL_LQ              = 181, // %
+    VT_TLM_ERLS_DL_SNR             = 182, // дБ
 
-    VT_TLM_ESTIMATED_ALTITUDE          = 16, // Оцінена висота (баро+GPS ф'южн), м
-    VT_TLM_CLIMB_RATE                  = 17, // Вертикальна швидкість, км/год
+    // ── 192…319 КАНАЛИ, по 32 слоти на джерело ───────────────────────────
+    // Слот 16 у кожному наборі — вік даних пульта, слот 17 — прапори.
+    VT_TLM_RC1_CH1                 = 192, // Ethernet, пульт 1 … CH32 = 223
+    VT_TLM_RC2_CH1                 = 224, // поки не збирається
+    VT_TLM_RC3_CH1                 = 256, // поки не збирається
+    VT_TLM_ERLS_CH1                = 288, // резерв, CRSF
 
-    VT_TLM_TOTAL_TRAVELLED_DIST        = 18, // Пройдена відстань з моменту старту (одометр), м
+    // ── 320…351 ОПТИКА БОРТА ─────────────────────────────────────────────
+    VT_TLM_SFP_TEMP                = 320, // °C
+    VT_TLM_SFP_VCC                 = 321, // В
+    VT_TLM_SFP_TX_DBM              = 322, // дБм, ВІДНОСНІ (без калібрування)
+    VT_TLM_SFP_RX_DBM              = 323, // дБм, відносні
 
-    VT_TLM_FLIGHT_TIME                 = 19, // Накопичений час у армі, с
-    VT_TLM_THROTTLE                    = 20, // Газ (оброблена команда), 1000-2000
-    VT_TLM_ARM_STATUS                  = 21, // Армовано/ні, 0/1
+    // ── 384…447 СТАНЦІЯ (борт лише резервує, значення кладе станція) ─────
+    VT_TLM_STATION_SUPPLY_V        = 384, // В
+    VT_TLM_STATION_BUILD           = 385, // лічильник збірки станції
+    VT_TLM_STATION_SFP_PRESENT     = 386, // 0/1
+    VT_TLM_STATION_SFP_TEMP        = 387, // °C
+    VT_TLM_STATION_SFP_VCC         = 388, // В
+    VT_TLM_STATION_SFP_TX_DBM      = 389, // дБм
+    VT_TLM_STATION_SFP_RX_DBM      = 390, // дБм
 
-    VT_TLM_DISARM_REASON               = 22, // flightLogDisarmReason_e (fc/core.h)
-    VT_TLM_ARMING_DISABLE_REASON       = 23, // tosTelemetryArmingDisableReason_e — найнижчий встановлений біт armingDisableFlags_e, +1 (0=OK)
-    VT_TLM_FLIGHT_MODE                 = 24, // tosTelemetryFlightMode_e (пріоритетний вибір активного режиму)
-
-    // ── 25..40: діагностика POINT/STATION (та сама плата, різні ролі,
-    // той самий id-простір і порт 50122) ────────────────────────────────
-    VT_TLM_SFP_TEMP_POINT              = 25, // Температура SFP-модуля POINT, °C
-    VT_TLM_SFP_VCC_POINT               = 26, // Напруга живлення SFP POINT, В
-    VT_TLM_SFP_BIAS_MA_POINT           = 27, // Струм зміщення TX SFP POINT, мА
-    VT_TLM_SFP_TX_DBM_POINT            = 28, // Потужність TX SFP POINT, дБм
-    VT_TLM_SFP_RX_DBM_POINT            = 29, // Потужність RX SFP POINT, дБм
-
-    VT_TLM_SFP_TEMP_STATION            = 30, // Те саме, STATION
-    VT_TLM_SFP_VCC_STATION             = 31,
-    VT_TLM_SFP_BIAS_MA_STATION         = 32,
-    VT_TLM_SFP_TX_DBM_STATION          = 33,
-    VT_TLM_SFP_RX_DBM_STATION          = 34,
-
-    VT_TLM_POWER_SUPPLY_VOLTAGE_POINT   = 35, // Напруга живлення плати POINT (резистивний дільник, ADC), В
-    VT_TLM_POWER_SUPPLY_VOLTAGE_STATION = 36, // Те саме, STATION
-
-    VT_TLM_BOSA_RX_MON_POINT            = 37, // Аналоговий монітор-пін оптики RX, POINT, В (пряма напруга з ADC, без дільника)
-    VT_TLM_BOSA_TX_MON_POINT            = 38, // Те саме, TX, POINT
-    VT_TLM_BOSA_RX_MON_STATION          = 39, // Те саме, RX, STATION
-    VT_TLM_BOSA_TX_MON_STATION          = 40, // Те саме, TX, STATION
-
-    // ── 41..50: ERLS лінк-статистика і службові ─────────────────────────
-    VT_TLM_ERLS_RSSI1                  = 41, // Uplink RSSI, антена 1
-    VT_TLM_ERLS_RSSI2                  = 42, // Uplink RSSI, антена 2
-    VT_TLM_ERLS_LQ                     = 43, // Uplink link quality, %
-    VT_TLM_ERLS_SNR                    = 44, // Uplink SNR, дБ
-    VT_TLM_ERLS_TX_PWR                 = 45, // Uplink TX power (enum-код потужності)
-    VT_TLM_ERLS_DL_LQ                  = 46, // Downlink link quality, %
-    VT_TLM_ERLS_DL_SNR                 = 47, // Downlink SNR, дБ
-
-    VT_TLM_ACTIVE_CRSF_DATA_SRC_INDEX  = 48, // Індекс активного джерела керування (CRSF_data_selector), -1 = немає
-
-    VT_TLM_RC_UPDATE_TIME_MS           = 49, // Час з моменту останнього RC-пакету, мс
-    VT_TLM_ERLS_UPDATE_TIME_MS         = 50, // Те саме для ERLS, мс
-
-    // ── 51..68: дзеркало RC-каналів (з мережі/пульта), сирі 11-біт CRSF
-    // (0..2047). CH17/CH18 зарезервовані — CRSF несе лише 16 реальних. ──
-    VT_TLM_RC_CH1                      = 51,
-    VT_TLM_RC_CH2                      = 52,
-    VT_TLM_RC_CH3                      = 53,
-    VT_TLM_RC_CH4                      = 54,
-    VT_TLM_RC_CH5                      = 55,
-    VT_TLM_RC_CH6                      = 56,
-    VT_TLM_RC_CH7                      = 57,
-    VT_TLM_RC_CH8                      = 58,
-    VT_TLM_RC_CH9                      = 59,
-    VT_TLM_RC_CH10                     = 60,
-    VT_TLM_RC_CH11                     = 61,
-    VT_TLM_RC_CH12                     = 62,
-    VT_TLM_RC_CH13                     = 63,
-    VT_TLM_RC_CH14                     = 64,
-    VT_TLM_RC_CH15                     = 65,
-    VT_TLM_RC_CH16                     = 66,
-    VT_TLM_RC_CH17                     = 67, // поки не заповнюється
-    VT_TLM_RC_CH18                     = 68, // поки не заповнюється
-
-    // ── 69..86: дзеркало ERLS-каналів, та сама структура, що RC_CH1-18,
-    // джерело — ERLS-приймач ─────────────────────────────────────────────
-    VT_TLM_ERLS_CH1                    = 69,
-    VT_TLM_ERLS_CH2                    = 70,
-    VT_TLM_ERLS_CH3                    = 71,
-    VT_TLM_ERLS_CH4                    = 72,
-    VT_TLM_ERLS_CH5                    = 73,
-    VT_TLM_ERLS_CH6                    = 74,
-    VT_TLM_ERLS_CH7                    = 75,
-    VT_TLM_ERLS_CH8                    = 76,
-    VT_TLM_ERLS_CH9                    = 77,
-    VT_TLM_ERLS_CH10                   = 78,
-    VT_TLM_ERLS_CH11                   = 79,
-    VT_TLM_ERLS_CH12                   = 80,
-    VT_TLM_ERLS_CH13                   = 81,
-    VT_TLM_ERLS_CH14                   = 82,
-    VT_TLM_ERLS_CH15                   = 83,
-    VT_TLM_ERLS_CH16                   = 84,
-    VT_TLM_ERLS_CH17                   = 85,
-    VT_TLM_ERLS_CH18                   = 86,
-
-    // ── 87..89: внутрішня діагностика ───────────────────────────────────
-    VT_TLM_TLM_QUEUE_FALLBACK_COUNT    = 87, // Скільки разів чергу брали через "soonest"-fallback (черга впритул до межі чи за нею)
-    VT_TLM_TLM_QUEUE_IS_CHANGE_COUNT   = 88, // Скільки разів через м'якший "is_change"-fallback
-    VT_TLM_TOS_RX_PERIOD_MS            = 89, // Реально виміряний період вхідних TOS-пакетів від Betaflight, мс
-
-    // ── 90..107: ДРУГИЙ ПУЛЬТ ───────────────────────────────────────────
-    //
-    // Станція підтримує два передавачі одночасно. Канали дзеркалять
-    // RC_CH1-18 один в один: та сама структура, той самий діапазон
-    // значень, різниця лише в тому, чий стік крутять.
-    //
-    // Навіщо окремий блок, а не "активний пульт" одним набором. Пульти
-    // можуть працювати РАЗОМ — інструктор і учень, оператор і стрілець, —
-    // і в такій схемі питання "чиє це положення" важливіше за саме
-    // положення. Один набір із перемикачем джерела відповісти на нього не
-    // може в принципі.
-    VT_TLM_RC2_CH1                     = 90,
-    VT_TLM_RC2_CH2                     = 91,
-    VT_TLM_RC2_CH3                     = 92,
-    VT_TLM_RC2_CH4                     = 93,
-    VT_TLM_RC2_CH5                     = 94,
-    VT_TLM_RC2_CH6                     = 95,
-    VT_TLM_RC2_CH7                     = 96,
-    VT_TLM_RC2_CH8                     = 97,
-    VT_TLM_RC2_CH9                     = 98,
-    VT_TLM_RC2_CH10                    = 99,
-    VT_TLM_RC2_CH11                    = 100,
-    VT_TLM_RC2_CH12                    = 101,
-    VT_TLM_RC2_CH13                    = 102,
-    VT_TLM_RC2_CH14                    = 103,
-    VT_TLM_RC2_CH15                    = 104,
-    VT_TLM_RC2_CH16                    = 105,
-    VT_TLM_RC2_CH17                    = 106,
-    VT_TLM_RC2_CH18                    = 107,
-
+    // ── 448…511 ВЕРСІЇ ───────────────────────────────────────────────────
+    VT_TLM_BUILD_POINT             = 448, // наскрізний лічильник збірок борта
+    VT_TLM_BF_VERSION              = 449, // рік × 100 + місяць
+    VT_TLM_PROTO_TRANSPORT_VER     = 450,
+    VT_TLM_PROTO_CONTROL_VER       = 451,
+    VT_TLM_PROTO_TELEMETRY_VER     = 452, // версія ЦІЄЇ розкладки
+    VT_TLM_PROTO_MSP_VER           = 453,
+    VT_TLM_PROTO_HEARTBEAT_VER     = 454,
 } VT_telemetry_index_e;
 
 // Той самий запас, що і TELEMETRY_CAPACITY на STM (Core/VT_TLM/telemetry_storage_cls.h).
-constexpr unsigned VT_TELEMETRY_CAPACITY = 128u;
+constexpr unsigned VT_TELEMETRY_CAPACITY = 512u;
 
 // Той самий сентинел, що і TELEMETRY_SOURCE_NOT_AVAILABLE на STM — прошивка
 // сама підставляє це замість значення, якщо канал не оновлювався довше
@@ -288,28 +244,28 @@ constexpr uint8_t VT_TLM_LAYOUT_CAP_ANCHOR  = 164;
 // Пишуться напряму в VtTelemetryStorage тим, хто їх рахує (main.cpp), і
 // читаються звідти ж рендером OSD — жодної спеціальної обробки не треба,
 // це звичайні канали з точки зору OsdSource.
-constexpr uint8_t VT_TLM_LOCAL_RECORDING_STATE = 200; // 0=немає носія, 1=запис, 2=носій є/не пише
-constexpr uint8_t VT_TLM_LOCAL_LINE_LOSS       = 201; // SFP_TX_DBM_POINT - SFP_RX_DBM_STATION, дБ
-constexpr uint8_t VT_TLM_LOCAL_H265_FPS        = 202; // реально отриманий/декодований fps h265-потоку
-constexpr uint8_t VT_TLM_LOCAL_MJPEG_FPS       = 203; // реально отриманий/декодований fps mjpeg-потоку
-constexpr uint8_t VT_TLM_LOCAL_DISPLAY_FPS     = 205; // реальна частота показів на екрані (підтверджені flip'и за секунду) — на відміну від 204 не залежить від того, чи був кадр новим
-constexpr uint8_t VT_TLM_LOCAL_H265_SHOWN_FPS  = 204; // реально ПОКАЗАНИЙ на екрані fps h265 (VideoSource::total_presented_frames()) — відрізняється від LOCAL_H265_FPS, якщо декодовані кадри губляться саме на показі (KmsDisplay), а не на прийомі/декодуванні
+constexpr uint16_t VT_TLM_LOCAL_RECORDING_STATE = 528; // 0=немає носія, 1=запис, 2=носій є/не пише
+constexpr uint16_t VT_TLM_LOCAL_LINE_LOSS       = 529; // SFP_TX_DBM_POINT - SFP_RX_DBM_STATION, дБ
+constexpr uint16_t VT_TLM_LOCAL_H265_FPS        = 530; // реально отриманий/декодований fps h265-потоку
+constexpr uint16_t VT_TLM_LOCAL_MJPEG_FPS       = 531; // реально отриманий/декодований fps mjpeg-потоку
+constexpr uint16_t VT_TLM_LOCAL_DISPLAY_FPS     = 533; // реальна частота показів на екрані (підтверджені flip'и за секунду) — на відміну від 204 не залежить від того, чи був кадр новим
+constexpr uint16_t VT_TLM_LOCAL_H265_SHOWN_FPS  = 532; // реально ПОКАЗАНИЙ на екрані fps h265 (VideoSource::total_presented_frames()) — відрізняється від LOCAL_H265_FPS, якщо декодовані кадри губляться саме на показі (KmsDisplay), а не на прийомі/декодуванні
 
 // ─── стан тракту показу ─────────────────────────────────────────────────
 // Чотири числа, які разом відповідають на "чи здоровий показ і чим за це
 // заплачено". Порізно кожне бреше: затримка може бути маленькою через те,
 // що кадри летять повз екран, а нуль пропусків — стояти при затримці в
 // два періоди.
-constexpr uint8_t VT_TLM_LOCAL_PHASE_LOCK      = 206; // ФАПЧ: 0=не веде, 1=веде, 2=захоплено
-constexpr uint8_t VT_TLM_LOCAL_LATENCY_MS      = 207; // затримка тракту: вихід декодера -> підтверджений показ, мс
-constexpr uint8_t VT_TLM_LOCAL_DROPPED_FPS     = 208; // кадрів на секунду, що НЕ дійшли до екрана (зрізані чергою)
-constexpr uint8_t VT_TLM_LOCAL_LATE_FPS        = 209; // кадрів на секунду, що прийшли після опиту: не втрачені, але поїдуть через розгортку
+constexpr uint16_t VT_TLM_LOCAL_PHASE_LOCK      = 534; // ФАПЧ: 0=не веде, 1=веде, 2=захоплено
+constexpr uint16_t VT_TLM_LOCAL_LATENCY_MS      = 535; // затримка тракту: вихід декодера -> підтверджений показ, мс
+constexpr uint16_t VT_TLM_LOCAL_DROPPED_FPS     = 536; // кадрів на секунду, що НЕ дійшли до екрана (зрізані чергою)
+constexpr uint16_t VT_TLM_LOCAL_LATE_FPS        = 537; // кадрів на секунду, що прийшли після опиту: не втрачені, але поїдуть через розгортку
 
 // КІЛЬКІСТЮ, А НЕ ЧАСТОТОЮ. Решта каналів тракту — темп подій, бо по них
 // судять про стан ПРЯМО ЗАРАЗ. Цей — накопичувальний: питання до нього
 // інше, "скільки всього загубилось за політ", і відповідь на нього має
 // пам'ятати те, що сталося дві хвилини тому.
-constexpr uint8_t VT_TLM_LOCAL_LOST_FRAMES     = 210; // кадрів, які мали прийти й не прийшли (діри в приході), за весь час
+constexpr uint16_t VT_TLM_LOCAL_LOST_FRAMES     = 538; // кадрів, які мали прийти й не прийшли (діри в приході), за весь час
 
 // ─── СИСТЕМНИЙ ГОДИННИК СТАНЦІЇ ─────────────────────────────────────────
 //
@@ -322,7 +278,7 @@ constexpr uint8_t VT_TLM_LOCAL_LOST_FRAMES     = 210; // кадрів, які м
 //
 // Час — секунди від опівночі: те саме міркування, тільки простіше, і
 // заразом дає безкоштовне сортування.
-constexpr uint8_t VT_TLM_LOCAL_CLOCK           = 211; // секунд від опівночі, локальний час
-constexpr uint8_t VT_TLM_LOCAL_DATE            = 212; // дата як YYMMDD (260802 = 2 серпня 2026)
-constexpr uint8_t VT_TLM_LOCAL_DRIVE_FREE      = 213; // вільно на носії, ГБ
-constexpr uint8_t VT_TLM_LOCAL_CAPTURE_FPS     = 214; // fps локального захвату (MS2106), реально декодований
+constexpr uint16_t VT_TLM_LOCAL_CLOCK           = 539; // секунд від опівночі, локальний час
+constexpr uint16_t VT_TLM_LOCAL_DATE            = 540; // дата як YYMMDD (260802 = 2 серпня 2026)
+constexpr uint16_t VT_TLM_LOCAL_DRIVE_FREE      = 541; // вільно на носії, ГБ
+constexpr uint16_t VT_TLM_LOCAL_CAPTURE_FPS     = 542; // fps локального захвату (MS2106), реально декодований

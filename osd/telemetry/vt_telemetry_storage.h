@@ -23,16 +23,19 @@
 // саме так, як просив Олег: слухач і рендер — дві незалежні задачі.
 class VtTelemetryStorage {
 public:
-    // 256, не VT_TELEMETRY_CAPACITY (128 — те, що влазить у прошивку) —
-    // тут ще й VRX-локальні канали (id >= 200, vt_telemetry_index.h),
-    // яких прошивка не знає. id завжди uint8_t (одна байта в кадрі), тож
-    // 256 — природна верхня межа.
-    static constexpr uint32_t CAPACITY = 256;
+    // ID 16-БІТНИЙ, і це не запас на майбутнє, а вимога протоколу v2:
+    // запис телеметрії тепер [id: 2 байти LE][float32], а розкладка id
+    // розкладена блоками по 64 і сягає 526 навіть у тому, що вже вживається.
+    //
+    // 1024 слоти покривають увесь простір борта (0…511) і початок простору
+    // станції (512+), де живуть наші власні канали. Коштує це двадцять із
+    // чимось кілобайтів — ціна, про яку нема сенсу думати.
+    static constexpr uint32_t CAPACITY = 1024;
 
     // Викликається з потоку UDP-слухача при кожному валідному записі
     // sync-пакета. Оновлює і значення, і "час останнього оновлення" —
     // те саме, що last_update_tick_ms на STM.
-    void set_value(uint8_t id, float value) {
+    void set_value(uint16_t id, float value) {
         if (id >= CAPACITY) return;
         std::lock_guard<std::mutex> lock(mutex_);
         Slot& slot = slots_[id];
@@ -47,7 +50,7 @@ public:
     // жодного значення (не те саме, що VT_TELEMETRY_SOURCE_NOT_AVAILABLE —
     // те приходить як РЕАЛЬНЕ значення -9999.0, яке get_value() поверне
     // як є, це відповідальність читача розпізнати сентинел).
-    bool get_value(uint8_t id, float* out_value, uint32_t* out_age_ms = nullptr) const {
+    bool get_value(uint16_t id, float* out_value, uint32_t* out_age_ms = nullptr) const {
         if (id >= CAPACITY) return false;
         std::lock_guard<std::mutex> lock(mutex_);
         const Slot& slot = slots_[id];
@@ -64,7 +67,7 @@ public:
     // true, якщо для id ще не було жодного значення АБО останнє прийшло
     // давніше за timeout_ms — той самий поріг-підхід, що і is_channel_stale()
     // в старому MapOsdDataSource, просто ключ тепер raw id, а не хеш рядка.
-    bool is_stale(uint8_t id, uint32_t timeout_ms) const {
+    bool is_stale(uint16_t id, uint32_t timeout_ms) const {
         float value = 0.f;
         uint32_t age_ms = 0;
         if (!get_value(id, &value, &age_ms)) return true;

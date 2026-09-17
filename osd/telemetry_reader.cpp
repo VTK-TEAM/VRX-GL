@@ -121,7 +121,7 @@ bool TelemetryReader::fill(int64_t wall_us, VtTelemetryStorage& out) {
         // NaN означає "каналу не було взагалі" — його й не кладемо, бо
         // інакше він виглядав би як наявний, але порожній. Це різні речі.
         if (std::isnan(v)) continue;
-        out.set_value((uint8_t)get_u16(p), v);
+        out.set_value(get_u16(p), v);
     }
     return true;
 }

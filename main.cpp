@@ -802,20 +802,24 @@ int main(int argc, char** argv) {
 
         if (osd) {
             // Що РЕАЛЬНО лежить у службових каналах. Стан запису на екрані
-            // малює канал 200, і якщо він розходиться з рядком ЗАПИС вище,
-            // винен не рекордер, а те, що між ними.
-            auto ch = [&](uint8_t id) {
+            // малює власний канал станції, і якщо він розходиться з рядком
+            // ЗАПИС вище, винен не рекордер, а те, що між ними.
+            auto ch = [&](uint16_t id) {
                 float v = 0.f; uint32_t age = 0;
                 return osd->storage().get_value(id, &v, &age)
                      ? std::string(std::to_string(v).substr(0, 6) + "/" +
                                    std::to_string(age) + "мс")
                      : std::string("немає");
             };
-            std::printf("          КАНАЛИ: 200 запис %s | 206 ФАПЧ %s | 207 затримка %s"
-                        " | 208 дроп %s | 209 пізно %s\n",
-                        ch(200).c_str(), ch(206).c_str(), ch(207).c_str(),
-                        ch(208).c_str(), ch(209).c_str());
-            std::printf("               210 не прийшло кадрів: %s\n", ch(210).c_str());
+            std::printf("          КАНАЛИ: %d запис %s | %d ФАПЧ %s | %d затримка %s"
+                        " | %d дроп %s | %d пізно %s\n",
+                        VT_TLM_LOCAL_RECORDING_STATE, ch(VT_TLM_LOCAL_RECORDING_STATE).c_str(),
+                        VT_TLM_LOCAL_PHASE_LOCK,      ch(VT_TLM_LOCAL_PHASE_LOCK).c_str(),
+                        VT_TLM_LOCAL_LATENCY_MS,      ch(VT_TLM_LOCAL_LATENCY_MS).c_str(),
+                        VT_TLM_LOCAL_DROPPED_FPS,     ch(VT_TLM_LOCAL_DROPPED_FPS).c_str(),
+                        VT_TLM_LOCAL_LATE_FPS,        ch(VT_TLM_LOCAL_LATE_FPS).c_str());
+            std::printf("               %d не прийшло кадрів: %s\n",
+                        VT_TLM_LOCAL_LOST_FRAMES, ch(VT_TLM_LOCAL_LOST_FRAMES).c_str());
 
             auto os = osd->stats();
             std::printf("          OSD: квадів %llu | збірок %llu по %.2f мс"

@@ -119,8 +119,11 @@ struct LocalChannels::Impl {
         // вже немає.
         {
             float tx = 0.f, rx = 0.f;
-            if (storage->get_value(VT_TLM_SFP_TX_DBM_POINT, &tx) &&
-                storage->get_value(VT_TLM_SFP_RX_DBM_STATION, &rx)) {
+            // Втрата в лінії: скільки борт віддав мінус скільки станція
+            // прийняла. Плата POINT злилася з польотним контролером, тож
+            // передавач тепер просто SFP борта.
+            if (storage->get_value(VT_TLM_SFP_TX_DBM, &tx) &&
+                storage->get_value(VT_TLM_STATION_SFP_RX_DBM, &rx)) {
                 storage->set_value(VT_TLM_LOCAL_LINE_LOSS, tx - rx);
             }
         }

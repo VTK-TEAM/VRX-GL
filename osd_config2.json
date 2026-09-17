@@ -24,7 +24,7 @@
           "VALUE": 1
         }
       ],
-      "DATACHANNEL": 21,
+      "DATACHANNEL": 7,
       "DEFAULT": "DISARM",
       "L": 0.6700000166893005,
       "S": 1,
@@ -186,7 +186,7 @@
           "VALUE": 30
         }
       ],
-      "DATACHANNEL": 23,
+      "DATACHANNEL": 9,
       "DEFAULT": "",
       "L": 0.6700000166893005,
       "S": 1,
@@ -196,7 +196,7 @@
     },
     "clock_display": {
       "// NOTE": "LOCAL_CLOCK(211) — системний годинник станції, секунди від опівночі. FORMAT дає HH:MM. Виставляється в редакторі.",
-      "DATACHANNEL": 211,
+      "DATACHANNEL": 539,
       "DECIMALS": 0,
       "FORMAT": "HH:MM",
       "L": 0.28999999165534973,
@@ -207,7 +207,7 @@
     },
     "date_display": {
       "// NOTE": "LOCAL_DATE(212) — дата як YYMMDD одним числом: float32 має точні цілі лише до 16.7 млн, і YYYYMMDD зсунув би день мовчки.",
-      "DATACHANNEL": 212,
+      "DATACHANNEL": 540,
       "DECIMALS": 0,
       "FORMAT": "DD.MM.YY",
       "L": 0.20000000298023224,
@@ -218,7 +218,7 @@
     },
     "drive_free_display": {
       "// NOTE": "LOCAL_DRIVE_FREE(213) — вільно на носії, ГБ, поруч зі значком запису: разом вони й кажуть «пишемо і чи надовго вистачить». HIDE_IF_NO_DATA: немає флешки — рядка на екрані немає взагалі. Прочерк означав би «значення мало б бути», а тут правда інша — нема про що звітувати.",
-      "DATACHANNEL": 213,
+      "DATACHANNEL": 541,
       "DECIMALS": 1,
       "HIDE_IF_NO_DATA": true,
       "L": 0.550000011920929,
@@ -228,7 +228,7 @@
       "UNITS": "GB"
     },
     "drone_battery_display": {
-      "DATACHANNEL": 2,
+      "DATACHANNEL": 96,
       "DECIMALS": 1,
       "L": 0.0,
       "LABEL": "<fpv_battery>",
@@ -237,7 +237,7 @@
       "UNITS": "V"
     },
     "drone_current_display": {
-      "DATACHANNEL": 1,
+      "DATACHANNEL": 97,
       "DECIMALS": 0,
       "HIDE_IF_NO_DATA": true,
       "L": 0.0,
@@ -248,7 +248,7 @@
     },
     "dropped_fps_display": {
       "// NOTE": "LOCAL_DROPPED_FPS(208) — кадри, декодовані, але зрізані чергою як застарілі. Чиста втрата, на відміну від 209.",
-      "DATACHANNEL": 208,
+      "DATACHANNEL": 536,
       "DECIMALS": 2,
       "L": 0.88,
       "LABEL": "Drop ",
@@ -257,7 +257,7 @@
       "UNITS": "fps"
     },
     "flight_altitude_display": {
-      "DATACHANNEL": 16,
+      "DATACHANNEL": 4,
       "DECIMALS": 0,
       "L": 0.07999999821186066,
       "LABEL": "ALT ",
@@ -266,7 +266,7 @@
       "UNITS": "m"
     },
     "flight_distance_display": {
-      "DATACHANNEL": 3,
+      "DATACHANNEL": 71,
       "DECIMALS": 0,
       "L": 0.3799999952316284,
       "LABEL": "DIST ",
@@ -275,7 +275,7 @@
       "UNITS": "m"
     },
     "flight_gforce_value": {
-      "DATACHANNEL": 4,
+      "DATACHANNEL": 6,
       "DECIMALS": 1,
       "L": 0.0,
       "LABEL": "<current_amperage>",
@@ -322,7 +322,7 @@
           "VALUE": 6
         }
       ],
-      "DATACHANNEL": 24,
+      "DATACHANNEL": 10,
       "DEFAULT": "",
       "L": 0.75,
       "LABEL": "MODE:",
@@ -332,7 +332,7 @@
       "UNITS": ""
     },
     "flight_odometer_value": {
-      "DATACHANNEL": 18,
+      "DATACHANNEL": 14,
       "DECIMALS": 0,
       "L": 0.3799999952316284,
       "LABEL": "ODO ",
@@ -342,7 +342,7 @@
       "UNITS": "m"
     },
     "flight_sats_display": {
-      "DATACHANNEL": 7,
+      "DATACHANNEL": 65,
       "DECIMALS": 0,
       "L": 0.009999999776482582,
       "LABEL": "<gps_sat> ",
@@ -351,7 +351,7 @@
       "UNITS": ""
     },
     "flight_speed_display": {
-      "DATACHANNEL": 11,
+      "DATACHANNEL": 69,
       "DECIMALS": 0,
       "L": 0.20000000298023224,
       "LABEL": "SPD ",
@@ -361,7 +361,7 @@
     },
     "flight_time_display": {
       "// NOTE": "FLIGHT_TIME(19) - сирі секунди з FC; FORMAT=MM:SS переводить їх у хвилини:секунди при виводі.",
-      "DATACHANNEL": 19,
+      "DATACHANNEL": 12,
       "DECIMALS": 0,
       "FORMAT": "MM:SS",
       "L": 0.550000011920929,
@@ -371,7 +371,7 @@
       "UNITS": ""
     },
     "h265_fps_display": {
-      "DATACHANNEL": 202,
+      "DATACHANNEL": 530,
       "DECIMALS": 1,
       "L": 0.88,
       "LABEL": "Main ",
@@ -380,7 +380,7 @@
       "UNITS": "fps"
     },
     "h265_shown_fps_display": {
-      "DATACHANNEL": 204,
+      "DATACHANNEL": 532,
       "DECIMALS": 1,
       "L": 0.88,
       "LABEL": "Screen ",
@@ -390,7 +390,7 @@
     },
     "late_fps_display": {
       "// NOTE": "LOCAL_LATE_FPS(209) — кадри, що прийшли після точки опиту рендерера. НЕ втрачені: поїдуть на екран на розгортку пізніше, тобто платимо лише затримкою. Жоден інший показник цього не бачить — кадр цілий, черга здорова, крок зйомки в нормі.",
-      "DATACHANNEL": 209,
+      "DATACHANNEL": 537,
       "DECIMALS": 2,
       "L": 0.88,
       "LABEL": "Late ",
@@ -400,7 +400,7 @@
     },
     "latency_display": {
       "// NOTE": "LOCAL_LATENCY_MS(207) — вихід декодера -> підтверджений показ. Читати разом із 209: маленька затримка при великому Late означає, що кадри просто летять повз екран.",
-      "DATACHANNEL": 207,
+      "DATACHANNEL": 535,
       "DECIMALS": 1,
       "L": 0.88,
       "LABEL": "Lat ",
@@ -409,7 +409,7 @@
       "UNITS": "ms"
     },
     "line_loss_display": {
-      "DATACHANNEL": 201,
+      "DATACHANNEL": 529,
       "DECIMALS": 1,
       "L": 0.8799999952316284,
       "LABEL": "LOSS",
@@ -419,7 +419,7 @@
     },
     "lost_frames_display": {
       "// NOTE": "LOCAL_LOST_FRAMES(210) — кадри, які мали прийти й не прийшли: діри в приході, більші за півтора періоди. КІЛЬКІСТЮ, а не темпом: питання до цього числа — скільки всього загубилось за політ. Діра, довша за signal_timeout_ms (3 с), сюди не входить — то втрата сигналу, а не кадрів.",
-      "DATACHANNEL": 210,
+      "DATACHANNEL": 538,
       "DECIMALS": 0,
       "L": 0.88,
       "LABEL": "Lost ",
@@ -428,7 +428,7 @@
       "UNITS": ""
     },
     "mjpeg_fps_display": {
-      "DATACHANNEL": 203,
+      "DATACHANNEL": 531,
       "DECIMALS": 1,
       "L": 0.88,
       "LABEL": "Sub ",
@@ -437,7 +437,7 @@
       "UNITS": "fps"
     },
     "optics_drone_rx_display": {
-      "DATACHANNEL": 29,
+      "DATACHANNEL": 323,
       "DECIMALS": 1,
       "L": 0.88,
       "LABEL": "ARx ",
@@ -446,7 +446,7 @@
       "UNITS": "dBm"
     },
     "optics_drone_tx_display": {
-      "DATACHANNEL": 28,
+      "DATACHANNEL": 322,
       "DECIMALS": 1,
       "L": 0.88,
       "LABEL": "ATx ",
@@ -455,7 +455,7 @@
       "UNITS": "dBm"
     },
     "optics_gcs_rx_display": {
-      "DATACHANNEL": 34,
+      "DATACHANNEL": 390,
       "DECIMALS": 1,
       "L": 0.88,
       "LABEL": "GRx ",
@@ -464,7 +464,7 @@
       "UNITS": "dBm"
     },
     "optics_gcs_tx_display": {
-      "DATACHANNEL": 33,
+      "DATACHANNEL": 389,
       "DECIMALS": 1,
       "L": 0.88,
       "LABEL": "GTx ",
@@ -486,7 +486,7 @@
           "VALUE": 1
         }
       ],
-      "DATACHANNEL": 206,
+      "DATACHANNEL": 534,
       "DEFAULT": "----",
       "L": 0.88,
       "LABEL": "PLL ",
@@ -495,18 +495,8 @@
       "TYPE": "ENUM",
       "UNITS": ""
     },
-    "power_supply_A_value": {
-      "DATACHANNEL": 35,
-      "DECIMALS": 1,
-      "L": 0.009999999776482582,
-      "LABEL": "A ",
-      "S": 1,
-      "T": 0.9399999976158142,
-      "TYPE": "VALUE",
-      "UNITS": "V"
-    },
     "power_supply_G_value": {
-      "DATACHANNEL": 36,
+      "DATACHANNEL": 384,
       "DECIMALS": 1,
       "L": 0.07999999821186066,
       "LABEL": "G ",
@@ -518,7 +508,7 @@
     "rc_ch2_bar": {
       "BAR_H": 0.015,
       "BAR_W": 0.1,
-      "DATACHANNEL": 20,
+      "DATACHANNEL": 3,
       "EMPTY_IMAGE": "img/pgbar_empy.png",
       "FILL_IMAGE": "img/pgbar_green.png",
       "L": 0.1599999964237213,
@@ -543,7 +533,7 @@
           "VALUE": 0
         }
       ],
-      "DATACHANNEL": 200,
+      "DATACHANNEL": 528,
       "DEFAULT": "",
       "L": 0.94,
       "S": 3,
@@ -551,7 +541,7 @@
       "TYPE": "ENUM"
     },
     "throttle": {
-      "DATACHANNEL": 20,
+      "DATACHANNEL": 3,
       "DECIMALS": 0,
       "L": 0.07999999821186066,
       "LABEL": "THR",

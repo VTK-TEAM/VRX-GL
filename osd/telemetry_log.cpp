@@ -118,7 +118,7 @@ struct TelemetryLog::Impl {
         for (int id = 0; id < cfg.channels; ++id, p += 6) {
             put_u16(p, (uint16_t)id);
             float v = std::nanf("");          // каналу не було — так і скажемо
-            (void)tlm.get_value((uint8_t)id, &v, nullptr);
+            (void)tlm.get_value((uint16_t)id, &v, nullptr);
             put_f32(p + 2, v);
         }
         if (::write(fd, frame.data(), frame.size()) < 0) close_file();
