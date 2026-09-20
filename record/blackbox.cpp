@@ -1,4 +1,5 @@
 #include "record/blackbox.hpp"
+#include "record/journal.hpp"
 #include "record/storage.hpp"
 #include "osd/telemetry/vt_telemetry_frame.h"
 
@@ -27,6 +28,12 @@ constexpr uint8_t kFlagEnd      = 0x02;
 
 // Заголовок payload: лічильник кадрів і прапори.
 constexpr size_t kHeadSize = 3;
+
+int64_t now_wall_us() {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return ts.tv_sec * 1000000LL + ts.tv_nsec / 1000;
+}
 
 int64_t now_ms() {
     struct timespec ts;
@@ -167,6 +174,11 @@ struct Blackbox::Impl {
     int64_t last_data_ms = 0;
     uint32_t drive_gen = 0;
 
+    // Про поточний файл — для журналу сеансу.
+    std::string cur_dir, cur_name;
+    int64_t cur_open_wall_us = 0;
+    uint64_t cur_bytes = 0, cur_gaps0 = 0, cur_lost0 = 0;
+
     bool open_file() {
         close_file(false);
         const std::string path = drive.make_path("Blackbox", "bbl");
@@ -178,9 +190,27 @@ struct Blackbox::Impl {
             return false;
         }
         drive_gen = drive.state().generation;
-        std::lock_guard<std::mutex> sk(st_mtx);
-        st.files++;
-        st.open = true;
+
+        const size_t slash = path.rfind('/');
+        cur_dir  = slash == std::string::npos ? "" : path.substr(0, slash);
+        cur_name = slash == std::string::npos ? path : path.substr(slash + 1);
+        cur_open_wall_us = now_wall_us();
+        cur_bytes = 0;
+        {
+            std::lock_guard<std::mutex> sk(st_mtx);
+            st.files++;
+            st.open = true;
+            cur_gaps0 = st.gaps;      // щоб порахувати розриви САМЕ цього логу
+            cur_lost0 = st.lost;
+        }
+
+        char line[512];
+        std::snprintf(line, sizeof(line),
+            "{\"event\":\"open\",\"session\":\"%s\",\"file\":\"%s\","
+            "\"channel\":\"blackbox\",\"opened\":\"%s\"}\n",
+            cfg.session.c_str(), cur_name.c_str(), iso_utc(cur_open_wall_us).c_str());
+        journal_append(cur_dir, cfg.session, line);
+
         std::fprintf(stderr, "[скринька] пишу %s\n", path.c_str());
         return true;
     }
@@ -192,13 +222,14 @@ struct Blackbox::Impl {
             std::fprintf(stderr, "[скринька] запис не вдався: %s\n", std::strerror(errno));
             close_file(false);
         } else {
+            cur_bytes += (uint64_t)w;
             std::lock_guard<std::mutex> sk(st_mtx);
             st.bytes += (uint64_t)w;
         }
         acc.clear();
     }
 
-    void close_file(bool graceful) {
+    void close_file(bool graceful, const char* why = "") {
         if (out < 0) return;
         flush_acc();
         // fsync лише тут: на кожному блоці він з'їв би сенс блокового
@@ -206,8 +237,29 @@ struct Blackbox::Impl {
         if (graceful) ::fsync(out);
         ::close(out);
         out = -1;
-        std::lock_guard<std::mutex> sk(st_mtx);
-        st.open = false;
+
+        uint64_t gaps = 0, lost = 0;
+        {
+            std::lock_guard<std::mutex> sk(st_mtx);
+            st.open = false;
+            gaps = st.gaps - cur_gaps0;
+            lost = st.lost - cur_lost0;
+        }
+
+        // Розриви записуємо САМЕ ЦЬОГО логу, а не за весь сеанс: читач має
+        // бачити, чи цілий конкретний файл, а не чи були колись втрати.
+        const int64_t closed = now_wall_us();
+        char line[512];
+        std::snprintf(line, sizeof(line),
+            "{\"event\":\"close\",\"session\":\"%s\",\"file\":\"%s\","
+            "\"channel\":\"blackbox\",\"closed\":\"%s\",\"duration_s\":%.3f,"
+            "\"bytes\":%llu,\"gaps\":%llu,\"lost\":%llu,\"reason\":\"%s\"}\n",
+            cfg.session.c_str(), cur_name.c_str(), iso_utc(closed).c_str(),
+            (closed - cur_open_wall_us) / 1e6,
+            (unsigned long long)cur_bytes, (unsigned long long)gaps,
+            (unsigned long long)lost, why);
+        journal_append(cur_dir, cfg.session, line);
+        cur_name.clear();
     }
 
     void wr_loop() {
@@ -234,14 +286,15 @@ struct Blackbox::Impl {
                     now_ms() - last_data_ms > cfg.idle_close_ms) {
                     std::fprintf(stderr, "[скринька] тиша %d мс — закриваю файл\n",
                                  cfg.idle_close_ms);
-                    close_file(true);
+                    close_file(true, "тиша");
                 }
                 continue;
             }
 
             // Носій зник або його підмінили — файл більше не наш.
             const DriveState ds = drive.state();
-            if (out >= 0 && (!ds.usable() || ds.generation != drive_gen)) close_file(false);
+            if (out >= 0 && (!ds.usable() || ds.generation != drive_gen))
+                close_file(false, "носій зник");
 
             if (c.flags & kFlagStart) open_file();
 
@@ -258,10 +311,10 @@ struct Blackbox::Impl {
 
             if (c.flags & kFlagEnd) {
                 std::fprintf(stderr, "[скринька] кінець логу\n");
-                close_file(true);
+                close_file(true, "кінець логу");
             }
         }
-        close_file(true);
+        close_file(true, "зупинка станції");
     }
 };
 

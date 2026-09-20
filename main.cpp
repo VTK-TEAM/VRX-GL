@@ -625,8 +625,9 @@ int main(int argc, char** argv) {
     // запису відео: скринька пишеться, навіть коли відеосигналу немає.
     std::unique_ptr<vrx::record::Blackbox> blackbox;
     if (kRecordEnabled) {
-        blackbox = std::make_unique<vrx::record::Blackbox>(
-            vrx::record::Blackbox::Config{}, storage);
+        vrx::record::Blackbox::Config bb_cfg;
+        bb_cfg.session = session;
+        blackbox = std::make_unique<vrx::record::Blackbox>(bb_cfg, storage);
         blackbox->start();
     }
 

@@ -1,5 +1,7 @@
 #include "recorder.hpp"
 
+#include "record/journal.hpp"
+
 #include "../diag/record_log.hpp"
 
 #include <gst/gst.h>
@@ -37,19 +39,6 @@ int64_t now_wall_us() {
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
     return ts.tv_sec * 1000000LL + ts.tv_nsec / 1000;
-}
-
-// Час рівно в тому ж вигляді, що й мітка Matroska DateUTC: UTC,
-// мікросекунди. Формат однаковий НАВМИСНО — щоб журнал і заголовок
-// самого файлу можна було звірити очима, без перерахунків.
-std::string iso_utc(int64_t us) {
-    const time_t sec = (time_t)(us / 1000000);
-    struct tm tm {};
-    gmtime_r(&sec, &tm);
-    char buf[64];
-    const size_t n = strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", &tm);
-    std::snprintf(buf + n, sizeof(buf) - n, ".%06lldZ", (long long)(us % 1000000));
-    return buf;
 }
 
 } // namespace
@@ -390,10 +379,7 @@ struct Recorder::Impl {
     // щоразу перебирати чужі рядки, щоб дійти до своїх. А головне — сеанс
     // це природна одиниця: увімкнули, політали, вимкнули. Один запуск —
     // один журнал і один проєкт поруч із ним, з тим самим іменем.
-    std::string journal_name() const {
-        return cfg.session.empty() ? std::string("index.jsonl")
-                                   : "session_" + cfg.session + ".jsonl";
-    }
+    std::string journal_name() const { return record::journal_name(cfg.session); }
 
     std::string cur_name() const {
         const size_t slash = cur_path.rfind('/');
