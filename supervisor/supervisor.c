@@ -134,11 +134,18 @@ static int find_root(char* out, size_t n) {
 // не пише, а наглядач їде звичайним VRX-update і стартує першим, під
 // root. Значення глобальні для системи, але системний диск тут майже не
 // пише (логи на zram), тож зачепити нікого.
-static void tune_writeback(void) {
+static void tune_kernel(void) {
     static const struct { const char* path; const char* val; } knobs[] = {
         { "/proc/sys/vm/dirty_background_bytes",  "8388608" },
         { "/proc/sys/vm/dirty_expire_centisecs",  "300" },
         { "/proc/sys/vm/dirty_writeback_centisecs", "100" },
+
+        // ПРИЙМАЛЬНИЙ БУФЕР СОКЕТА. Типові 208 КБ малі для чорної скриньки:
+        // вона йде 30-40 КБ/с, а запис на флешку зависає на сотні
+        // мілісекунд — і весь цей час кадри мусять десь чекати. Без цього
+        // ядро мовчки обрізає SO_RCVBUF, і втрата виглядає як діра в лозі
+        // БЕЗ розриву лічильника, тобто найгірше: невидима.
+        { "/proc/sys/net/core/rmem_max", "8388608" },
     };
     for (size_t i = 0; i < sizeof(knobs) / sizeof(knobs[0]); ++i) {
         FILE* f = fopen(knobs[i].path, "w");
@@ -274,7 +281,7 @@ int main(int argc, char** argv) {
     }
     fprintf(stderr, "[наглядач] корінь проєкту: %s\n", root);
 
-    tune_writeback();
+    tune_kernel();
 
     char station[PATH_MAX], editor[PATH_MAX];
     snprintf(station, sizeof(station), "%s/build/vrx_gl", root);

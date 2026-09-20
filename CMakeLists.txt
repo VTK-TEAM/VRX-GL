@@ -53,6 +53,7 @@ add_executable(vrx_gl
     record/storage.cpp
     record/mkv_seek.cpp
     record/session_index.cpp
+    record/blackbox.cpp
     record/snapshot.cpp
     record/recorder.cpp
     osd/telemetry_log.cpp

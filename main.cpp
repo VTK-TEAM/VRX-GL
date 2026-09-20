@@ -36,6 +36,7 @@
 #include "source/player_session.hpp"
 #include "ui/player_ui.hpp"
 #include "record/session_index.hpp"
+#include "record/blackbox.hpp"
 #include "record/snapshot.hpp"
 #include "render/gl_renderer.hpp"
 #include "source/h265_source.hpp"
@@ -619,6 +620,16 @@ int main(int argc, char** argv) {
         ~PlayerClock() { run.store(false); if (th.joinable()) th.join(); }
     } player_clock(players);
 
+    // ЧОРНА СКРИНЬКА. Борт шле лог Betaflight окремою трубою; станція лише
+    // складає шматки у файл .bbl, не розбираючи вмісту. Живе незалежно від
+    // запису відео: скринька пишеться, навіть коли відеосигналу немає.
+    std::unique_ptr<vrx::record::Blackbox> blackbox;
+    if (kRecordEnabled) {
+        blackbox = std::make_unique<vrx::record::Blackbox>(
+            vrx::record::Blackbox::Config{}, storage);
+        blackbox->start();
+    }
+
     // Лог телеметрії: сирі значення поруч із відео. На відміну від
     // субтитрів, він не прив'язаний до розкладки — тому й придатний і для
     // нашого плеєра, і для майбутньої програми на комп'ютері.
@@ -821,6 +832,17 @@ int main(int argc, char** argv) {
                         VT_TLM_LOCAL_LATENCY_MS,      ch(VT_TLM_LOCAL_LATENCY_MS).c_str(),
                         VT_TLM_LOCAL_DROPPED_FPS,     ch(VT_TLM_LOCAL_DROPPED_FPS).c_str(),
                         VT_TLM_LOCAL_LATE_FPS,        ch(VT_TLM_LOCAL_LATE_FPS).c_str());
+            if (blackbox) {
+                const auto bb = blackbox->stats();
+                if (bb.frames || bb.files) {
+                    std::printf("          СКРИНЬКА: %llu кадрів, %.1f МБ, файлів %llu%s"
+                                " | розривів %llu (втрачено %llu) | черга %llu | брак %llu\n",
+                                (unsigned long long)bb.frames, bb.bytes / 1e6,
+                                (unsigned long long)bb.files, bb.open ? " (пишеться)" : "",
+                                (unsigned long long)bb.gaps, (unsigned long long)bb.lost,
+                                (unsigned long long)bb.dropped, (unsigned long long)bb.bad);
+                }
+            }
             std::printf("               %d не прийшло кадрів: %s\n",
                         VT_TLM_LOCAL_LOST_FRAMES, ch(VT_TLM_LOCAL_LOST_FRAMES).c_str());
 
