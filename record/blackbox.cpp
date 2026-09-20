@@ -145,15 +145,35 @@ struct Blackbox::Impl {
             // РОЗРИВ ЛІЧИЛЬНИКА — втрачені кадри. Пишемо далі (Explorer
             // ресинхронізується), але діра має бути видимою, інакше лог
             // виглядає цілим, а він не цілий.
+            //
+            // ДВА ВИНЯТКИ, і обидва знайдені на живому борті.
+            //
+            // Початок логу: лічильник міг піти інакше, і порівнювати його з
+            // попереднім логом нема сенсу.
+            //
+            // Перезавантаження борта: його лічильник починає з нуля, а ми
+            // ще памʼятаємо двадцять шість тисяч. Виходив рядок "втрачено
+            // 21401 кадрів" там, де не втрачено жодного. Стрибок більший за
+            // піввісімнадцятирозрядного простору — це скидання, а не втрата:
+            // справжня діра такого розміру означала б хвилини тиші, після
+            // яких файл і так закрився б за таймаутом.
+            if (flags & kFlagStart) have_seq = false;
+
             if (have_seq) {
                 const uint16_t expect = (uint16_t)(last_seq + 1);
                 if (seq != expect) {
                     const uint16_t miss = (uint16_t)(seq - expect);
-                    std::lock_guard<std::mutex> sk(st_mtx);
-                    st.gaps++;
-                    st.lost += miss;
-                    std::fprintf(stderr, "[скринька] РОЗРИВ: чекали %u, прийшов %u"
-                                 " — втрачено %u кадрів\n", expect, seq, miss);
+                    if (miss > 0x8000) {
+                        std::fprintf(stderr, "[скринька] лічильник скинувся"
+                                     " (%u -> %u) — борт перезавантажився\n",
+                                     last_seq, seq);
+                    } else {
+                        std::lock_guard<std::mutex> sk(st_mtx);
+                        st.gaps++;
+                        st.lost += miss;
+                        std::fprintf(stderr, "[скринька] РОЗРИВ: чекали %u, прийшов %u"
+                                     " — втрачено %u кадрів\n", expect, seq, miss);
+                    }
                 }
             }
             last_seq = seq;
@@ -181,9 +201,17 @@ struct Blackbox::Impl {
 
     bool open_file() {
         close_file(false);
-        const std::string path = drive.make_path("Blackbox", "bbl");
+        std::string path = drive.make_path("Blackbox", "bbl");
         if (path.empty()) return false;
-        out = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+
+        // ІМʼЯ З ТОЧНІСТЮ ДО СЕКУНДИ, а логи можуть змінитись швидше: борт
+        // закриває один і одразу починає наступний. O_EXCL ловить збіг, і
+        // ми додаємо літеру — інакше новий лог мовчки затер би попередній.
+        for (char suffix = 'b'; suffix <= 'z'; ++suffix) {
+            out = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0644);
+            if (out >= 0 || errno != EEXIST) break;
+            path = path.substr(0, path.size() - 4) + suffix + ".bbl";
+        }
         if (out < 0) {
             std::fprintf(stderr, "[скринька] не відкрився %s: %s\n",
                          path.c_str(), std::strerror(errno));
