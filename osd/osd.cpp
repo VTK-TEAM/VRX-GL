@@ -753,8 +753,6 @@ struct Osd::Impl {
             st.builds++;
             if (role == 0) st.quads = v.ready.quads.size();
             st.build_ms = st.build_ms == 0.0 ? ms : st.build_ms * 0.9 + ms * 0.1;
-            st.packets = listener.packet_count();
-            st.crc_fails = listener.crc_fail_count();
         }
     }
 
@@ -787,6 +785,21 @@ struct Osd::Impl {
     void loop() {
         while (running.load(std::memory_order_relaxed)) {
             try_listener(now_ns() / 1000000);
+
+            // ЛІЧИЛЬНИКИ ПРИЙОМУ — ТУТ, А НЕ В build().
+            //
+            // Раніше вони копіювались наприкінці збирання шару, а воно
+            // виходить одразу, коли рендерер ще не сказав геометрію —
+            // тобто коли дисплея немає взагалі. Виходило, що діагностика
+            // мовчить саме тоді, коли вона найпотрібніша: картинки нема, і
+            // єдине питання — чи взагалі долітають дані. Показувала нуль
+            // прийнятих пакетів при повністю робочому прийомі.
+            {
+                std::lock_guard<std::mutex> lk(st_mtx);
+                st.packets = listener.packet_count();
+                st.crc_fails = listener.crc_fail_count();
+            }
+
             build_all();
             std::unique_lock<std::mutex> lk(wake_mtx);
             wake_cv.wait_for(lk, std::chrono::milliseconds(cfg.rebuild_ms),
