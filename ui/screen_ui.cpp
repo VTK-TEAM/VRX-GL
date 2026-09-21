@@ -311,11 +311,9 @@ bool ScreenUi::acquire(int role, render::DrawList& out) {
         // А в одноканальній збірці пресетів немає взагалі (ознака цього —
         // ніхто не керує видимістю кнопки), і тоді підкладка тут своя.
         if (!d.visible) {
-            const float padx = bh * 0.22f * float(H) / float(W);
-            const float pad_top = bh * 0.22f;
-            const float pad_bot = bh * 0.85f;
-            push(Impl::kPanel, bx - padx, by - pad_top,
-                 bw + padx * 2.0f, bh + pad_top + pad_bot);
+            const float pad = bh * 0.12f;
+            const float padx = pad * float(H) / float(W);
+            push(Impl::kPanel, bx - padx, by - pad, bw + padx * 2.0f, bh + pad * 2.0f);
         }
 
         push(d.pressed.load() ? Impl::kButtonActive : Impl::kButton, bx, by, bw, bh);

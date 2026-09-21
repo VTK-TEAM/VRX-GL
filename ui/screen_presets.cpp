@@ -1049,16 +1049,16 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
         // згорнутий стан має лишатись якомога непомітнішим, бо це робочий
         // стан у польоті, а не режим налаштування.
         //
-        // Донизу поле більше за бічні — там кінчики кнопок і місце, де око
-        // шукає межу панелі; рівні поля з усіх боків виглядають тіснувато.
+        // РОЗМІРОМ ПО КНОПКАХ, поле — кілька пікселів. Панель тут не
+        // прикраса, а фон, на якому видно значки; зайва площа лише з'їдає
+        // картинку.
         if (d.menu[role]) {
             float lx, ly, lw, lh;
             d.button_rect(role, d.button_count() + 1, &lx, &ly, &lw, &lh);
-            const float padx = bh * 0.22f * float(H) / float(W);
-            const float pad_top = bh * 0.22f;
-            const float pad_bot = bh * 0.85f;
-            push(d.panel_idx, bx - padx, by - pad_top,
-                 (lx + lw) - bx + padx * 2.0f, bh + pad_top + pad_bot);
+            const float pad = bh * 0.12f;                    // ~3 пікселі
+            const float padx = pad * float(H) / float(W);    // стільки ж по ширині
+            push(d.panel_idx, bx - padx, by - pad,
+                 (lx + lw) - bx + padx * 2.0f, bh + pad * 2.0f);
         }
 
         push(d.menu_idx + (d.menu[role] ? 1 : 0), bx, by, bw, bh);
