@@ -573,6 +573,79 @@
       "T": 0.0,
       "TYPE": "VALUE",
       "UNITS": ""
+    },
+    "fcat_command": {
+      "// NOTE": "INIT_DEV_COMMAND(352) — що борт ВИДАЄ на буксирований пристрій.",
+      "TYPE": "ENUM",
+      "DATACHANNEL": 352,
+      "S": 1,
+      "L": 0.02,
+      "T": 0.5,
+      "LABEL": "CMD ",
+      "UNITS": "",
+      "CASES": [
+        {
+          "OP": "EQ",
+          "VALUE": 0,
+          "LABEL": "DISARM"
+        },
+        {
+          "OP": "EQ",
+          "VALUE": 1,
+          "LABEL": "ARM"
+        },
+        {
+          "OP": "EQ",
+          "VALUE": 2,
+          "LABEL": "ACTIVATE"
+        }
+      ],
+      "DEFAULT": "---"
+    },
+    "fcat_status": {
+      "// NOTE": "INIT_DEV_STATUS(353) — що пристрій КАЖЕ про себе. Інший перелік, ніж команда.",
+      "TYPE": "ENUM",
+      "DATACHANNEL": 353,
+      "S": 1,
+      "L": 0.02,
+      "T": 0.54,
+      "LABEL": "DEV ",
+      "UNITS": "",
+      "CASES": [
+        {
+          "OP": "EQ",
+          "VALUE": 0,
+          "LABEL": "NO SIG"
+        },
+        {
+          "OP": "EQ",
+          "VALUE": 1,
+          "LABEL": "DISARM"
+        },
+        {
+          "OP": "EQ",
+          "VALUE": 2,
+          "LABEL": "ARM"
+        },
+        {
+          "OP": "EQ",
+          "VALUE": 3,
+          "LABEL": "UNKNOWN"
+        }
+      ],
+      "DEFAULT": "---"
+    },
+    "fcat_timer": {
+      "// NOTE": "INIT_DEV_TIMER_S(354) — таймер пристрою в секундах, показуємо як HH:MM:SS.",
+      "TYPE": "VALUE",
+      "DATACHANNEL": 354,
+      "S": 1,
+      "L": 0.02,
+      "T": 0.58,
+      "LABEL": "T ",
+      "UNITS": "",
+      "DECIMALS": 0,
+      "FORMAT": "HH:MM:SS"
     }
   }
 }

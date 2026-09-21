@@ -105,6 +105,20 @@ typedef enum {
     VT_TLM_SFP_TX_DBM              = 322, // дБм, ВІДНОСНІ (без калібрування)
     VT_TLM_SFP_RX_DBM              = 323, // дБм, відносні
 
+    // ── 352…383 БУКСИРОВАНИЙ ПРИСТРІЙ (FCAT) ─────────────────────────────
+    //
+    // Борт дає на пристрій сервоімпульс (команду) і читає його статус —
+    // 16-символьний рядок по UART. Рядок на землю не йде: борт зводить його
+    // до коду.
+    //
+    // КОМАНДА Й СТАТУС — РІЗНІ ПЕРЕЛІКИ З РІЗНИМИ ЗНАЧЕННЯМИ, і це навмисно.
+    // Команда має три позиції, статус — те, що пристрій показує, і
+    // взаємно-однозначної відповідності між ними немає: на ARM і на ACTIVATE
+    // пристрій однаково відповідає ARM.
+    VT_TLM_INIT_DEV_COMMAND        = 352, // що борт ВИДАЄ на пристрій
+    VT_TLM_INIT_DEV_STATUS         = 353, // що пристрій КАЖЕ про себе
+    VT_TLM_INIT_DEV_TIMER_S        = 354, // таймер із рядка статусу, секунди
+
     // ── 384…447 СТАНЦІЯ (борт лише резервує, значення кладе станція) ─────
     VT_TLM_STATION_SUPPLY_V        = 384, // В
     VT_TLM_STATION_BUILD           = 385, // лічильник збірки станції
@@ -146,6 +160,22 @@ constexpr int VT_TLM_FLIGHT_MODE_GPS_RESCUE = 5;
 constexpr int VT_TLM_FLIGHT_MODE_FAILSAFE   = 6;
 
 // ─── tosTelemetryGpsFixType_e (VT_TLM_GPS_FIX_TYPE, id 6) ───────────────
+// INIT_DEV_COMMAND — що борт ВИДАЄ на буксирований пристрій. У дужках —
+// ширина сервоімпульсу, яку борт при цьому формує.
+constexpr int VT_TLM_INIT_DEV_COMMAND_DISARM   = 0;  // 1000 мкс
+constexpr int VT_TLM_INIT_DEV_COMMAND_ARM      = 1;  // 1500 мкс
+constexpr int VT_TLM_INIT_DEV_COMMAND_ACTIVATE = 2;  // 2000 мкс
+
+// INIT_DEV_STATUS — що пристрій КАЖЕ про себе.
+//
+// Словник неповний ЗА ЗАДУМОМ: пристрій не документований, напевно відомі
+// лише DIS і ARM. Нові значення додаються в кінець, наявні не
+// перенумеровуються — інакше старий запис прочитається як інший стан.
+constexpr int VT_TLM_INIT_DEV_STATUS_NO_SIGNAL = 0;  // тиша понад 2 с або від старту
+constexpr int VT_TLM_INIT_DEV_STATUS_DISARM    = 1;
+constexpr int VT_TLM_INIT_DEV_STATUS_ARM       = 2;
+constexpr int VT_TLM_INIT_DEV_STATUS_UNKNOWN   = 3;  // рядок є, слово невідоме
+
 constexpr int VT_TLM_GPS_FIX_TYPE_NONE = 0;
 constexpr int VT_TLM_GPS_FIX_TYPE_2D   = 2;
 constexpr int VT_TLM_GPS_FIX_TYPE_3D   = 3;

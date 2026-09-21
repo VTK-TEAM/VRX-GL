@@ -78,6 +78,9 @@ inline const char* vt_telemetry_channel_name(int id) {
         case VT_TLM_SFP_VCC: return "SFP_VCC";
         case VT_TLM_SFP_TX_DBM: return "SFP_TX_DBM";
         case VT_TLM_SFP_RX_DBM: return "SFP_RX_DBM";
+        case VT_TLM_INIT_DEV_COMMAND: return "INIT_DEV_COMMAND";
+        case VT_TLM_INIT_DEV_STATUS: return "INIT_DEV_STATUS";
+        case VT_TLM_INIT_DEV_TIMER_S: return "INIT_DEV_TIMER_S";
         case VT_TLM_STATION_SUPPLY_V: return "STATION_SUPPLY_V";
         case VT_TLM_STATION_BUILD: return "STATION_BUILD";
         case VT_TLM_STATION_SFP_PRESENT: return "STATION_SFP_PRESENT";

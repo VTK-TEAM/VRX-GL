@@ -2989,6 +2989,85 @@
         "UNITS": ""
       },
       "group": "Політ"
+    },
+    {
+      "display_name": "Пристрій: команда борта (enum)",
+      "key_prefix": "fcat_command",
+      "template": {
+        "TYPE": "ENUM",
+        "DATACHANNEL": 352,
+        "S": 1,
+        "LABEL": "CMD ",
+        "UNITS": "",
+        "CASES": [
+          {
+            "OP": "EQ",
+            "VALUE": 0,
+            "LABEL": "DISARM"
+          },
+          {
+            "OP": "EQ",
+            "VALUE": 1,
+            "LABEL": "ARM"
+          },
+          {
+            "OP": "EQ",
+            "VALUE": 2,
+            "LABEL": "ACTIVATE"
+          }
+        ],
+        "DEFAULT": "---"
+      },
+      "group": "Буксирований пристрій"
+    },
+    {
+      "display_name": "Пристрій: статус пристрою (enum)",
+      "key_prefix": "fcat_status",
+      "template": {
+        "TYPE": "ENUM",
+        "DATACHANNEL": 353,
+        "S": 1,
+        "LABEL": "DEV ",
+        "UNITS": "",
+        "CASES": [
+          {
+            "OP": "EQ",
+            "VALUE": 0,
+            "LABEL": "NO SIG"
+          },
+          {
+            "OP": "EQ",
+            "VALUE": 1,
+            "LABEL": "DISARM"
+          },
+          {
+            "OP": "EQ",
+            "VALUE": 2,
+            "LABEL": "ARM"
+          },
+          {
+            "OP": "EQ",
+            "VALUE": 3,
+            "LABEL": "UNKNOWN"
+          }
+        ],
+        "DEFAULT": "---"
+      },
+      "group": "Буксирований пристрій"
+    },
+    {
+      "display_name": "Пристрій: таймер (HH:MM:SS)",
+      "key_prefix": "fcat_timer",
+      "template": {
+        "TYPE": "VALUE",
+        "DATACHANNEL": 354,
+        "S": 1,
+        "LABEL": "T ",
+        "UNITS": "",
+        "DECIMALS": 0,
+        "FORMAT": "HH:MM:SS"
+      },
+      "group": "Буксирований пристрій"
     }
   ],
   "groups": [
