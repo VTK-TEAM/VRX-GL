@@ -29,6 +29,32 @@ void fill_rect(std::vector<uint8_t>& px, int w, int x0, int y0, int x1, int y1,
         for (int x = x0; x < x1; ++x) put(px, w, x, y, r, g, b, a);
 }
 
+// ПАНЕЛЬ ПІД КНОПКОЮ. Та сама, що й під рядом пресетів: кнопка редактора
+// стоїть у тому ж ряду, тільки малює її інший шар, — і без спільної
+// підкладки ряд виглядав би розірваним саме там, де він цілий.
+render::OverlayImage make_panel() {
+    const int w = 64, h = 64;
+    render::OverlayImage img;
+    img.id = "ui:panel";
+    img.width = w; img.height = h;
+    img.rgba.assign((size_t)w * h * 4, 0);
+
+    const int fade = 6;
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            const int dx = std::min(x, w - 1 - x);
+            const int dy = std::min(y, h - 1 - y);
+            const float kx = dx >= fade ? 1.0f : float(dx) / fade;
+            const float ky = dy >= fade ? 1.0f : float(dy) / fade;
+            const float k = kx < ky ? kx : ky;
+            uint8_t* px = &img.rgba[((size_t)y * w + x) * 4];
+            px[0] = 16; px[1] = 19; px[2] = 26;
+            px[3] = (uint8_t)(205.0f * k);
+        }
+    }
+    return img;
+}
+
 // Кнопка: темний квадрат із світлою рамкою, всередині три смужки різної
 // довжини. Читається як "налаштування розкладки" — саме те, що за нею.
 render::OverlayImage make_button(int size) {
@@ -160,6 +186,7 @@ struct ScreenUi::Impl {
     static constexpr int kButton = 0;
     static constexpr int kButtonActive = 1;
     static constexpr int kCursor = 2;
+    static constexpr int kPanel = 3;
 
     // Геометрія КОЖНОГО екрана. Кнопка й курсор рахуються в частках, а
     // частка береться від висоти саме того екрана, на якому малюємо.
@@ -182,6 +209,7 @@ struct ScreenUi::Impl {
         images.push_back(make_button(48));
         images.push_back(make_button_active(48));
         images.push_back(make_cursor(2));
+        images.push_back(make_panel());
     }
 
     // Кнопка в ЧАСТКАХ екрана, правий ВЕРХНІЙ кут.
@@ -270,6 +298,12 @@ bool ScreenUi::acquire(int role, render::DrawList& out) {
     // пантелику.
     const bool show_btn = role == 0 && (!d.visible || d.visible(role));
     if (show_btn) {
+        // Підкладка та сама, що під рядом пресетів, і поля рахуються так
+        // само — інакше дві частини одного ряду мали б різну висоту фону.
+        const float padx = bh * 0.22f * float(H) / float(W);
+        const float pady = bh * 0.22f;
+        push(Impl::kPanel, bx - padx, by - pady, bw + padx * 2.0f, bh + pady * 2.0f);
+
         push(d.pressed.load() ? Impl::kButtonActive : Impl::kButton, bx, by, bw, bh);
     }
 

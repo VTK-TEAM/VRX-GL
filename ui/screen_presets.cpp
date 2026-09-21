@@ -245,6 +245,39 @@ render::OverlayImage make_solid_locked() {
     return img;
 }
 
+// ПАНЕЛЬ ПІД РЯДОМ КНОПОК.
+//
+// Кожна кнопка має власну плитку, але на строкатому відео ряд читався як
+// розсипані темні квадрати: око не бачить смуги керування, воно бачить
+// плями. Суцільна підкладка збирає їх в одне ціле й дає кнопкам сталий
+// фон незалежно від того, що під ними в кадрі.
+//
+// Краї МʼЯКІ, а не заокруглені: панель розтягується по ширині ряду, і
+// заокруглений кут при розтягуванні поїхав би. Згасання ж тягнеться рівно
+// й виглядає навмисним.
+render::OverlayImage make_panel() {
+    const int w = 64, h = 64;
+    render::OverlayImage img;
+    img.id = "presets:panel";
+    img.width = w; img.height = h;
+    img.rgba.assign((size_t)w * h * 4, 0);
+
+    const int fade = 6;
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            const int dx = std::min(x, w - 1 - x);
+            const int dy = std::min(y, h - 1 - y);
+            const float kx = dx >= fade ? 1.0f : float(dx) / fade;
+            const float ky = dy >= fade ? 1.0f : float(dy) / fade;
+            const float k = kx < ky ? kx : ky;
+            // Колір темний і трохи синюватий: нейтральніше за чистий чорний,
+            // і не зливається з тінями в кадрі.
+            put(img.rgba, w, x, y, 16, 19, 26, (uint8_t)(205.0f * k));
+        }
+    }
+    return img;
+}
+
 // Ручка меню — три смужки. Єдина кнопка, яку видно завжди.
 // Знімок: корпус фотоапарата з видошукачем і вирізаним об'єктивом.
 render::OverlayImage make_shot_button(bool flash) {
@@ -325,6 +358,7 @@ struct ScreenPresets::Impl {
     int solid_idx = 0;
     int solid_lock_idx = 0;
     int menu_idx = 0;
+    int panel_idx = 0;
     bool menu[2] = {false, false};   // меню розгорнуте (kRoles оголошено нижче)
     int osd_idx = 0;       // +0 OSD вимкнено, +1 увімкнено
     int play_idx = 0;      // +0 ефір (знак "грати"), +1 плеєр (знак "стоп")
@@ -423,6 +457,8 @@ struct ScreenPresets::Impl {
         images.push_back(make_solid());
         solid_lock_idx = (int)images.size();
         images.push_back(make_solid_locked());
+        panel_idx = (int)images.size();
+        images.push_back(make_panel());
         menu_idx = (int)images.size();
         images.push_back(make_menu_button(false));
         images.push_back(make_menu_button(true));
@@ -1007,6 +1043,17 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
     {
         float bx, by, bw, bh;
         d.button_rect(role, 0, &bx, &by, &bw, &bh);
+
+        // Панель під усім, що зараз видно: згорнуте меню — лише під ручкою,
+        // розгорнуте — під цілим рядом. Поля навколо беремо від висоти
+        // кнопки, тож на будь-якому екрані вони виглядають однаково.
+        float lx, ly, lw, lh;
+        d.button_rect(role, d.menu[role] ? d.button_count() : 0, &lx, &ly, &lw, &lh);
+        const float padx = bh * 0.22f * float(H) / float(W);
+        const float pady = bh * 0.22f;
+        push(d.panel_idx, bx - padx, by - pady,
+             (lx + lw) - bx + padx * 2.0f, bh + pady * 2.0f);
+
         push(d.menu_idx + (d.menu[role] ? 1 : 0), bx, by, bw, bh);
     }
     if (!d.menu[role]) return true;          // згорнуте — далі нічого
