@@ -2996,7 +2996,7 @@
       "template": {
         "TYPE": "ENUM",
         "DATACHANNEL": 352,
-        "S": 1,
+        "S": 0,
         "LABEL": "CMD ",
         "UNITS": "",
         "CASES": [
@@ -3026,7 +3026,7 @@
       "template": {
         "TYPE": "ENUM",
         "DATACHANNEL": 353,
-        "S": 1,
+        "S": 0,
         "LABEL": "DEV ",
         "UNITS": "",
         "CASES": [
@@ -3061,7 +3061,7 @@
       "template": {
         "TYPE": "VALUE",
         "DATACHANNEL": 354,
-        "S": 1,
+        "S": 0,
         "LABEL": "T ",
         "UNITS": "",
         "DECIMALS": 0,

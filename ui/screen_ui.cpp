@@ -39,17 +39,20 @@ render::OverlayImage make_panel() {
     img.width = w; img.height = h;
     img.rgba.assign((size_t)w * h * 4, 0);
 
-    const int fade = 6;
+    // НЕПРОЗОРА, суцільна. Прозора підкладка на строкатому кадрі однаково
+    // просвічує, і кнопки то видно, то ні — саме через це її й міняли.
+    //
+    // Легкий вертикальний перехід: панель лишається цілком щільною, але не
+    // виглядає пласкою плитою. Темний синювато-графітовий читається як
+    // елемент приладу, а не як дірка в картинці.
     for (int y = 0; y < h; ++y) {
+        const float k = float(y) / float(h - 1);          // 0 угорі, 1 унизу
+        const uint8_t cr = (uint8_t)(46 - 18 * k);
+        const uint8_t cg = (uint8_t)(54 - 21 * k);
+        const uint8_t cb = (uint8_t)(72 - 28 * k);
         for (int x = 0; x < w; ++x) {
-            const int dx = std::min(x, w - 1 - x);
-            const int dy = std::min(y, h - 1 - y);
-            const float kx = dx >= fade ? 1.0f : float(dx) / fade;
-            const float ky = dy >= fade ? 1.0f : float(dy) / fade;
-            const float k = kx < ky ? kx : ky;
             uint8_t* px = &img.rgba[((size_t)y * w + x) * 4];
-            px[0] = 16; px[1] = 19; px[2] = 26;
-            px[3] = (uint8_t)(205.0f * k);
+            px[0] = cr; px[1] = cg; px[2] = cb; px[3] = 255;
         }
     }
     return img;
@@ -298,11 +301,22 @@ bool ScreenUi::acquire(int role, render::DrawList& out) {
     // пантелику.
     const bool show_btn = role == 0 && (!d.visible || d.visible(role));
     if (show_btn) {
-        // Підкладка та сама, що під рядом пресетів, і поля рахуються так
-        // само — інакше дві частини одного ряду мали б різну висоту фону.
-        const float padx = bh * 0.22f * float(H) / float(W);
-        const float pady = bh * 0.22f;
-        push(Impl::kPanel, bx - padx, by - pady, bw + padx * 2.0f, bh + pady * 2.0f);
+        // ВЛАСНА ПІДКЛАДКА ЛИШЕ ТОДІ, КОЛИ РЯДОМ НІКОГО НЕМАЄ.
+        //
+        // У повній збірці кнопка стоїть у спільному ряду, і панель під усім
+        // рядом малюють пресети — вона дістає й сюди. Малювати другу поверх
+        // неї означало б класти те саме двічі й лишати шов там, де ряд
+        // цілий.
+        //
+        // А в одноканальній збірці пресетів немає взагалі (ознака цього —
+        // ніхто не керує видимістю кнопки), і тоді підкладка тут своя.
+        if (!d.visible) {
+            const float padx = bh * 0.22f * float(H) / float(W);
+            const float pad_top = bh * 0.22f;
+            const float pad_bot = bh * 0.85f;
+            push(Impl::kPanel, bx - padx, by - pad_top,
+                 bw + padx * 2.0f, bh + pad_top + pad_bot);
+        }
 
         push(d.pressed.load() ? Impl::kButtonActive : Impl::kButton, bx, by, bw, bh);
     }

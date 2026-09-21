@@ -252,9 +252,8 @@ render::OverlayImage make_solid_locked() {
 // плями. Суцільна підкладка збирає їх в одне ціле й дає кнопкам сталий
 // фон незалежно від того, що під ними в кадрі.
 //
-// Краї МʼЯКІ, а не заокруглені: панель розтягується по ширині ряду, і
-// заокруглений кут при розтягуванні поїхав би. Згасання ж тягнеться рівно
-// й виглядає навмисним.
+// Краї прямі: панель розтягується по ширині ряду, і заокруглений кут при
+// розтягуванні поїхав би.
 render::OverlayImage make_panel() {
     const int w = 64, h = 64;
     render::OverlayImage img;
@@ -262,17 +261,19 @@ render::OverlayImage make_panel() {
     img.width = w; img.height = h;
     img.rgba.assign((size_t)w * h * 4, 0);
 
-    const int fade = 6;
+    // НЕПРОЗОРА, суцільна. Прозора підкладка на строкатому кадрі однаково
+    // просвічує, і кнопки то видно, то ні — саме через це її й міняли.
+    //
+    // Легкий вертикальний перехід: панель лишається цілком щільною, але не
+    // виглядає пласкою плитою. Темний синювато-графітовий читається як
+    // елемент приладу, а не як дірка в картинці.
     for (int y = 0; y < h; ++y) {
+        const float k = float(y) / float(h - 1);          // 0 угорі, 1 унизу
+        const uint8_t cr = (uint8_t)(46 - 18 * k);
+        const uint8_t cg = (uint8_t)(54 - 21 * k);
+        const uint8_t cb = (uint8_t)(72 - 28 * k);
         for (int x = 0; x < w; ++x) {
-            const int dx = std::min(x, w - 1 - x);
-            const int dy = std::min(y, h - 1 - y);
-            const float kx = dx >= fade ? 1.0f : float(dx) / fade;
-            const float ky = dy >= fade ? 1.0f : float(dy) / fade;
-            const float k = kx < ky ? kx : ky;
-            // Колір темний і трохи синюватий: нейтральніше за чистий чорний,
-            // і не зливається з тінями в кадрі.
-            put(img.rgba, w, x, y, 16, 19, 26, (uint8_t)(205.0f * k));
+            put(img.rgba, w, x, y, cr, cg, cb, 255);
         }
     }
     return img;
@@ -1044,15 +1045,21 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
         float bx, by, bw, bh;
         d.button_rect(role, 0, &bx, &by, &bw, &bh);
 
-        // Панель під усім, що зараз видно: згорнуте меню — лише під ручкою,
-        // розгорнуте — під цілим рядом. Поля навколо беремо від висоти
-        // кнопки, тож на будь-якому екрані вони виглядають однаково.
-        float lx, ly, lw, lh;
-        d.button_rect(role, d.menu[role] ? d.button_count() : 0, &lx, &ly, &lw, &lh);
-        const float padx = bh * 0.22f * float(H) / float(W);
-        const float pady = bh * 0.22f;
-        push(d.panel_idx, bx - padx, by - pady,
-             (lx + lw) - bx + padx * 2.0f, bh + pady * 2.0f);
+        // Панель ЛИШЕ КОЛИ МЕНЮ ВІДКРИТЕ. Під самою ручкою вона не потрібна:
+        // згорнутий стан має лишатись якомога непомітнішим, бо це робочий
+        // стан у польоті, а не режим налаштування.
+        //
+        // Донизу поле більше за бічні — там кінчики кнопок і місце, де око
+        // шукає межу панелі; рівні поля з усіх боків виглядають тіснувато.
+        if (d.menu[role]) {
+            float lx, ly, lw, lh;
+            d.button_rect(role, d.button_count() + 1, &lx, &ly, &lw, &lh);
+            const float padx = bh * 0.22f * float(H) / float(W);
+            const float pad_top = bh * 0.22f;
+            const float pad_bot = bh * 0.85f;
+            push(d.panel_idx, bx - padx, by - pad_top,
+                 (lx + lw) - bx + padx * 2.0f, bh + pad_top + pad_bot);
+        }
 
         push(d.menu_idx + (d.menu[role] ? 1 : 0), bx, by, bw, bh);
     }
