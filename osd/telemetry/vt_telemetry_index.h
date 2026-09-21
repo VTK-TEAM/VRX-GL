@@ -105,7 +105,7 @@ typedef enum {
     VT_TLM_SFP_TX_DBM              = 322, // дБм, ВІДНОСНІ (без калібрування)
     VT_TLM_SFP_RX_DBM              = 323, // дБм, відносні
 
-    // ── 352…383 БУКСИРОВАНИЙ ПРИСТРІЙ (FCAT) ─────────────────────────────
+    // ── 352…383 ПРИСТРІЙ ІНІЦІАЦІЇ ─────────────────────────────
     //
     // Борт дає на пристрій сервоімпульс (команду) і читає його статус —
     // 16-символьний рядок по UART. Рядок на землю не йде: борт зводить його
@@ -160,7 +160,7 @@ constexpr int VT_TLM_FLIGHT_MODE_GPS_RESCUE = 5;
 constexpr int VT_TLM_FLIGHT_MODE_FAILSAFE   = 6;
 
 // ─── tosTelemetryGpsFixType_e (VT_TLM_GPS_FIX_TYPE, id 6) ───────────────
-// INIT_DEV_COMMAND — що борт ВИДАЄ на буксирований пристрій. У дужках —
+// INIT_DEV_COMMAND — що борт ВИДАЄ на пристрій ініціації. У дужках —
 // ширина сервоімпульсу, яку борт при цьому формує.
 constexpr int VT_TLM_INIT_DEV_COMMAND_DISARM   = 0;  // 1000 мкс
 constexpr int VT_TLM_INIT_DEV_COMMAND_ARM      = 1;  // 1500 мкс

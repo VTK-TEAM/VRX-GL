@@ -575,7 +575,7 @@
       "UNITS": ""
     },
     "fcat_command": {
-      "// NOTE": "INIT_DEV_COMMAND(352) — що борт ВИДАЄ на буксирований пристрій.",
+      "// NOTE": "INIT_DEV_COMMAND(352) — що борт ВИДАЄ на пристрій ініціації.",
       "TYPE": "ENUM",
       "DATACHANNEL": 352,
       "S": 0,
