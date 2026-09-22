@@ -581,7 +581,7 @@
       "S": 0,
       "L": 0.02,
       "T": 0.5,
-      "LABEL": "CMD ",
+      "LABEL": "COMMAND: ",
       "UNITS": "",
       "CASES": [
         {
@@ -609,7 +609,7 @@
       "S": 0,
       "L": 0.02,
       "T": 0.54,
-      "LABEL": "DEV ",
+      "LABEL": "STATUS: ",
       "UNITS": "",
       "CASES": [
         {
