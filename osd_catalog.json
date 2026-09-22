@@ -3075,7 +3075,8 @@
         "LABEL": "T ",
         "UNITS": "",
         "DECIMALS": 0,
-        "FORMAT": "HH:MM:SS"
+        "FORMAT": "HH:MM:SS",
+        "HIDE_IF_NO_DATA": true
       },
       "group": "Пристрій ініціації"
     }

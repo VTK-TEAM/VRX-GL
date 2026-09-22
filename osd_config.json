@@ -580,7 +580,7 @@
       "DATACHANNEL": 352,
       "S": 0,
       "L": 0.02,
-      "T": 0.5,
+      "T": 0.85,
       "LABEL": "COMMAND: ",
       "UNITS": "",
       "CASES": [
@@ -608,7 +608,7 @@
       "DATACHANNEL": 353,
       "S": 0,
       "L": 0.02,
-      "T": 0.54,
+      "T": 0.88,
       "LABEL": "STATUS: ",
       "UNITS": "",
       "CASES": [
@@ -651,11 +651,12 @@
       "DATACHANNEL": 354,
       "S": 0,
       "L": 0.02,
-      "T": 0.58,
+      "T": 0.91,
       "LABEL": "T ",
       "UNITS": "",
       "DECIMALS": 0,
-      "FORMAT": "HH:MM:SS"
+      "FORMAT": "HH:MM:SS",
+      "HIDE_IF_NO_DATA": true
     }
   }
 }

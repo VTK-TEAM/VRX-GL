@@ -19,7 +19,7 @@
 // поріг протухання тут не застосовуються (вік — завжди валідне число).
 // is_rate_meta=true (META="RATE_HZ") — завжди false: VtTelemetryStorage
 // не рахує частоту апдейтів (те, що рахував старий MapOsdDataSource).
-constexpr uint32_t kVtChannelStaleTimeoutMs = 3000u;
+constexpr uint32_t kVtChannelStaleTimeoutMs = 5000u;
 
 inline bool vt_fetch_channel_value(VtTelemetryStorage& storage, int channel_id,
                                     bool is_age_meta, bool is_rate_meta,
