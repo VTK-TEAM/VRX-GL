@@ -117,7 +117,7 @@ typedef enum {
     // пристрій однаково відповідає ARM.
     VT_TLM_INIT_DEV_COMMAND        = 352, // що борт ВИДАЄ на пристрій
     VT_TLM_INIT_DEV_STATUS         = 353, // що пристрій КАЖЕ про себе
-    VT_TLM_INIT_DEV_TIMER_S        = 354, // таймер із рядка статусу, секунди
+    VT_TLM_INIT_DEV_TIMER_S        = 354, // число з середини рядка статусу, секунди
 
     // ── 384…447 СТАНЦІЯ (борт лише резервує, значення кладе станція) ─────
     VT_TLM_STATION_SUPPLY_V        = 384, // В
@@ -168,13 +168,21 @@ constexpr int VT_TLM_INIT_DEV_COMMAND_ACTIVATE = 2;  // 2000 мкс
 
 // INIT_DEV_STATUS — що пристрій КАЖЕ про себе.
 //
-// Словник неповний ЗА ЗАДУМОМ: пристрій не документований, напевно відомі
-// лише DIS і ARM. Нові значення додаються в кінець, наявні не
-// перенумеровуються — інакше старий запис прочитається як інший стан.
+// Пристрій показує ПАРУ СЛІВ, і борт зводить її в одне число: саме пара, а
+// не одне слово, розрізняє "команду подано" від "стан установився".
+//
+//   DIS / SAF  -> DISARM     ARM / SAF  -> ARMING   (щойно подано)
+//   ARM / !!!  -> ARMED      EXP / !!!  -> ACTIVE
+//
+// ⚠ Значення 2 і 3 ЗМІНИЛИ СЕНС відносно першої редакції (там 2 було ARM,
+// а 3 — UNKNOWN). Записи, зроблені до цієї зміни, прочитаються неправильно;
+// розрізнити їх нічим, бо номер редакції самого переліку на дріт не йде.
 constexpr int VT_TLM_INIT_DEV_STATUS_NO_SIGNAL = 0;  // тиша понад 2 с або від старту
-constexpr int VT_TLM_INIT_DEV_STATUS_DISARM    = 1;
-constexpr int VT_TLM_INIT_DEV_STATUS_ARM       = 2;
-constexpr int VT_TLM_INIT_DEV_STATUS_UNKNOWN   = 3;  // рядок є, слово невідоме
+constexpr int VT_TLM_INIT_DEV_STATUS_DISARM    = 1;  // DIS/SAF
+constexpr int VT_TLM_INIT_DEV_STATUS_ARMING    = 2;  // ARM/SAF, щойно подано
+constexpr int VT_TLM_INIT_DEV_STATUS_ARMED     = 3;  // ARM/!!!, встановилось
+constexpr int VT_TLM_INIT_DEV_STATUS_ACTIVE    = 4;  // EXP/!!!
+constexpr int VT_TLM_INIT_DEV_STATUS_UNKNOWN   = 5;  // сплеш або нова пара
 
 constexpr int VT_TLM_GPS_FIX_TYPE_NONE = 0;
 constexpr int VT_TLM_GPS_FIX_TYPE_2D   = 2;

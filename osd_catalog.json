@@ -3043,11 +3043,21 @@
           {
             "OP": "EQ",
             "VALUE": 2,
-            "LABEL": "ARM"
+            "LABEL": "ARMING"
           },
           {
             "OP": "EQ",
             "VALUE": 3,
+            "LABEL": "ARMED"
+          },
+          {
+            "OP": "EQ",
+            "VALUE": 4,
+            "LABEL": "ACTIVE"
+          },
+          {
+            "OP": "EQ",
+            "VALUE": 5,
             "LABEL": "UNKNOWN"
           }
         ],
