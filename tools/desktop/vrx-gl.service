@@ -1,0 +1,35 @@
+# Юніт для РОЗРОБНИЦЬКОЇ машини: запуск станції з робочого стола.
+#
+# ЧОМУ НАГЛЯДАЧ, А НЕ vrx_gl. Наглядач не тримає екран сам, а запускає по
+# одному: станцію, а на код виходу 10 — редактор розкладки, і повертає
+# станцію назад. Тобто кнопка редактора всередині станції працює лише
+# тоді, коли її запустив наглядач.
+#
+# ЧОМУ Conflicts=lightdm. DRM master ексклюзивний: поки X-сервер
+# робочого стола тримає екран, станція його не отримає. systemd сам
+# зупинить lightdm перед запуском — вручну цього робити не треба.
+#
+# ЧОМУ --no-block У ExecStopPost. Підняти lightdm назад треба, але
+# lightdm конфліктує з ЦИМ юнітом, який саме зупиняється. Синхронний
+# `systemctl start` тут чекав би на завершення власної зупинки; --no-block
+# лише ставить задачу в чергу й виходить.
+#
+# ВИХОДУ З НАГЛЯДАЧА НЕМАЄ — він перезапускає станцію завжди. Повернутись
+# на робочий стіл можна лише зупинивши юніт: Ctrl+Alt+F2 і `vrx-stop`.
+
+[Unit]
+Description=VRX-GL станція (наглядач)
+Conflicts=lightdm.service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/home/dlof/VRX-GL/build/vrx_supervisor
+ExecStopPost=-/usr/bin/systemctl --no-block start lightdm.service
+Restart=no
+TimeoutStopSec=15
+StandardOutput=append:/tmp/vrx-gl.log
+StandardError=append:/tmp/vrx-gl.log
+
+[Install]
+WantedBy=multi-user.target
