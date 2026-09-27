@@ -1,5 +1,6 @@
 #include "phase_controller.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -92,6 +93,30 @@ struct PhaseController::Impl {
     bool seeded = false;           // частотну ланку вже засіяно виміром
     int applied_mhz = 0;           // що, за нашими даними, стоїть на камері
     int64_t last_send_ns = 0;
+
+    // Рейка камери, як вона сама її повідомила.
+    int cam_lo = 0;
+    int cam_hi = 0;
+    bool cam_known = false;
+
+    // ДІЮЧА СМУГА КЕРУВАННЯ — ПЕРЕТИН нашої з рейкою камери, а не рейка.
+    //
+    // Це не перестороженість, а різниця між "що камера приймає" і "що має
+    // сенс командувати". Петля виправляє розстройку кварців: на 60 Гц це
+    // десятки мілігерц, і підсилення актуатора заміряне в діапазоні
+    // 0…−1500 мГц. Рейка −37000 мГц — апаратна межа VMAX, тобто 60 к/с
+    // проти 23: дати інтеграторові таку волю означає дозволити йому
+    // зламати потік, не давши нічого взамін.
+    //
+    // Рейку камери це все одно варто знати, і саме тому вона тут: якщо
+    // вона ВУЖЧА за нашу — виграє вона, і петля спиняється сама, замість
+    // упиратися в `out_of_range` і рахувати відмови.
+    int eff_lo() const {
+        return cam_known ? std::max(-cfg.trim_limit_mhz, cam_lo) : -cfg.trim_limit_mhz;
+    }
+    int eff_hi() const {
+        return cam_known ? std::min(cfg.trim_max_mhz, cam_hi) : cfg.trim_max_mhz;
+    }
     uint64_t last_taken = 0;
 
     // Стан ІНДИКАТОРА захоплення. Живе окремо від регулятора й на
@@ -125,10 +150,40 @@ struct PhaseController::Impl {
         st.holding = why;
     }
 
+    // Бере з відповіді камери те, що вона про себе сказала. Контракт
+    // обіцяє стан і у ВІДМОВІ — саме там він найпотрібніший: петля, що
+    // перескочила рейку, дізнається, де вона стоїть насправді, без
+    // другого запиту, поки фаза продовжує повзти.
+    void adopt(const CameraApi::Reply& rep) {
+        if (!rep.has_phase) return;
+
+        if (rep.phase.band.known &&
+            (!cam_known || rep.phase.band.lo_mhz != cam_lo
+                        || rep.phase.band.hi_mhz != cam_hi)) {
+            cam_lo = rep.phase.band.lo_mhz;
+            cam_hi = rep.phase.band.hi_mhz;
+            cam_known = true;
+            std::fprintf(stderr, "[фаза] рейка камери %d…%d мГц -> керуємо в %d…%d\n",
+                         cam_lo, cam_hi, eff_lo(), eff_hi());
+        }
+
+        // Камера сказала, ЩО в неї стоїть. Тягти далі власне уявлення
+        // означало б брехати контуру: відмова — це "не застосовано", а не
+        // "застосовано частково".
+        applied_mhz = rep.phase.trim_mhz;
+
+        std::lock_guard<std::mutex> lk(st_mtx);
+        st.trim_mhz = rep.phase.trim_mhz;
+        st.band_lo_mhz = eff_lo();
+        st.band_hi_mhz = eff_hi();
+        st.band_known = cam_known;
+    }
+
     // Записує значення на камеру. Повертає true, якщо камера підтвердила.
     bool push(int mhz) {
-        const bool ok = camera.set(cfg.param + ".fpsTrimMilliHz", mhz);
+        const CameraApi::Reply rep = camera.set_phase(mhz);
         last_send_ns = now_ns();
+        adopt(rep);
         {
             std::lock_guard<std::mutex> lk(st_mtx);
             st.sent = camera.requests();
@@ -136,11 +191,13 @@ struct PhaseController::Impl {
             // Накопичувальний лічильник пам'ятає й ті невдачі, що були,
             // поки камера ще не вмикалась. Тривожним є лише те, що не
             // проходить ЗАРАЗ.
-            st.last_write_failed = !ok;
-            if (ok) st.trim_mhz = mhz;
+            st.last_write_failed = !rep.ok;
+            st.last_error = rep.error;
+            // Якщо камера стан не повідомила — вірити лишається команді.
+            if (rep.ok && !rep.has_phase) st.trim_mhz = mhz;
         }
-        if (ok) applied_mhz = mhz;
-        return ok;
+        if (rep.ok && !rep.has_phase) applied_mhz = mhz;
+        return rep.ok;
     }
 
     // Крок часу більше не потрібен: частотна ланка інтегрує НЕВ'ЯЗКУ
@@ -218,7 +275,7 @@ struct PhaseController::Impl {
         // повільний інтегратор далі лише підчищає залишок.
         if (!seeded) {
             freq_mhz = clamp(-mismatch_mhz / cfg.actuator_gain,
-                             -double(cfg.trim_limit_mhz), double(cfg.trim_max_mhz));
+                             double(eff_lo()), double(eff_hi()));
             seeded = true;
         } else {
             freq_mhz -= cfg.kf_per_step * (mismatch_mhz - own * cfg.actuator_gain)
@@ -228,15 +285,15 @@ struct PhaseController::Impl {
         // Антивіндап: частотна ланка сама по собі не має права впертися
         // в рейку, інакше після довгої відсутності сигналу петля
         // виходитиме з насичення хвилинами.
-        freq_mhz = clamp(freq_mhz, -double(cfg.trim_limit_mhz), double(cfg.trim_max_mhz));
+        freq_mhz = clamp(freq_mhz, double(eff_lo()), double(eff_hi()));
 
         // --- ланка ФАЗИ ---
         //
         // Помилка додатна (фаза попереду цілі) -> треба, щоб фаза спадала
         // -> камера має піти ШВИДШЕ -> команда додатна.
         const double raw = freq_mhz + cfg.kp_mhz_per_ms * err;
-        const int want = (int)std::lround(clamp(raw, -double(cfg.trim_limit_mhz),
-                                                double(cfg.trim_max_mhz)));
+        const int want = (int)std::lround(clamp(raw, double(eff_lo()),
+                                                double(eff_hi())));
 
         const bool due = (now_ns() - last_send_ns) > int64_t(cfg.heartbeat_ms) * 1000000LL;
         if (std::abs(want - applied_mhz) >= cfg.min_step_mhz || due) {
@@ -318,8 +375,37 @@ struct PhaseController::Impl {
         // процес міг і перезапуститися окремо від неї. Явний нуль на
         // старті прибирає розбіжність між тим, що стоїть на камері, і
         // тим, що ми думаємо, ніби стоїть.
+        // ПЕРШИЙ ЗАПИТ — СТАТУС, і не лише заради смуги. Один рядок у
+        // лозі відповідає на питання, які інакше вимагають tcpdump: якою
+        // частотою камера ВІДДАЄ кадри (стеля режиму сенсора перебиває
+        // запит у конфізі) і КУДИ вона шле. Юнікаст на адресу станції
+        // означає, що з кількох споживачів порту пакет дійде рівно
+        // одному: фан-аут ядро робить лише для бродкасту й мультикасту.
+        if (const CameraApi::Status cs = camera.read_status(); cs.valid) {
+            std::fprintf(stderr,
+                "[фаза] камера v%s: %s %dx%d, fps %d запит / %.1f факт,"
+                " %d кбіт/с, GOP %.3f с, шле %s%s\n",
+                cs.version.c_str(), cs.codec.c_str(), cs.width, cs.height,
+                cs.fps_requested, cs.fps_live, cs.bitrate_kbit, cs.gop_s,
+                cs.outgoing_enabled ? "" : "(вимкнено) ",
+                cs.outgoing_server.c_str());
+            if (cs.phase.band.known) {
+                cam_lo = cs.phase.band.lo_mhz;
+                cam_hi = cs.phase.band.hi_mhz;
+                cam_known = true;
+                std::fprintf(stderr,
+                    "[фаза] рейка камери %d…%d мГц, наша межа %d…%d"
+                    " -> керуємо в %d…%d\n",
+                    cam_lo, cam_hi, -cfg.trim_limit_mhz, cfg.trim_max_mhz,
+                    eff_lo(), eff_hi());
+            }
+        }
+
+        // Підстроювання на камері не зберігається між запусками, але наш
+        // процес міг і перезапуститися окремо від неї. Явний нуль на
+        // старті прибирає розбіжність. `applied_mhz` далі веде push(): він
+        // бере значення з відповіді камери, а не з нашої команди.
         push(0);
-        applied_mhz = 0;
 
         const int64_t t_start = now_ns();
 
@@ -372,8 +458,8 @@ bool PhaseController::start() {
     }
     impl_->running.store(true);
     impl_->th = std::thread([this] { impl_->loop(); });
-    std::fprintf(stderr, "[фаза] петля піднята: камера %s, параметр %s.fpsTrimMilliHz\n",
-                 impl_->cfg.camera.host.c_str(), impl_->cfg.param.c_str());
+    std::fprintf(stderr, "[фаза] петля піднята: камера %s:%d, /api/v1/phase\n",
+                 impl_->cfg.camera.host.c_str(), impl_->cfg.camera.port);
     return true;
 }
 

@@ -794,14 +794,28 @@ int main(int argc, char** argv) {
 
         auto ps = phase.stats();
         if (ps.engaged) {
+            // Смуга стоїть поруч із командою: без неї не видно, чи петля
+            // притерлася до рейки. Поки камера меж не повідомила — не
+            // показуємо нічого, щоб не подати запас із конфіга за виміряне.
+            char band[48] = "";
+            if (ps.band_known)
+                std::snprintf(band, sizeof(band), " з %d…%d",
+                              ps.band_lo_mhz, ps.band_hi_mhz);
+            // Назва умови з конверта камери замість глухого "не відповідає":
+            // `out_of_range` і `unavailable` вимагають різних дій.
+            char fail[96] = "";
+            if (ps.last_write_failed)
+                std::snprintf(fail, sizeof(fail), " | КАМЕРА: %s",
+                              ps.last_error.empty() ? "не відповідає"
+                                                    : ps.last_error.c_str());
             std::printf("          ФАПЧ: фаза %.2f -> ціль %.2f (похибка %+.2f мс)"
                         " | опит %.2f − запас %.2f (розкид %.2f) | затримка %.1f мс"
-                        " | камера %+d мГц | екран %.4f Гц | %s%s\n",
+                        " | камера %+d мГц%s | екран %.4f Гц | %s%s\n",
                         ps.phase_ms, ps.target_ms, ps.error_ms,
                         ps.poll_ms, ps.guard_ms, ps.jitter_ms, ps.latency_ms,
-                        ps.trim_mhz, ps.display_hz,
+                        ps.trim_mhz, band, ps.display_hz,
                         ps.locked ? "ЗАХОПЛЕНО" : "ведення",
-                        ps.last_write_failed ? " | КАМЕРА НЕ ВІДПОВІДАЄ" : "");
+                        fail);
             // Три числа, з яких видно, ЧОМУ прапорець стоїть або не
             // стоїть: зміщення, його розкид і поріг, порахований із шуму
             // самого виміру фази. Без них "не захоплено" не читається.
