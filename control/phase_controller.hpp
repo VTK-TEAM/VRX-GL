@@ -41,6 +41,7 @@
 #include "../render/gl_renderer.hpp"
 #include "../source/frame_source.hpp"
 
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -92,6 +93,15 @@ class PhaseController {
 public:
     struct Config {
         CameraApi::Config camera;
+
+        // ЗВІДКИ БРАТИ АДРЕСУ КАМЕРИ. Порожньо — лишається та, що в
+        // `camera.host`. Інакше петля питає це щокроку й переносить
+        // клієнта, щойно відео починає йти з іншої адреси.
+        //
+        // Чому не число в конфізі: адреса камери змінюється (DHCP, заміна
+        // борту), а от факт "відео йде ЗВІДСИ" завжди правдивий — його
+        // знає той, хто приймає датаграми.
+        std::function<std::string()> host_provider;
 
         // КУДИ ВЕДЕМО ФАЗУ. Від'ємне значення (типове) = рахувати саму,
         // додатне = стала ціль у мс від vblank'а, для перевірок.

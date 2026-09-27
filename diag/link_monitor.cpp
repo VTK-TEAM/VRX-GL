@@ -38,6 +38,13 @@ struct LinkMonitor::Impl {
     Config cfg;
     std::thread th;
     std::atomic<bool> running{false};
+
+    // АДРЕСА ВІДПРАВНИКА. Її знає лише той, хто приймає датаграми, а тут
+    // це ми: монітор і так читає кожен пакет каналу заради втрат. Нуль =
+    // ще нічого не приходило. Тримаємо в мережевому порядку байтів і
+    // перекладаємо в текст на читанні — щоб гарячий цикл не форматував
+    // рядків на кожен пакет.
+    std::atomic<uint32_t> peer{0};
     int fd = -1;
     FILE* log = nullptr;
 
@@ -96,8 +103,17 @@ struct LinkMonitor::Impl {
             pollfd pfd{fd, POLLIN, 0};
             if (::poll(&pfd, 1, 200) <= 0) continue;
 
-            const ssize_t n = ::recv(fd, buf, sizeof(buf), 0);
+            // recvfrom, а не recv: адреса відправника потрібна, щоб
+            // питати API камери там, ЗВІДКИ реально йде відео, замість
+            // зашитого числа. Камера змінює адресу — тракт іде за нею.
+            sockaddr_in from{};
+            socklen_t from_len = sizeof(from);
+            const ssize_t n = ::recvfrom(fd, buf, sizeof(buf), 0,
+                                         (sockaddr*)&from, &from_len);
             if (n < 12) continue;               // не RTP
+
+            if (from.sin_family == AF_INET)
+                peer.store(from.sin_addr.s_addr, std::memory_order_relaxed);
 
             const int64_t now = now_ms();
             const uint16_t seq = ntohs(*(uint16_t*)(buf + 2));
@@ -186,6 +202,16 @@ void LinkMonitor::stop() {
 LinkStats LinkMonitor::stats() const {
     std::lock_guard<std::mutex> lk(impl_->mtx);
     return impl_->st;
+}
+
+std::string LinkMonitor::peer_ip() const {
+    const uint32_t raw = impl_->peer.load(std::memory_order_relaxed);
+    if (raw == 0) return {};            // ще нічого не приходило
+    in_addr a{};
+    a.s_addr = raw;
+    char buf[INET_ADDRSTRLEN] = {};
+    if (!::inet_ntop(AF_INET, &a, buf, sizeof(buf))) return {};
+    return buf;
 }
 
 } // namespace vrx::diag

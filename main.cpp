@@ -446,8 +446,19 @@ int main(int argc, char** argv) {
     // наскільки дістає виміряний джитер, і не більше. Обидві величини
     // рахуються на ходу, тому тут немає жодної цифри. Єдиний актуатор у
     // тракті: режим екрана не чіпаємо взагалі.
+    // АДРЕСА КАМЕРИ ВИЗНАЧАЄТЬСЯ З ПОТОКУ, а не задається числом: число
+    // тут лише на час до першого пакета. Адресу знає спостерігач лінка —
+    // він і так читає кожну датаграму каналу заради втрат, тобто бачить
+    // відправника. Створюється він НИЖЧЕ за петлю, тому передаємо не
+    // покажчик, а атомарну скриньку, яку заповнимо після його старту.
+    static std::atomic<vrx::diag::LinkMonitor*> lm_for_phase{nullptr};
+
     vrx::control::PhaseController::Config ph_cfg;
     ph_cfg.camera.host = "192.168.1.10";
+    ph_cfg.host_provider = [] () -> std::string {
+        auto* lm = lm_for_phase.load(std::memory_order_acquire);
+        return lm ? lm->peer_ip() : std::string();
+    };
     vrx::control::PhaseController phase(display, renderer, main_src, ph_cfg);
     if (phase_loop) {
         phase.start();
@@ -687,6 +698,8 @@ int main(int argc, char** argv) {
     lm_cfg.log_path = "/tmp/vrx_link.log";
     vrx::diag::LinkMonitor link(lm_cfg);
     link.start();
+    // Аж тепер петля фази може дізнатися адресу камери.
+    lm_for_phase.store(&link, std::memory_order_release);
 
     std::printf("Працюю. Ctrl+C для виходу.\n");
 

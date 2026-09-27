@@ -5,27 +5,36 @@
 # станцію назад. Тобто кнопка редактора всередині станції працює лише
 # тоді, коли її запустив наглядач.
 #
-# ЧОМУ Conflicts=lightdm. DRM master ексклюзивний: поки X-сервер
-# робочого стола тримає екран, станція його не отримає. systemd сам
-# зупинить lightdm перед запуском — вручну цього робити не треба.
+# ЧОМУ lightdm ЗУПИНЯЄТЬСЯ ЯВНО, А НЕ ЧЕРЕЗ Conflicts=. Спершу тут стояв
+# `Conflicts=lightdm.service` — так і має виглядати правильний юніт, але з
+# ним НЕ ПРАЦЮЄ `systemctl restart`:
 #
-# ЧОМУ --no-block У ExecStopPost. Підняти lightdm назад треба, але
-# lightdm конфліктує з ЦИМ юнітом, який саме зупиняється. Синхронний
-# `systemctl start` тут чекав би на завершення власної зупинки; --no-block
-# лише ставить задачу в чергу й виходить.
+#     restart = stop + start. Між половинами відпрацьовує ExecStopPost і
+#     ставить у чергу підняття lightdm. Той конфліктує з ЦИМ юнітом —
+#     і систему просить скасувати його запуск. Результат: "Job for
+#     vrx-gl.service canceled", станція лежить, стіл піднятий.
+#
+# Явна пара Pre/Post цього не має: ніякого конфлікту не декларовано, тож
+# скасовувати нічому. Ціна — на перезапуску стіл на мить піднімається.
+# Обидва виклики СИНХРОННІ: з --no-block підняття lightdm могло б
+# наздогнати наступну зупинку й лишити екран у нього.
+#
+# ЧОМУ ЦЕ ВЗАГАЛІ ПОТРІБНО. DRM master ексклюзивний: поки екран тримає
+# X-сервер, станція його не отримає.
 #
 # ВИХОДУ З НАГЛЯДАЧА НЕМАЄ — він перезапускає станцію завжди. Повернутись
-# на робочий стіл можна лише зупинивши юніт: Ctrl+Alt+F2 і `vrx-stop`.
+# на робочий стіл можна лише зупинивши юніт: Ctrl+Alt+F2 і
+# `sudo systemctl stop vrx-gl`.
 
 [Unit]
 Description=VRX-GL станція (наглядач)
-Conflicts=lightdm.service
 After=network.target
 
 [Service]
 Type=simple
+ExecStartPre=-/usr/bin/systemctl stop lightdm.service
 ExecStart=/home/dlof/VRX-GL/build/vrx_supervisor
-ExecStopPost=-/usr/bin/systemctl --no-block start lightdm.service
+ExecStopPost=-/usr/bin/systemctl start lightdm.service
 Restart=no
 TimeoutStopSec=15
 StandardOutput=append:/tmp/vrx-gl.log

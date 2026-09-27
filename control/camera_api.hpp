@@ -105,6 +105,13 @@ public:
 
     explicit CameraApi(Config cfg);
 
+    // АДРЕСА МІНЯЄТЬСЯ НА ХОДУ. Її визначають не з конфіга, а з того,
+    // звідки реально приходить відео, — камера переїхала, тракт іде за
+    // нею. Викликати можна лише з того потоку, що робить запити (у нас
+    // це потік PhaseController); окремого захисту тут немає навмисно.
+    void set_host(const std::string& host) { cfg_.host = host; }
+    const std::string& host() const { return cfg_.host; }
+
     // GET /api/v1/phase — читання. Блокуючий, до io_timeout_ms.
     Reply read_phase();
 
