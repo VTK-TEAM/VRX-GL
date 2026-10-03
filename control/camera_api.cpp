@@ -109,18 +109,11 @@ void parse_phase(const nlohmann::json& o, CameraApi::Phase* p, bool* has) {
 
 CameraApi::CameraApi(Config cfg) : cfg_(std::move(cfg)) {}
 
-CameraApi::Reply CameraApi::call(const std::string& path, std::string* out_body) {
+int CameraApi::http_get(const std::string& path, std::string* out_raw) {
     requests_++;
-    Reply rep;
 
     const int fd = connect_timeout(cfg_.host.c_str(), cfg_.port, cfg_.connect_timeout_ms);
-    if (fd < 0) {
-        failures_++;
-        rep.error = "unreachable";
-        std::fprintf(stderr, "[cam] %s: не з'єдналося з %s:%d\n",
-                     path.c_str(), cfg_.host.c_str(), cfg_.port);
-        return rep;
-    }
+    if (fd < 0) return 0;
 
     char req[512];
     const int n = std::snprintf(req, sizeof(req),
@@ -150,21 +143,47 @@ CameraApi::Reply CameraApi::call(const std::string& path, std::string* out_body)
     }
     ::close(fd);
 
-    rep.http = status_code(raw);
+    if (out_raw) *out_raw = raw;
+    return status_code(raw);
+}
+
+void CameraApi::note_legacy() {
+    if (dialect_ != Dialect::kLegacy) {
+        dialect_ = Dialect::kLegacy;
+        std::fprintf(stderr, "[cam] стара камера без JSON-контракту — "
+                             "керую через /api/v1/set?video0.fpsTrimMilliHz\n");
+    }
+}
+
+void CameraApi::lock_new() {
+    if (dialect_ == Dialect::kAuto) {
+        dialect_ = Dialect::kNew;
+        std::fprintf(stderr, "[cam] камера з JSON-контрактом /api/v1/phase\n");
+    }
+}
+
+CameraApi::Reply CameraApi::call(const std::string& path, std::string* out_body) {
+    Reply rep;
+
+    std::string raw;
+    rep.http = http_get(path, &raw);
+
     const std::string body = carve_json(raw);
     if (out_body) *out_body = body;
 
     if (rep.http == 0) {
         failures_++;
         rep.error = "no_response";
-        std::fprintf(stderr, "[cam] %s: відповіді не було\n", path.c_str());
+        std::fprintf(stderr, "[cam] %s: нема відповіді від %s:%d\n",
+                     path.c_str(), cfg_.host.c_str(), cfg_.port);
         return rep;
     }
 
     const auto j = nlohmann::json::parse(body, nullptr, false);
     if (j.is_discarded() || !j.is_object()) {
-        // Код є, конверта немає: це не наш контракт (чужий httpd, стара
-        // прошивка, проксі). Не вигадуємо успіх з коду 200.
+        // Код є, конверта немає: це не наш контракт (стара прошивка, чужий
+        // httpd, проксі). Не вигадуємо успіх з коду 200 — але викликач
+        // вищого рівня з цього розпізнає стару камеру й перемкнеться.
         failures_++;
         rep.error = "bad_envelope";
         std::fprintf(stderr, "[cam] %s: HTTP %d без конверта JSON\n",
@@ -181,14 +200,57 @@ CameraApi::Reply CameraApi::call(const std::string& path, std::string* out_body)
     return rep;
 }
 
+// СТАРИЙ КОНТРАКТ. Один GET, успіх = рівно HTTP 200 (тіла немає). Це те,
+// що робила колишня set("video0.fpsTrimMilliHz", v): абсолютне значення,
+// без читання й без меж. Багато камер у полі знають лише його.
+CameraApi::Reply CameraApi::set_legacy(int millihz) {
+    char path[80];
+    std::snprintf(path, sizeof(path),
+                  "/api/v1/set?video0.fpsTrimMilliHz=%d", millihz);
+
+    Reply rep;
+    rep.http = http_get(path, nullptr);
+    rep.ok = (rep.http == 200);   // 200 = застосовано; інше = відхилено
+    rep.has_phase = false;        // стану стара камера не повертає
+    if (!rep.ok) {
+        failures_++;
+        rep.error = (rep.http == 0) ? "unreachable" : "legacy_http";
+        std::fprintf(stderr, "[cam] (legacy) fpsTrimMilliHz=%d: HTTP %d\n",
+                     millihz, rep.http);
+    }
+    return rep;
+}
+
 CameraApi::Reply CameraApi::read_phase() {
-    return call("/api/v1/phase", nullptr);
+    if (dialect_ == Dialect::kLegacy) {
+        // Стара камера читати фазу не вміє — петля працює без читання
+        // (пише абсолют). Не стукаємо даремно й не псуємо лічильник відмов.
+        Reply rep; rep.error = "legacy_no_read"; return rep;
+    }
+    Reply rep = call("/api/v1/phase", nullptr);
+    if (rep.error == "bad_envelope") {
+        note_legacy();
+        Reply r; r.error = "legacy_no_read"; return r;
+    }
+    if (rep.http != 0) lock_new();
+    return rep;
 }
 
 CameraApi::Reply CameraApi::set_phase(int millihz) {
+    if (dialect_ == Dialect::kLegacy) return set_legacy(millihz);
+
     char path[64];
     std::snprintf(path, sizeof(path), "/api/v1/phase?millihz=%d", millihz);
     Reply rep = call(path, nullptr);
+
+    // HTTP є, конверта нема — це стара камера. Перемикаємось назавжди й
+    // одразу повторюємо запис старим контрактом, щоб команда не пропала.
+    if (rep.error == "bad_envelope") {
+        note_legacy();
+        return set_legacy(millihz);
+    }
+    if (rep.http != 0) lock_new();
+
     if (!rep.ok) {
         std::fprintf(stderr, "[cam] phase=%d відхилено: HTTP %d, %s%s%s\n",
                      millihz, rep.http,
@@ -200,13 +262,22 @@ CameraApi::Reply CameraApi::set_phase(int millihz) {
 }
 
 CameraApi::Reply CameraApi::force_idr() {
-    return call("/api/v1/idr", nullptr);
+    // Стара камера примусового IDR цим контрактом не має — тихо пропускаємо,
+    // щоб не сипати «без конверта» щоразу.
+    if (dialect_ == Dialect::kLegacy) { Reply r; r.error = "legacy_no_idr"; return r; }
+    Reply rep = call("/api/v1/idr", nullptr);
+    if (rep.error == "bad_envelope") { note_legacy(); Reply r; r.error = "legacy_no_idr"; return r; }
+    if (rep.http != 0) lock_new();
+    return rep;
 }
 
 CameraApi::Status CameraApi::read_status() {
     Status st;
+    if (dialect_ == Dialect::kLegacy) return st;  // стара камера JSON-статусу не дає
     std::string body;
     const Reply rep = call("/api/v1/status", &body);
+    if (rep.error == "bad_envelope") { note_legacy(); return st; }
+    if (rep.http != 0) lock_new();
     if (!rep.ok) return st;
 
     const auto j = nlohmann::json::parse(body, nullptr, false);

@@ -109,7 +109,7 @@ public:
     // звідки реально приходить відео, — камера переїхала, тракт іде за
     // нею. Викликати можна лише з того потоку, що робить запити (у нас
     // це потік PhaseController); окремого захисту тут немає навмисно.
-    void set_host(const std::string& host) { cfg_.host = host; }
+    void set_host(const std::string& host) { cfg_.host = host; dialect_ = Dialect::kAuto; }
     const std::string& host() const { return cfg_.host; }
 
     // GET /api/v1/phase — читання. Блокуючий, до io_timeout_ms.
@@ -129,8 +129,29 @@ public:
     uint64_t failures() const { return failures_; }
 
 private:
-    // Один GET і розібраний конверт. `path` уже з параметрами.
+    // Низькорівневий GET: з'єднання, запит, читання до закриття. Повертає
+    // код HTTP (0 — не з'єдналося або нема відповіді), raw-відповідь у
+    // out_raw. requests_++ рахується саме тут, тож і новий, і старий
+    // контракт обліковані однаково.
+    int http_get(const std::string& path, std::string* out_raw);
+
+    // Один GET і розібраний JSON-конверт НОВОГО контракту. `path` з параметрами.
     Reply call(const std::string& path, std::string* out_body);
+
+    // СТАРИЙ КОНТРАКТ (камери до JSON-API): GET /api/v1/set?video0.
+    // fpsTrimMilliHz=<v>, успіх = HTTP 200. Стану не повертає (has_phase=
+    // false) — а петля це вже вміє: пише абсолют, не читаючи, і при
+    // невідомих межах бере власний ліміт.
+    Reply set_legacy(int millihz);
+
+    // ДІАЛЕКТ КАМЕРИ. kAuto — ще не знаємо. Перша ж відповідь без JSON-
+    // конверта (HTTP є, тіла контракту нема) ставить kLegacy, валідний
+    // конверт — kNew; далі стукаємо лише у відповідний endpoint, а не в
+    // обидва щоразу. Скидається на kAuto при зміні хоста (інша камера).
+    enum class Dialect { kAuto, kNew, kLegacy };
+    void note_legacy();   // перемкнутися на старий контракт (один раз, з логом)
+    void lock_new();      // зафіксувати новий контракт (з kAuto)
+    Dialect dialect_ = Dialect::kAuto;
 
     Config cfg_;
     uint64_t requests_ = 0;
