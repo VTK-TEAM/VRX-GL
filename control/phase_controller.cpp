@@ -6,6 +6,7 @@
 #include <cmath>
 #include <condition_variable>
 #include <cstdio>
+#include <exception>
 #include <mutex>
 #include <thread>
 
@@ -394,7 +395,35 @@ struct PhaseController::Impl {
         return true;
     }
 
-    void loop() {
+    // ЗАПОБІЖНИК. Петля фази — не те, без чого станція показує відео, а
+    // говорить вона з пристроєм, якого ми не контролюємо. Що б камера не
+    // відповіла, виняток не має права вийти з цього потоку: там його ніхто
+    // не ловить, і std::terminate забрав би ВСЮ станцію. Так і було в полі:
+    // після оновлення станція зі старою камерою падала по колу одразу після
+    // старту. Логуємо не частіше разу на 5 с — зламана камера не засипле журнал.
+    int64_t last_exc_log_ns = 0;
+    uint64_t exc_count = 0;
+
+    template <class F> void guarded(const char* what, F&& f) {
+        try { f(); }
+        catch (const std::exception& e) { note_exc(what, e.what()); }
+        catch (...) { note_exc(what, "невідомий виняток"); }
+    }
+
+    void note_exc(const char* what, const char* msg) {
+        exc_count++;
+        const int64_t t = now_ns();
+        if (t - last_exc_log_ns > 5000000000LL) {
+            last_exc_log_ns = t;
+            std::fprintf(stderr, "[фаза] %s: виняток перехоплено (%s), всього %llu"
+                                 " — петля живе далі\n",
+                         what, msg, (unsigned long long)exc_count);
+        }
+    }
+
+    // Старт: статус камери в лог, смуга, явний нуль. Окремим методом, щоб
+    // обгорнути запобіжником цілком.
+    void begin() {
         // Підстроювання на камері не зберігається між запусками, але наш
         // процес міг і перезапуститися окремо від неї. Явний нуль на
         // старті прибирає розбіжність між тим, що стоїть на камері, і
@@ -436,6 +465,10 @@ struct PhaseController::Impl {
         // старті прибирає розбіжність. `applied_mhz` далі веде push(): він
         // бере значення з відповіді камери, а не з нашої команди.
         push(0);
+    }
+
+    void loop() {
+        guarded("старт", [this] { begin(); });
 
         const int64_t t_start = now_ns();
 
@@ -451,7 +484,7 @@ struct PhaseController::Impl {
                 hold("розігрів");
                 continue;
             }
-            tick();
+            guarded("такт", [this] { tick(); });
         }
 
         // Скільки часу петля справді тримала фазу — число, яке інакше
@@ -468,7 +501,7 @@ struct PhaseController::Impl {
 
         // Лишати камеру підстроєною після нашого виходу нема сенсу:
         // наступний запуск почне з невідомого стану.
-        push(0);
+        guarded("вихід", [this] { push(0); });
     }
 };
 
@@ -487,8 +520,10 @@ bool PhaseController::start() {
         return false;
     }
     impl_->running.store(true);
-    impl_->th = std::thread([this] { impl_->loop(); });
-    std::fprintf(stderr, "[фаза] петля піднята: камера %s:%d, /api/v1/phase\n",
+    impl_->th = std::thread([this] {
+        impl_->guarded("потік", [this] { impl_->loop(); });
+    });
+    std::fprintf(stderr, "[фаза] петля піднята: камера %s:%d (/api/v1/phase або старий /api/v1/set)\n",
                  impl_->cfg.camera.host.c_str(), impl_->cfg.camera.port);
     return true;
 }

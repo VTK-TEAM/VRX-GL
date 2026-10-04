@@ -1,6 +1,7 @@
 #include "screen_presets.hpp"
 
 #include "../osd/json.hpp"
+#include "../osd/json_safe.hpp"
 
 #include <algorithm>
 #include <array>
@@ -337,10 +338,10 @@ nlohmann::json to_json(const layout::Placement& p) {
 }
 layout::Placement from_json(const nlohmann::json& j, layout::Placement fallback) {
     layout::Placement p = fallback;
-    p.x = j.value("x", p.x); p.y = j.value("y", p.y);
-    p.w = j.value("w", p.w); p.h = j.value("h", p.h);
-    p.z = j.value("z", p.z);
-    int a = j.value("anchor", (int)p.anchor);
+    p.x = json_get(j, "x", p.x); p.y = json_get(j, "y", p.y);
+    p.w = json_get(j, "w", p.w); p.h = json_get(j, "h", p.h);
+    p.z = json_get(j, "z", p.z);
+    int a = json_get(j, "anchor", (int)p.anchor);
     if (a >= 0 && a <= 8) p.anchor = (layout::Anchor)a;
     return layout::sanitize(p);
 }
@@ -519,12 +520,12 @@ struct ScreenPresets::Impl {
                 }
             }
             if (ok && root.contains("locked")) {
-                locked[p][render::Scene::kPrimary]   = root["locked"].value("primary", false);
-                locked[p][render::Scene::kSecondary] = root["locked"].value("secondary", false);
+                locked[p][render::Scene::kPrimary]   = json_get(root["locked"], "primary", false);
+                locked[p][render::Scene::kSecondary] = json_get(root["locked"], "secondary", false);
             }
             if (ok && root.contains("osd")) {
-                osd_on[p][render::Scene::kPrimary]   = root["osd"].value("primary", true);
-                osd_on[p][render::Scene::kSecondary] = root["osd"].value("secondary", false);
+                osd_on[p][render::Scene::kPrimary]   = json_get(root["osd"], "primary", true);
+                osd_on[p][render::Scene::kSecondary] = json_get(root["osd"], "secondary", false);
             }
 
             std::fprintf(stderr, "[екрани] пресет %d %s%s\n", p + 1,

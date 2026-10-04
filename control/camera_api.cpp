@@ -1,6 +1,7 @@
 #include "camera_api.hpp"
 
 #include "../osd/json.hpp"
+#include "../osd/json_safe.hpp"
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -94,12 +95,12 @@ int status_code(const std::string& raw) {
 void parse_phase(const nlohmann::json& o, CameraApi::Phase* p, bool* has) {
     if (!o.is_object()) return;
     if (!o.contains("trimMilliHz")) return;
-    p->trim_mhz = o.value("trimMilliHz", 0);
+    p->trim_mhz = json_get(o, "trimMilliHz", 0);
     // Межі приходять разом зі станом. Якщо їх немає — смуга лишається
     // невідомою, і викликач має право не довіряти нулям.
     if (o.contains("rangeLo") && o.contains("rangeHi")) {
-        p->band.lo_mhz = o.value("rangeLo", 0);
-        p->band.hi_mhz = o.value("rangeHi", 0);
+        p->band.lo_mhz = json_get(o, "rangeLo", 0);
+        p->band.hi_mhz = json_get(o, "rangeHi", 0);
         p->band.known = true;
     }
     *has = true;
@@ -180,7 +181,15 @@ CameraApi::Reply CameraApi::call(const std::string& path, std::string* out_body)
     }
 
     const auto j = nlohmann::json::parse(body, nullptr, false);
-    if (j.is_discarded() || !j.is_object()) {
+    // КОНВЕРТ НАШОГО КОНТРАКТУ — це об'єкт із БУЛЕВИМ `ok`. Просто «якийсь
+    // JSON» ним не є: стара прошивка на невідомий endpoint може відповісти
+    // JSON-помилкою на кшталт {"error": 404}, і якби ми прийняли її за
+    // новий контракт, на старий шлях камера не перемкнулась би ніколи —
+    // петля стукала б у /api/v1/phase і вічно отримувала відмову.
+    const auto ok_it = j.is_object() ? j.find("ok") : j.end();
+    const bool envelope = !j.is_discarded() && j.is_object()
+                          && ok_it != j.end() && ok_it->is_boolean();
+    if (!envelope) {
         // Код є, конверта немає: це не наш контракт (стара прошивка, чужий
         // httpd, проксі). Не вигадуємо успіх з коду 200 — але викликач
         // вищого рівня з цього розпізнає стару камеру й перемкнеться.
@@ -191,9 +200,9 @@ CameraApi::Reply CameraApi::call(const std::string& path, std::string* out_body)
         return rep;
     }
 
-    rep.ok = j.value("ok", false);
-    rep.error = j.value("error", std::string());
-    rep.detail = j.value("detail", std::string());
+    rep.ok = json_get(j, "ok", false);
+    rep.error = json_get(j, "error", std::string());
+    rep.detail = json_get(j, "detail", std::string());
     parse_phase(j, &rep.phase, &rep.has_phase);
 
     if (!rep.ok) failures_++;
@@ -283,22 +292,22 @@ CameraApi::Status CameraApi::read_status() {
     const auto j = nlohmann::json::parse(body, nullptr, false);
     if (j.is_discarded() || !j.is_object()) return st;
 
-    st.version = j.value("version", std::string());
+    st.version = json_get(j, "version", std::string());
 
     if (j.contains("video") && j["video"].is_object()) {
         const auto& v = j["video"];
-        st.codec = v.value("codec", std::string());
-        st.width = v.value("width", 0);
-        st.height = v.value("height", 0);
-        st.fps_requested = v.value("fpsRequested", 0);
-        st.fps_live = v.value("fpsLive", 0.0);
-        st.bitrate_kbit = v.value("bitrate", 0);
-        st.gop_s = v.value("gopSeconds", 0.0);
+        st.codec = json_get(v, "codec", std::string());
+        st.width = json_get(v, "width", 0);
+        st.height = json_get(v, "height", 0);
+        st.fps_requested = json_get(v, "fpsRequested", 0);
+        st.fps_live = json_get(v, "fpsLive", 0.0);
+        st.bitrate_kbit = json_get(v, "bitrate", 0);
+        st.gop_s = json_get(v, "gopSeconds", 0.0);
     }
     if (j.contains("outgoing") && j["outgoing"].is_object()) {
         const auto& o = j["outgoing"];
-        st.outgoing_enabled = o.value("enabled", false);
-        st.outgoing_server = o.value("server", std::string());
+        st.outgoing_enabled = json_get(o, "enabled", false);
+        st.outgoing_server = json_get(o, "server", std::string());
     }
     if (j.contains("phase")) {
         bool has = false;
