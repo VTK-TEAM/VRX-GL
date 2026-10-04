@@ -54,6 +54,11 @@ public:
     // Побічно це прибирає й гонку за індексом сеансу: живий журнал
     // перечитує той самий потік, і більше ніхто до ix_ не торкається.
     void request_open(const std::string& journal_path);
+
+    // Мітка вмикання, яке пише ЦЯ станція. Лише її сеанс може бути живим
+    // (рости на шкалі); обірвані з минулих вмикань — звичайні записи.
+    // Задається один раз на старті, до першого відкриття.
+    void set_own_session(const std::string& id) { own_session_ = id; }
     void request_seek(int64_t t_us);
     void request_jump(int64_t delta_us);
     void request_step(int dir);
@@ -113,6 +118,7 @@ public:
 
 private:
     record::SessionIndex ix_;
+    std::string own_session_;
     std::shared_ptr<PlaybackSource> ch_[kChannels];
     bool open_ = false;
 

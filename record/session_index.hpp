@@ -64,13 +64,20 @@ struct SessionBrief {
 // просто перелік цих файлів по теках днів. Читаються вони цілком: журнал
 // навіть за довгий політ важить сотні кілобайтів, а знати треба початок,
 // кінець і чи сеанс іще живий.
-std::vector<SessionBrief> list_sessions(const std::string& root);
+//
+// `own_session` — мітка ПОТОЧНОГО вмикання станції (див. live()). Порожня —
+// живих у списку не буде: так і має бути там, де ніхто не пише (ПК).
+std::vector<SessionBrief> list_sessions(const std::string& root,
+                                        const std::string& own_session = {});
 
 class SessionIndex {
 public:
     // Читає журнал. Пошкоджений останній рядок (обірваний запис) просто
     // не враховується — розбір посимвольний і винятків не кидає.
-    bool load(const std::string& journal_path);
+    //
+    // `own_session` — мітка вмикання, яке пише ЦЕЙ процес. Потрібна лише
+    // для live(): незакритий файл ще не означає, що сеанс пишеться.
+    bool load(const std::string& journal_path, const std::string& own_session = {});
 
     const std::string& dir() const { return dir_; }
     const std::string& id() const { return id_; }
@@ -78,7 +85,15 @@ public:
     int64_t start_us() const { return start_us_; }
     int64_t end_us() const { return end_us_; }
     int64_t length_us() const { return end_us_ - start_us_; }
-    bool live() const { return live_; }          // хоч один файл не закритий
+    // ЖИВИЙ = хоч один файл не закритий І це сеанс поточного вмикання.
+    //
+    // Колись було лише перше, і цього мало: `close` пише тільки штатна
+    // зупинка запису, а живлення на станціях знімають, і падіння бувають.
+    // Кожен обірваний сеанс лишався "живим" назавжди — підсвічений у
+    // списку як той, що пишеться, а плеєр рахував йому довжину як "зараз
+    // мінус початок": сеанс місячної давності мав шкалу на місяць і
+    // перечитувався кожні 2 с. Пише ж станція лише свій поточний сеанс.
+    bool live() const { return live_; }
 
     const std::vector<IndexFile>& files() const { return files_; }
 

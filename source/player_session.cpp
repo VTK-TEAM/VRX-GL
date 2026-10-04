@@ -45,7 +45,7 @@ void PlayerSession::adopt() {
 
 bool PlayerSession::open(const std::string& journal_path, int64_t t_us) {
     for (auto& c : ch_) c->stop();
-    if (!ix_.load(journal_path)) return false;
+    if (!ix_.load(journal_path, own_session_)) return false;
     journal_ = journal_path;
     adopt();
 
@@ -194,7 +194,7 @@ void PlayerSession::tick() {
         (last_reload_ns_ == 0 || now - last_reload_ns_ > 2000000000LL)) {
         last_reload_ns_ = now;
         record::SessionIndex fresh;
-        if (fresh.load(journal_) && fresh.length_us() >= ix_.length_us()) {
+        if (fresh.load(journal_, own_session_) && fresh.length_us() >= ix_.length_us()) {
             ix_ = std::move(fresh);
             adopt();
             for (auto& c : ch_) if (c) c->refresh(ix_);

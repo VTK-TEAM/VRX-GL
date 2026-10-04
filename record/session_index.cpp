@@ -75,7 +75,7 @@ int64_t parse_session_id(const std::string& id) {
 
 } // namespace
 
-bool SessionIndex::load(const std::string& journal_path) {
+bool SessionIndex::load(const std::string& journal_path, const std::string& own_session) {
     entries_.clear();
     files_.clear();
     live_ = false;
@@ -146,7 +146,7 @@ bool SessionIndex::load(const std::string& journal_path) {
         Entry& e = entries_[i];
         e.f.anchor_us = acnt[i] > 0 ? asum[i] / acnt[i] : opened[i];
         if (e.f.anchor_us <= 0 || e.f.end_us <= e.f.anchor_us) continue;
-        if (!e.f.closed) live_ = true;
+        if (!e.f.closed && !own_session.empty() && id_ == own_session) live_ = true;
         if (start_us_ == 0 || e.f.anchor_us < start_us_) start_us_ = e.f.anchor_us;
         if (e.f.end_us > end_us_) end_us_ = e.f.end_us;
         std::sort(e.marks.begin(), e.marks.end(),
@@ -212,7 +212,8 @@ SeekPoint SessionIndex::locate(const std::string& channel, int64_t t_us) const {
 }
 
 
-std::vector<SessionBrief> list_sessions(const std::string& root) {
+std::vector<SessionBrief> list_sessions(const std::string& root,
+                                        const std::string& own_session) {
     std::vector<SessionBrief> out;
     DIR* d = ::opendir(root.c_str());
     if (!d) return out;
@@ -230,7 +231,7 @@ std::vector<SessionBrief> list_sessions(const std::string& root) {
 
             SessionIndex ix;
             const std::string path = day + "/" + n;
-            if (!ix.load(path)) continue;        // порожній або битий — пропускаємо
+            if (!ix.load(path, own_session)) continue;        // порожній або битий — пропускаємо
 
             SessionBrief b;
             b.id = ix.id();

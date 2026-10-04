@@ -359,8 +359,25 @@ int main(int argc, char** argv) {
     // джерел рендерера й список вікон пресетів щокадру читає потік показу,
     // і дописувати в них на ходу не можна. Порожній плеєр просто не віддає
     // кадрів, тобто нічого не коштує.
+    // МІТКА ВМИКАННЯ — ДО плеєрів: лише сеанс цього вмикання може бути
+    // живим (див. SessionIndex::live), тож плеєри мусять її знати.
+    // Рекордери нижче беруть ту саму мітку.
+    //
+    // Той самий вигляд, що й у назвах файлів, — щоб
+    // ім'я проєкту читалось поруч із ними без перекладу.
+    char session[32] = {0};
+    {
+        const std::time_t t = std::time(nullptr);
+        struct tm tm {};
+        localtime_r(&t, &tm);
+        std::strftime(session, sizeof(session), "%Y%m%d_%H%M%S", &tm);
+    }
+
     std::shared_ptr<vrx::source::PlayerSession> players[2];
-    for (auto& pl : players) pl = std::make_shared<vrx::source::PlayerSession>();
+    for (auto& pl : players) {
+        pl = std::make_shared<vrx::source::PlayerSession>();
+        pl->set_own_session(session);
+    }
 
     std::shared_ptr<vrx::ui::ScreenPresets> screen_presets;
     std::shared_ptr<vrx::ui::PlayerUi> player_ui;
@@ -476,10 +493,10 @@ int main(int argc, char** argv) {
     // хто володіє носієм і сеансами.
     // Звідки шар бере перелік сеансів. Сам він про носій не знає: де той
     // змонтований і чи є взагалі — справа того, хто ним володіє.
-    if (player_ui) player_ui->set_sessions([&storage]() {
+    if (player_ui) player_ui->set_sessions([&storage, own = std::string(session)]() {
         const auto drive = storage.state();
         if (!drive.usable()) return std::vector<vrx::record::SessionBrief>{};
-        return vrx::record::list_sessions(drive.root);
+        return vrx::record::list_sessions(drive.root, own);
     });
 
     // Знімок ЕФІРУ — з головного меню. Той самий набір каналів, але кадри
@@ -548,16 +565,6 @@ int main(int argc, char** argv) {
     // Запис. (Прапорець лишаю на випадок тесту ізоляції флешки — false
     // глушить усі рекордери й субтитри.)
     constexpr bool kRecordEnabled = true;
-
-    // МІТКА ВМИКАННЯ. Той самий вигляд, що й у назвах файлів, — щоб
-    // ім'я проєкту читалось поруч із ними без перекладу.
-    char session[32] = {0};
-    {
-        const std::time_t t = std::time(nullptr);
-        struct tm tm {};
-        localtime_r(&t, &tm);
-        std::strftime(session, sizeof(session), "%Y%m%d_%H%M%S", &tm);
-    }
 
     vrx::record::Recorder::Config rec_cfg;
     rec_cfg.session = session;
