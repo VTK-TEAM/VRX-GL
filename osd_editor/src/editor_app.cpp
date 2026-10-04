@@ -731,7 +731,9 @@ void EditorApp::set_status(const std::string& text, bool is_error) {
 void EditorApp::render_frame() {
     // ЛОКАЛЬНІ КАНАЛИ СТАНЦІЇ, ЯКІ РЕДАКТОР ЗНАЄ САМ.
     //
-    // 211/212 наповнює станція, а вона під час роботи редактора зупинена:
+    // LOCAL_CLOCK/LOCAL_DATE (539/540; у розкладці v1 були 211/212, і тут
+    // лишались числами — після перенумерації превʼю годинника знову
+    // показувало "--") наповнює станція, а вона під час роботи редактора зупинена:
     // екран один, DRM master ексклюзивний. Тому в превʼю вони показувались
     // як "--" — тобто саме ті два елементи, заради яких у діалозі є
     // виставлення часу, у самому превʼю не працювали.
@@ -742,9 +744,9 @@ void EditorApp::render_frame() {
         const std::time_t now = std::time(nullptr);
         struct tm lt;
         localtime_r(&now, &lt);
-        telemetry_storage_.set_value(211,
+        telemetry_storage_.set_value(VT_TLM_LOCAL_CLOCK,
             (float)(lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec));
-        telemetry_storage_.set_value(212,
+        telemetry_storage_.set_value(VT_TLM_LOCAL_DATE,
             (float)((lt.tm_year % 100) * 10000 + (lt.tm_mon + 1) * 100 + lt.tm_mday));
     }
 
