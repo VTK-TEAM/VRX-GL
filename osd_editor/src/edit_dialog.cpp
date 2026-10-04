@@ -178,8 +178,13 @@ void ElementEditDialog::build_value_fields() {
                    [el](bool v) { el->set_hide_if_no_data(v); });
 
     // Годинник і дата станції — єдине місце, де їх можна виставити.
+    //
+    // Номери — ІМЕНОВАНІ константи, не числа. Тут стояло `ch == 211 || 212`
+    // з розкладки v1; v2 перенесла локальні канали в простір станції (539/
+    // 540), і блок мовчки зник з редактора — годинник у полі стало нічим
+    // виставити. Константа йде за індексом сама.
     const int ch = el->data_channel();
-    if (ch == 211 || ch == 212) {
+    if (ch == VT_TLM_LOCAL_CLOCK || ch == VT_TLM_LOCAL_DATE) {
         std::time_t now = std::time(nullptr);
         struct tm lt;
         localtime_r(&now, &lt);
