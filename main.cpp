@@ -551,7 +551,7 @@ int main(int argc, char** argv) {
     // порожнє місце. В одноканальній збірці пресетів немає — тоді вона
     // перша й сама.
     vrx::ui::ScreenUi::Config ui_cfg;
-    ui_cfg.slot = kSingleChannel ? 0 : 8;
+    ui_cfg.slot = screen_presets ? screen_presets->row_slots() : 0;
     auto screen_ui = std::make_shared<vrx::ui::ScreenUi>(ui_cfg);
 
     // Кнопка редактора живе в іншому шарі, але в тому ж ряду кнопок — тож

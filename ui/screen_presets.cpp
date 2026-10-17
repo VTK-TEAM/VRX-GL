@@ -857,6 +857,8 @@ bool ScreenPresets::menu_open(int role) const {
     return (role >= 0 && role < Impl::kRoles) && impl_->menu[role];
 }
 
+int ScreenPresets::row_slots() const { return impl_->button_count() + 1; }
+
 int ScreenPresets::mode(int role) const {
     return (role >= 0 && role < Impl::kRoles) ? impl_->mode[role].load() : (int)kLive;
 }
