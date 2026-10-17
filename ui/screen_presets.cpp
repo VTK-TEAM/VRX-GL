@@ -761,6 +761,13 @@ struct ScreenPresets::Impl {
     int play_button() const { return cfg.preset_count + 4; }
     int editor_button() const { return cfg.preset_count + 5; }   // останньою
     int button_count() const { return cfg.preset_count + 6; }
+    // СКІЛЬКИ КНОПОК У РЯДУ НА ЦЬОМУ ЕКРАНІ. Редактор — лише на основному:
+    // він відкривається на основному моніторі, тож кнопка на додатковому
+    // вела б не туди, куди дивишся. Стоїть останнім, тож без нього ряд
+    // просто коротший, а решта кнопок не зсувається.
+    int buttons_on(int role) const {
+        return role == render::Scene::kPrimary ? button_count() : button_count() - 1;
+    }
 
     void button_rect(int role, int b, float* x, float* y, float* w, float* h) const {
         const int W = rw[role].load(), H = rh[role].load();
@@ -983,7 +990,7 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
             }
 
             // Слоти зсунуті на один: нульовий зайняла ручка.
-            for (int b = 0; d.menu[role] && b < d.button_count(); ++b) {
+            for (int b = 0; d.menu[role] && b < d.buttons_on(role); ++b) {
                 float bx, by, bw, bh;
                 d.button_rect(role, b + 1, &bx, &by, &bw, &bh);
                 if (!(cx >= bx && cx <= bx + bw && cy >= by && cy <= by + bh)) continue;
@@ -1210,7 +1217,7 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
         // картинку.
         if (d.menu[role]) {
             float lx, ly, lw, lh;
-            d.button_rect(role, d.button_count(), &lx, &ly, &lw, &lh);   // остання кнопка ряду (редактор)
+            d.button_rect(role, d.buttons_on(role), &lx, &ly, &lw, &lh);   // остання кнопка ряду цього екрана
             const float pad = bh * 0.12f;                    // ~3 пікселі
             const float padx = pad * float(H) / float(W);    // стільки ж по ширині
             push(d.panel_idx, bx - padx, by - pad,
@@ -1248,8 +1255,10 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
         d.button_rect(role, d.audio_button() + 1, &bx, &by, &bw, &bh);
         push(d.audio_idx + (d.audio_pop[role] ? 1 : 0), bx, by, bw, bh);
 
-        d.button_rect(role, d.editor_button() + 1, &bx, &by, &bw, &bh);
-        push(d.editor_idx + (d.editor_pressed ? 1 : 0), bx, by, bw, bh);
+        if (d.editor_button() < d.buttons_on(role)) {        // лише на основному
+            d.button_rect(role, d.editor_button() + 1, &bx, &by, &bw, &bh);
+            push(d.editor_idx + (d.editor_pressed ? 1 : 0), bx, by, bw, bh);
+        }
     }
     return true;
 }
