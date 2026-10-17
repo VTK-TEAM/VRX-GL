@@ -64,6 +64,16 @@ struct AudioOut::Impl {
     std::atomic<bool> playing{false};
     uint64_t failures = 0;
 
+    // Гучність і елемент, яким її міняти на ходу. Елемент живе стільки,
+    // скільки пайплайн; захищений, бо гучність крутять з потоку показу.
+    std::atomic<float> volume{1.0f};
+    std::mutex vol_mtx;
+    GstElement* vol_el = nullptr;
+
+    // Останній рівень (режим метра). Атомарні — читає потік показу.
+    std::atomic<float> rms_db{-100.f}, peak_db{-100.f};
+    std::atomic<int64_t> level_at_ms{-1};
+
     explicit Impl(Config c) : cfg(std::move(c)) {}
 
     int eff_port() const {
@@ -74,6 +84,44 @@ struct AudioOut::Impl {
     static GstPadProbeReturn on_buffer(GstPad*, GstPadProbeInfo*, gpointer self) {
         static_cast<Impl*>(self)->buffers.fetch_add(1, std::memory_order_relaxed);
         return GST_PAD_PROBE_OK;
+    }
+
+    // Хвіст пайплайна: або звукова карта з гучністю, або метр.
+    std::string tail() const {
+        char b[512];
+        if (cfg.meter) {
+            std::snprintf(b, sizeof(b),
+                "! level name=lvl interval=%llu post-messages=true "
+                "! fakesink name=sink sync=false async=false",
+                (unsigned long long)cfg.meter_interval_ms * 1000000ULL);
+        } else {
+            std::snprintf(b, sizeof(b),
+                "! audio/x-raw,rate=48000,channels=2 "
+                "! volume name=vol volume=%.4f "
+                "! alsasink name=sink device=\"%s\"",
+                (double)volume.load(std::memory_order_relaxed), cfg.device.c_str());
+        }
+        return b;
+    }
+
+    // Розібрати повідомлення level: найгучніший канал.
+    void on_level(const GstStructure* s) {
+        float rms = -100.f, peak = -100.f;
+        G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+        if (const GValue* v = gst_structure_get_value(s, "rms")) {
+            if (GValueArray* a = (GValueArray*)g_value_get_boxed(v))
+                for (guint i = 0; i < a->n_values; ++i)
+                    rms = std::max(rms, (float)g_value_get_double(g_value_array_get_nth(a, i)));
+        }
+        if (const GValue* v = gst_structure_get_value(s, "peak")) {
+            if (GValueArray* a = (GValueArray*)g_value_get_boxed(v))
+                for (guint i = 0; i < a->n_values; ++i)
+                    peak = std::max(peak, (float)g_value_get_double(g_value_array_get_nth(a, i)));
+        }
+        G_GNUC_END_IGNORE_DEPRECATIONS
+        rms_db.store(rms, std::memory_order_relaxed);
+        peak_db.store(peak, std::memory_order_relaxed);
+        level_at_ms.store(now_ms(), std::memory_order_relaxed);
     }
 
     // ПАЙПЛАЙН. Розбір рядка рівно за інтерфейсом камери. plc=true —
@@ -88,9 +136,8 @@ struct AudioOut::Impl {
             "! rtpjitterbuffer latency=%d drop-on-latency=true "
             "! rtpopusdepay ! opusdec plc=true "
             "! audioconvert ! audioresample "
-            "! audio/x-raw,rate=48000,channels=2 "
-            "! alsasink name=sink device=\"%s\"",
-            eff_port(), cfg.payload_type, cfg.jitter_ms, cfg.device.c_str());
+            "%s",
+            eff_port(), cfg.payload_type, cfg.jitter_ms, tail().c_str());
 
         GError* err = nullptr;
         GstElement* p = gst_parse_launch(desc, &err);
@@ -102,6 +149,10 @@ struct AudioOut::Impl {
         }
         if (err) g_error_free(err);
 
+        {
+            std::lock_guard<std::mutex> lk(vol_mtx);
+            vol_el = gst_bin_get_by_name(GST_BIN(p), "vol");   // nullptr у метра
+        }
         if (GstElement* sink = gst_bin_get_by_name(GST_BIN(p), "sink")) {
             if (GstPad* pad = gst_element_get_static_pad(sink, "sink")) {
                 gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_BUFFER, on_buffer, this, nullptr);
@@ -143,14 +194,21 @@ struct AudioOut::Impl {
                 const int64_t t0 = now_ms();
                 playing.store(true, std::memory_order_relaxed);
                 std::fprintf(stderr, "[звук %s] слухаю UDP %d -> %s\n",
-                             cfg.name.c_str(), eff_port(), cfg.device.c_str());
+                             cfg.name.c_str(), eff_port(),
+                             cfg.meter ? "метр рівня" : cfg.device.c_str());
 
                 GstBus* bus = gst_element_get_bus(p);
                 while (running.load(std::memory_order_relaxed) &&
                        !want_rebuild.load(std::memory_order_relaxed)) {
                     GstMessage* m = gst_bus_timed_pop_filtered(bus, 200 * GST_MSECOND,
-                        (GstMessageType)(GST_MESSAGE_ERROR | GST_MESSAGE_EOS));
+                        (GstMessageType)(GST_MESSAGE_ERROR | GST_MESSAGE_EOS | GST_MESSAGE_ELEMENT));
                     if (!m) continue;
+                    if (GST_MESSAGE_TYPE(m) == GST_MESSAGE_ELEMENT) {
+                        const GstStructure* s = gst_message_get_structure(m);
+                        if (s && gst_structure_has_name(s, "level")) on_level(s);
+                        gst_message_unref(m);
+                        continue;
+                    }
                     if (GST_MESSAGE_TYPE(m) == GST_MESSAGE_ERROR && should_log()) {
                         GError* e = nullptr;
                         gchar* dbg = nullptr;
@@ -174,6 +232,10 @@ struct AudioOut::Impl {
                              cfg.name.c_str(), cfg.device.c_str());
             }
 
+            {
+                std::lock_guard<std::mutex> lk(vol_mtx);
+                if (vol_el) { gst_object_unref(vol_el); vol_el = nullptr; }
+            }
             if (p) {
                 gst_element_set_state(p, GST_STATE_NULL);
                 gst_object_unref(p);
@@ -207,6 +269,22 @@ void AudioOut::set_udp_port(int port) {
     impl_->port_override.store(port, std::memory_order_relaxed);
     impl_->want_rebuild.store(true, std::memory_order_relaxed);
     impl_->wake_cv.notify_all();
+}
+
+void AudioOut::set_volume(float v) {
+    if (v < 0.f) v = 0.f;
+    impl_->volume.store(v, std::memory_order_relaxed);
+    std::lock_guard<std::mutex> lk(impl_->vol_mtx);
+    if (impl_->vol_el) g_object_set(impl_->vol_el, "volume", (gdouble)v, nullptr);
+}
+
+AudioLevel AudioOut::level() const {
+    AudioLevel l;
+    l.rms_db = impl_->rms_db.load(std::memory_order_relaxed);
+    l.peak_db = impl_->peak_db.load(std::memory_order_relaxed);
+    const int64_t at = impl_->level_at_ms.load(std::memory_order_relaxed);
+    l.age_ms = at < 0 ? -1 : now_ms() - at;
+    return l;
 }
 
 AudioOutStats AudioOut::stats() const {

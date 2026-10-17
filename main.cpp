@@ -25,6 +25,7 @@
 #include "license/license_gate.hpp"
 #include "record/recorder.hpp"
 #include "audio/audio_out.hpp"
+#include "ui/audio_ui.hpp"
 #include "record/storage.hpp"
 #include "diag/link_monitor.hpp"
 #include "diag/path_meter.hpp"
@@ -380,8 +381,45 @@ int main(int argc, char** argv) {
         pl->set_own_session(session);
     }
 
+    // ЗВУК: вивід і метр. Тут, ДО шарів інтерфейсу: шар звуку бере в них
+    // рівень і віддає гучність, і під'єднати його треба повністю до того,
+    // як рендерер почне його кликати, — інакше призначення колбеків
+    // змагалося б із потоком показу. Запис звуку — нижче, поруч з іншими
+    // рекордерами.
+    //
+    // Вивід — на HDMI і на джек одночасно, кожен своїм пайплайном: карта, що
+    // не відкрилась (монітор без звуку), не глушить другу. Розсинхрон між
+    // ними не лікується — слухають щось одне. Метр — третій, без карти
+    // взагалі (level ! fakesink): він живе, хоч би які карти не відкрились.
+    constexpr int kAudioPort = 5601;
+    constexpr int kAudioPt = 98;
+
+    vrx::audio::AudioOut::Config ah_cfg;
+    ah_cfg.name = "HDMI";
+    ah_cfg.device = "plughw:CARD=rockchiphdmi0,DEV=0";
+    ah_cfg.udp_port = kAudioPort;
+    ah_cfg.payload_type = kAudioPt;
+    vrx::audio::AudioOut audio_hdmi(ah_cfg);
+
+    vrx::audio::AudioOut::Config aj_cfg = ah_cfg;
+    aj_cfg.name = "джек";
+    aj_cfg.device = "plughw:CARD=rockchipes8388,DEV=0";
+    aj_cfg.unmute_card = "rockchipes8388";   // джек ES8388 після старту вимкнений
+    aj_cfg.unmute_control = "Headphone";
+    vrx::audio::AudioOut audio_jack(aj_cfg);
+
+    vrx::audio::AudioOut::Config am_cfg = ah_cfg;
+    am_cfg.name = "метр";
+    am_cfg.meter = true;
+    vrx::audio::AudioOut audio_meter(am_cfg);
+
+    audio_hdmi.start();
+    audio_jack.start();
+    audio_meter.start();
+
     std::shared_ptr<vrx::ui::ScreenPresets> screen_presets;
     std::shared_ptr<vrx::ui::PlayerUi> player_ui;
+    std::shared_ptr<vrx::ui::AudioUi> audio_ui;
     if (!kSingleChannel) {
         screen_presets = std::make_shared<vrx::ui::ScreenPresets>(
             vrx::ui::ScreenPresets::Config{});
@@ -398,6 +436,21 @@ int main(int argc, char** argv) {
         if (cap_src) {
             vrx::ui::ScreenPresets::Window w;
             w.name = "capture"; w.source = cap_src; w.fallback = cap_default;
+            screen_presets->add_window(std::move(w));
+        }
+        // АУДІОМЕТР — вікно без відео: та сама механіка (тягнути, колесо,
+        // z, пресети), але малює його шар звуку. Вузький вертикальний
+        // стовпчик біля правого краю; сховано, поки не ввімкнуть.
+        {
+            vrx::layout::Placement meter_default;
+            meter_default.x = 0.985f; meter_default.y = 0.64f;
+            meter_default.w = 0.06f;  meter_default.h = 0.32f;
+            meter_default.anchor = vrx::layout::Anchor::CenterRight;
+            meter_default.z = 10;                     // над відео при влучанні мишею
+            vrx::ui::ScreenPresets::Window w;
+            w.name = "meter";
+            w.fallback = meter_default;
+            w.aspect = 0.18f;                         // ширина/висота в пікселях
             screen_presets->add_window(std::move(w));
         }
         // Вікна плеєра — той самий механізм, лише інший набір. Розкладка
@@ -437,9 +490,24 @@ int main(int argc, char** argv) {
         player_ui->start();
         renderer.add_overlay(player_ui);
 
+        // Шар звуку: панель гучності під динаміком і сам метр. Колбеки —
+        // ДО add_overlay (рендерер уже крутиться).
+        audio_ui = std::make_shared<vrx::ui::AudioUi>(vrx::ui::AudioUi::Config{});
+        audio_ui->attach(&pointer);
+        audio_ui->attach_presets(screen_presets.get());
+        audio_ui->set_level([&audio_meter]() { return audio_meter.level(); });
+        audio_ui->set_volume([&audio_hdmi, &audio_jack](float v) {
+            audio_hdmi.set_volume(v);
+            audio_jack.set_volume(v);
+        });
+        audio_ui->start();
+        renderer.add_overlay(audio_ui);
+
+        // Миша одна на всі шари: що забрав таймлайн чи панель звуку, те
+        // пресети не обирають і не тягнуть.
         screen_presets->set_blocked_area(
-            [player_ui](int role, float cx, float cy) {
-                return player_ui->hit_bar(role, cx, cy);
+            [player_ui, audio_ui](int role, float cx, float cy) {
+                return player_ui->hit_bar(role, cx, cy) || audio_ui->hit(role, cx, cy);
             });
     }
 
@@ -618,9 +686,6 @@ int main(int argc, char** argv) {
     // Вивід — на HDMI і на джек одночасно, кожен своїм пайплайном: карта, що
     // не відкрилась (монітор без звуку), не глушить другу. Розсинхрон між
     // ними не лікується — слухають щось одне.
-    constexpr int kAudioPort = 5601;
-    constexpr int kAudioPt = 98;
-
     vrx::record::Recorder::Config reca_cfg;
     reca_cfg.session = session;
     reca_cfg.name = "audio";
@@ -631,22 +696,6 @@ int main(int argc, char** argv) {
     reca_cfg.start_on_keyframe = false;      // у Opus ключових кадрів немає
     vrx::record::Recorder recorder_audio(reca_cfg, storage);
     if (kRecordEnabled) recorder_audio.start();
-
-    vrx::audio::AudioOut::Config ah_cfg;
-    ah_cfg.name = "HDMI";
-    ah_cfg.device = "plughw:CARD=rockchiphdmi0,DEV=0";
-    ah_cfg.udp_port = kAudioPort;
-    ah_cfg.payload_type = kAudioPt;
-    vrx::audio::AudioOut audio_hdmi(ah_cfg);
-    audio_hdmi.start();
-
-    vrx::audio::AudioOut::Config aj_cfg = ah_cfg;
-    aj_cfg.name = "джек";
-    aj_cfg.device = "plughw:CARD=rockchipes8388,DEV=0";
-    aj_cfg.unmute_card = "rockchipes8388";   // джек ES8388 після старту вимкнений
-    aj_cfg.unmute_control = "Headphone";
-    vrx::audio::AudioOut audio_jack(aj_cfg);
-    audio_jack.start();
 
     // Субтитри поруч із записаним відео: та сама телеметрія й той самий
     // osd_config.json, тож у плеєрі показання стоять там же, де стояли
@@ -792,6 +841,7 @@ int main(int argc, char** argv) {
                 recorder_audio.set_udp_port(bad_aud);
                 audio_hdmi.set_udp_port(bad_aud);
                 audio_jack.set_udp_port(bad_aud);
+                audio_meter.set_udp_port(bad_aud);
                 if (osd) osd->set_notice("SD CARD ERROR  E-19");
             } else {
                 main_src->set_udp_port(h265_cfg.udp_port);      // назад на робочі
@@ -802,6 +852,7 @@ int main(int argc, char** argv) {
                 recorder_audio.set_udp_port(kAudioPort);
                 audio_hdmi.set_udp_port(kAudioPort);
                 audio_jack.set_udp_port(kAudioPort);
+                audio_meter.set_udp_port(kAudioPort);
                 if (osd) osd->set_notice("");
             }
             sab_flip = std::chrono::steady_clock::now() + std::chrono::seconds(5);
@@ -1025,8 +1076,10 @@ int main(int argc, char** argv) {
     recorder.stop();
     recorder2.stop();
     if (recorder3) recorder3->stop();
+    if (audio_ui) audio_ui->stop();          // зберегти гучність
     audio_hdmi.stop();
     audio_jack.stop();
+    audio_meter.stop();
     recorder_audio.stop();
     storage.stop();
     phase.stop();

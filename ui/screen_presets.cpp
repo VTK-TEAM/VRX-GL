@@ -309,6 +309,46 @@ render::OverlayImage make_shot_button(bool flash) {
     return img;
 }
 
+// ДИНАМІК: корпус, розтруб і дві дуги хвиль. Яскравий, коли панель звуку
+// розгорнута — знак показує стан, як і в кнопці OSD.
+render::OverlayImage make_audio_button(bool open) {
+    const int size = 48;
+    render::OverlayImage img;
+    img.id = std::string("presets:audio") + (open ? "1" : "0");
+    img.width = img.height = size;
+    img.rgba.assign((size_t)size * size * 4, 0);
+    draw_button_bg(img, open, size);
+
+    const uint8_t r = open ? 30 : 200, g = open ? 30 : 210, b = open ? 30 : 225;
+    const uint8_t a = 235;
+    const float cy = (size - 1) * 0.5f;
+    // корпус
+    const int bx0 = size * 18 / 100, bx1 = size * 33 / 100;
+    const int by0 = size * 40 / 100, by1 = size * 60 / 100;
+    fill_box(img, size, bx0, by0, bx1 - bx0, by1 - by0, r, g, b, a);
+    // розтруб: трапеція від корпусу вправо, розширюється
+    const int cx0 = bx1, cx1 = size * 50 / 100;
+    for (int x = cx0; x < cx1; ++x) {
+        const float k = float(x - cx0) / float(cx1 - cx0);
+        const int half = (int)((by1 - by0) * 0.5f + k * size * 0.17f);
+        for (int y = (int)cy - half; y <= (int)cy + half; ++y) put(img.rgba, size, x, y, r, g, b, a);
+    }
+    // дві дуги праворуч
+    const float ax = cx1 - size * 0.04f;
+    const int th = std::max(2, size / 16);
+    for (int k = 0; k < 2; ++k) {
+        const float rad = size * (0.15f + 0.12f * k);
+        for (int y = 0; y < size; ++y)
+            for (int x = (int)ax; x < size; ++x) {
+                const float d = std::hypot(float(x) - ax, float(y) - cy);
+                const float ang = std::atan2(float(y) - cy, float(x) - ax);
+                if (d <= rad && d >= rad - th && std::fabs(ang) < 0.85f)
+                    put(img.rgba, size, x, y, r, g, b, a);
+            }
+    }
+    return img;
+}
+
 render::OverlayImage make_menu_button(bool open) {
     const int size = 48;
     render::OverlayImage img;
@@ -366,6 +406,9 @@ struct ScreenPresets::Impl {
     int play_idx = 0;      // +0 ефір (знак "грати"), +1 плеєр (знак "стоп")
     int lock_idx = 0;      // +0 відкритий, +1 закритий
     int shot_idx = 0;      // +0 звичайна, +1 зелена після натискання
+    int audio_idx = 0;     // +0 панель звуку згорнута, +1 розгорнута
+    bool audio_pop[2] = {false, false};   // панель звуку під динаміком
+    int meter_win = -1;    // індекс вікна "meter" або -1
     int64_t shot_flash_ms[2] = {0, 0};   // kRoles оголошено нижче
     int btn_px = 48;
 
@@ -388,6 +431,9 @@ struct ScreenPresets::Impl {
     // додатковому ні (ТЗ).
     std::vector<std::array<bool, 2>> osd_on;
     std::vector<std::array<bool, 2>> locked;
+    // [пресет][роль] — чи показано аудіометр. Типово ні: це інструмент,
+    // який вмикають, коли треба, а не постійна частина картинки.
+    std::vector<std::array<bool, 2>> meter_on;
     // АКТИВНИЙ ПРЕСЕТ — СВІЙ НА КОЖНОМУ ЕКРАНІ.
     //
     // Спершу я зробив пресет спільним, міркуючи, що це "конфігурація
@@ -476,6 +522,9 @@ struct ScreenPresets::Impl {
         shot_idx = (int)images.size();
         images.push_back(make_shot_button(false));
         images.push_back(make_shot_button(true));
+        audio_idx = (int)images.size();
+        images.push_back(make_audio_button(false));
+        images.push_back(make_audio_button(true));
     }
 
     // Розкладка однієї ролі з уже розібраного json.
@@ -495,6 +544,7 @@ struct ScreenPresets::Impl {
                 2, std::vector<layout::Placement>(windows.size())));
         osd_on.assign(cfg.preset_count, {true, false});
         locked.assign(cfg.preset_count, {false, false});
+        meter_on.assign(cfg.preset_count, {false, false});
 
         for (int p = 0; p < cfg.preset_count; ++p) {
             nlohmann::json root;
@@ -523,6 +573,10 @@ struct ScreenPresets::Impl {
                 locked[p][render::Scene::kPrimary]   = json_get(root["locked"], "primary", false);
                 locked[p][render::Scene::kSecondary] = json_get(root["locked"], "secondary", false);
             }
+            if (ok && root.contains("meter")) {
+                meter_on[p][render::Scene::kPrimary]   = json_get(root["meter"], "primary", false);
+                meter_on[p][render::Scene::kSecondary] = json_get(root["meter"], "secondary", false);
+            }
             if (ok && root.contains("osd")) {
                 osd_on[p][render::Scene::kPrimary]   = json_get(root["osd"], "primary", true);
                 osd_on[p][render::Scene::kSecondary] = json_get(root["osd"], "secondary", false);
@@ -536,7 +590,8 @@ struct ScreenPresets::Impl {
 
     void save_preset(int p, const std::vector<std::vector<layout::Placement>>& roles,
                      const std::array<bool, 2>& osd,
-                     const std::array<bool, 2>& lock) {
+                     const std::array<bool, 2>& lock,
+                     const std::array<bool, 2>& meter) {
         nlohmann::json root;
         for (int r = 0; r < 2; ++r) {
             const char* key = (r == render::Scene::kPrimary) ? "primary" : "secondary";
@@ -547,6 +602,8 @@ struct ScreenPresets::Impl {
         root["osd"]["secondary"] = osd[render::Scene::kSecondary];
         root["locked"]["primary"]   = lock[render::Scene::kPrimary];
         root["locked"]["secondary"] = lock[render::Scene::kSecondary];
+        root["meter"]["primary"]   = meter[render::Scene::kPrimary];
+        root["meter"]["secondary"] = meter[render::Scene::kSecondary];
         std::ofstream f(file_of(p));
         if (!f.is_open()) {
             std::fprintf(stderr, "[екрани] не зберігся %s\n", file_of(p).c_str());
@@ -568,7 +625,7 @@ struct ScreenPresets::Impl {
     Rect rect_of(int role, size_t i) const {
         const int W = rw[role].load(), H = rh[role].load();
         const float sa = (W > 0 && H > 0) ? float(W) / float(H) : 1.777f;
-        float va = windows[i].source ? windows[i].source->frame_aspect() : 0.f;
+        float va = windows[i].source ? windows[i].source->frame_aspect() : windows[i].aspect;
         if (va <= 0.f) va = sa;                       // ще не знаємо кадр — беремо як екран
         layout::Placement r = layout::fit_source(presets[active_of(role)][role][i], va, sa);
         return {r.x, 1.0f - r.y - r.h, r.w, r.h};     // Y -> екранний (0=верх)
@@ -586,6 +643,7 @@ struct ScreenPresets::Impl {
         int best = -1, bestz = -1000000;
         for (size_t i = 0; i < windows.size(); ++i) {
             if (!in_mode(role, i)) continue;      // чуже вікно, не цього набору
+            if ((int)i == meter_win && !meter_on[active_of(role)][role]) continue;   // схований метр
             Rect r = rect_of(role, i);
             if (cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h) {
                 const int z = presets[active_of(role)][role][i].z;
@@ -671,8 +729,9 @@ struct ScreenPresets::Impl {
     int lock_button() const { return cfg.preset_count; }
     int osd_button()  const { return cfg.preset_count + 1; }
     int shot_button() const { return cfg.preset_count + 2; }
-    int play_button() const { return cfg.preset_count + 3; }
-    int button_count() const { return cfg.preset_count + 4; }
+    int audio_button() const { return cfg.preset_count + 3; }   // перед плеєром
+    int play_button() const { return cfg.preset_count + 4; }
+    int button_count() const { return cfg.preset_count + 5; }
 
     void button_rect(int role, int b, float* x, float* y, float* w, float* h) const {
         const int W = rw[role].load(), H = rh[role].load();
@@ -691,6 +750,7 @@ struct ScreenPresets::Impl {
             std::vector<std::vector<layout::Placement>> snap;
             std::array<bool, 2> snap_osd{true, false};
             std::array<bool, 2> snap_lock{false, false};
+            std::array<bool, 2> snap_meter{false, false};
             {
                 std::lock_guard<std::mutex> lk(mtx);
                 if (dirty_mask && now_ms() - last_edit >= cfg.autosave_ms) {
@@ -700,11 +760,12 @@ struct ScreenPresets::Impl {
                         snap = presets[p_to_save];
                         snap_osd = osd_on[p_to_save];
                         snap_lock = locked[p_to_save];
+                        snap_meter = meter_on[p_to_save];
                         dirty_mask &= ~(1u << p_to_save);
                     }
                 }
             }
-            if (p_to_save >= 0) save_preset(p_to_save, snap, snap_osd, snap_lock);  // I/O поза локом
+            if (p_to_save >= 0) save_preset(p_to_save, snap, snap_osd, snap_lock, snap_meter);  // I/O поза локом
         }
     }
 };
@@ -715,8 +776,58 @@ ScreenPresets::ScreenPresets(Config cfg) : impl_(new Impl(std::move(cfg))) {}
 ScreenPresets::~ScreenPresets() { stop(); }
 
 void ScreenPresets::attach(Pointer* pointer) { impl_->pointer = pointer; }
-void ScreenPresets::add_window(Window w) { impl_->windows.push_back(std::move(w)); }
+void ScreenPresets::add_window(Window w) {
+    if (w.name == "meter") impl_->meter_win = (int)impl_->windows.size();
+    impl_->windows.push_back(std::move(w));
+}
 void ScreenPresets::set_telemetry(VtTelemetryStorage* tlm) { impl_->tlm = tlm; }
+
+// --- звук ---
+//
+// Кличуться з потоку показу, з шару AudioUi — НЕ зсередини нашого
+// acquire(), тож м'ютекс тут вільний.
+
+bool ScreenPresets::audio_popup(int role) const {
+    if (role < 0 || role >= Impl::kRoles) return false;
+    std::lock_guard<std::mutex> lk(impl_->mtx);
+    return impl_->menu[role] && impl_->audio_pop[role];
+}
+
+void ScreenPresets::audio_button_rect(int role, float* x, float* y, float* w, float* h) const {
+    impl_->button_rect(role, impl_->audio_button() + 1, x, y, w, h);
+}
+
+bool ScreenPresets::meter_rect(int role, float* x, float* y, float* w, float* h) const {
+    Impl& d = *impl_;
+    if (role < 0 || role >= Impl::kRoles || d.meter_win < 0) return false;
+    std::lock_guard<std::mutex> lk(d.mtx);
+    if (d.presets.empty() || !d.in_mode(role, (size_t)d.meter_win)) return false;
+    if (!d.meter_on[d.active_of(role)][role]) return false;
+    const Impl::Rect r = d.rect_of(role, (size_t)d.meter_win);
+    *x = r.x; *y = r.y; *w = r.w; *h = r.h;
+    return true;
+}
+
+bool ScreenPresets::meter_visible(int role) const {
+    Impl& d = *impl_;
+    if (role < 0 || role >= Impl::kRoles || d.meter_win < 0) return false;
+    std::lock_guard<std::mutex> lk(d.mtx);
+    return !d.meter_on.empty() && d.meter_on[d.active_of(role)][role];
+}
+
+void ScreenPresets::toggle_meter(int role) {
+    Impl& d = *impl_;
+    if (role < 0 || role >= Impl::kRoles || d.meter_win < 0) return;
+    std::lock_guard<std::mutex> lk(d.mtx);
+    if (d.meter_on.empty()) return;
+    bool& on = d.meter_on[d.active_of(role)][role];
+    on = !on;
+    if (!on && d.selected[role] == d.meter_win) d.selected[role] = -1;   // схований не тягнемо
+    d.mark_dirty(role);
+    std::fprintf(stderr, "[екрани] аудіометр на %s екрані: %s\n",
+                 role == render::Scene::kPrimary ? "основному" : "додатковому",
+                 on ? "показано" : "сховано");
+}
 
 void ScreenPresets::attach_scene(render::Scene* s) { impl_->scene = s; }
 
@@ -871,6 +982,8 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
                                  d.active_of(role) + 1,
                                  role == render::Scene::kPrimary ? "основному" : "додатковому",
                                  flag ? "ЗАМКНЕНО" : "відкрито");
+                } else if (b == d.audio_button()) {
+                    d.audio_pop[role] = !d.audio_pop[role];
                 } else if (b == d.play_button()) {
                     // ПЛЕЄР НА ЦЬОМУ ЕКРАНІ. Другий екран лишається на
                     // ефірі — або має свій плеєр, це дозволено.
@@ -1089,6 +1202,9 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
         d.button_rect(role, d.shot_button() + 1, &bx, &by, &bw, &bh);
         push(d.shot_idx + (now_ms() - d.shot_flash_ms[role] < 700 ? 1 : 0),
              bx, by, bw, bh);
+
+        d.button_rect(role, d.audio_button() + 1, &bx, &by, &bw, &bh);
+        push(d.audio_idx + (d.audio_pop[role] ? 1 : 0), bx, by, bw, bh);
     }
     return true;
 }

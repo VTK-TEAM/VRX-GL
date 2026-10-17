@@ -55,6 +55,7 @@ add_executable(vrx_gl
     ui/screen_ui.cpp
     ui/player_ui.cpp
     ui/screen_presets.cpp
+    ui/audio_ui.cpp
     diag/link_monitor.cpp
     record/storage.cpp
     record/mkv_seek.cpp

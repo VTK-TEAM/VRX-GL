@@ -28,3 +28,6 @@ screen*.json
 # збірки (як build/). major.txt НАВПАКИ комітиться — він сталий і руками.
 version/build_counter.txt
 version/version.txt
+
+# гучність звуку — рантайм-стан станції (як screen*.json)
+audio.json
