@@ -2,6 +2,7 @@
 
 #include "../osd/json.hpp"
 #include "../osd/json_safe.hpp"
+#include "durable_write.hpp"
 
 #include <algorithm>
 #include <array>
@@ -369,6 +370,42 @@ render::OverlayImage make_editor_button(bool pressed) {
     return img;
 }
 
+// Кнопка ВИМКНЕННЯ: стандартний знак живлення — коло з розривом згори й
+// риска в розриві.
+//
+// Два стани не косметичні, а суть: `armed` це "перший клік прийнято, тисни
+// вдруге". Одне клацання не має глушити станцію в полі, тому кнопка
+// червоніє й чекає підтвердження.
+render::OverlayImage make_power_button(bool armed) {
+    const int size = 48;
+    render::OverlayImage img;
+    img.id = std::string("presets:power") + (armed ? "1" : "0");
+    img.width = img.height = size;
+    img.rgba.assign((size_t)size * size * 4, 0);
+    draw_button_bg(img, armed, size);
+
+    const uint8_t r = armed ? 255 : 235, g = armed ? 70 : 235, b = armed ? 60 : 240;
+    const float c = (size - 1) * 0.5f;
+    const float rad = size * 0.27f, th = std::max(2.f, size / 16.f);
+
+    // Коло з розривом згори. Розрив — у секторі ±32° від вертикалі: саме
+    // він робить знак пізнаваним, без нього це просто кружок.
+    for (int y = 0; y < size; ++y)
+        for (int x = 0; x < size; ++x) {
+            const float dx = x - c, dy = y - c;
+            const float d = std::sqrt(dx * dx + dy * dy);
+            if (std::fabs(d - rad) > th * 0.5f) continue;
+            if (dy < 0.f && std::fabs(dx) < -dy * 0.62f) continue;   // розрив
+            put(img.rgba, size, x, y, r, g, b, 245);
+        }
+
+    // Риска в розриві.
+    const int bw = (int)std::max(2.f, th);
+    fill_box(img, size, (int)(c - bw * 0.5f + 0.5f), (int)(c - rad * 1.35f),
+             bw, (int)(rad * 0.95f), r, g, b, 245);
+    return img;
+}
+
 render::OverlayImage make_menu_button(bool open) {
     const int size = 48;
     render::OverlayImage img;
@@ -428,8 +465,17 @@ struct ScreenPresets::Impl {
     int shot_idx = 0;      // +0 звичайна, +1 зелена після натискання
     int audio_idx = 0;     // +0 панель звуку згорнута, +1 розгорнута
     int editor_idx = 0;    // +0 звичайна, +1 бурштинова після натискання
+    int power_idx = 0;     // +0 спокійна, +1 озброєна (червона)
+
+    // ОЗБРОЄННЯ ВИМКНЕННЯ — час, а не прапорець. Перший клік запам'ятовує
+    // мить; "озброєна" = з того часу минуло менше kPowerArmMs. Так саме
+    // знімається без жодного таймера й без стану, який можна забути
+    // скинути.
+    int64_t power_armed_ms = 0;
+    std::atomic<bool> power_requested{false};
     std::atomic<bool> editor_requested{false};
     bool editor_pressed = false;
+    static constexpr int64_t kPowerArmMs = 4000;
     bool audio_pop[2] = {false, false};   // панель звуку під динаміком
     int meter_win = -1;    // індекс вікна "meter" або -1
     int64_t shot_flash_ms[2] = {0, 0};   // kRoles оголошено нижче
@@ -553,6 +599,9 @@ struct ScreenPresets::Impl {
         editor_idx = (int)images.size();
         images.push_back(make_editor_button(false));
         images.push_back(make_editor_button(true));
+        power_idx = (int)images.size();
+        images.push_back(make_power_button(false));
+        images.push_back(make_power_button(true));
     }
 
     // Розкладка однієї ролі з уже розібраного json.
@@ -632,12 +681,13 @@ struct ScreenPresets::Impl {
         root["locked"]["secondary"] = lock[render::Scene::kSecondary];
         root["meter"]["primary"]   = meter[render::Scene::kPrimary];
         root["meter"]["secondary"] = meter[render::Scene::kSecondary];
-        std::ofstream f(file_of(p));
-        if (!f.is_open()) {
+        // Не ofstream: той обрізає файл на місці й нічого не скидає на
+        // носій. Станцію вимикають зняттям живлення, і такий запис губив і
+        // новий стан, і старий. Деталі — в durable_write.hpp.
+        if (!write_file_durably(file_of(p), root.dump(2) + "\n")) {
             std::fprintf(stderr, "[екрани] не зберігся %s\n", file_of(p).c_str());
             return;
         }
-        f << root.dump(2) << "\n";
         std::fprintf(stderr, "[екрани] пресет %d збережено\n", p + 1);
     }
 
@@ -759,14 +809,24 @@ struct ScreenPresets::Impl {
     int shot_button() const { return cfg.preset_count + 2; }
     int audio_button() const { return cfg.preset_count + 3; }   // перед плеєром
     int play_button() const { return cfg.preset_count + 4; }
-    int editor_button() const { return cfg.preset_count + 5; }   // останньою
-    int button_count() const { return cfg.preset_count + 6; }
+    int editor_button() const { return cfg.preset_count + 5; }
+    int power_button() const { return cfg.preset_count + 6; }    // останньою
+    int button_count() const { return cfg.preset_count + 7; }
+
+    bool power_armed() const {
+        return power_armed_ms != 0 && now_ms() - power_armed_ms < kPowerArmMs;
+    }
     // СКІЛЬКИ КНОПОК У РЯДУ НА ЦЬОМУ ЕКРАНІ. Редактор — лише на основному:
     // він відкривається на основному моніторі, тож кнопка на додатковому
     // вела б не туди, куди дивишся. Стоїть останнім, тож без нього ряд
     // просто коротший, а решта кнопок не зсувається.
+    // Редактор і вимкнення — лише на основному. Редактор відкривається на
+    // основному моніторі, тож кнопка на додатковому вела б не туди, куди
+    // дивишся; а глушити станцію з другого екрана нема підстав, і зайва
+    // можливість зробити це випадково нічого не варта. Обидві стоять у
+    // кінці, тож без них ряд просто коротший, а решта не зсувається.
     int buttons_on(int role) const {
-        return role == render::Scene::kPrimary ? button_count() : button_count() - 1;
+        return role == render::Scene::kPrimary ? button_count() : button_count() - 2;
     }
 
     void button_rect(int role, int b, float* x, float* y, float* w, float* h) const {
@@ -777,6 +837,28 @@ struct ScreenPresets::Impl {
         const float gap = *w * 0.25f;
         *x = b * (*w + gap);
         *y = 0.f;
+    }
+
+    // Зберегти ВСЕ недописане, не чекаючи на витримку autosave_ms.
+    // Потрібне на зупинці: інакше правка, зроблена за 5 с до неї, гине
+    // молча. В audio_ui таке фінальне збереження є, тут його бракувало.
+    void flush_dirty() {
+        for (int p = 0; p < cfg.preset_count; ++p) {
+            std::vector<std::vector<layout::Placement>> snap;
+            std::array<bool, 2> snap_osd{true, false};
+            std::array<bool, 2> snap_lock{false, false};
+            std::array<bool, 2> snap_meter{false, false};
+            {
+                std::lock_guard<std::mutex> lk(mtx);
+                if (!(dirty_mask & (1u << p))) continue;
+                snap = presets[p];
+                snap_osd = osd_on[p];
+                snap_lock = locked[p];
+                snap_meter = meter_on[p];
+                dirty_mask &= ~(1u << p);
+            }
+            save_preset(p, snap, snap_osd, snap_lock, snap_meter);   // I/O поза локом
+        }
     }
 
     void saver_loop() {
@@ -895,6 +977,10 @@ bool ScreenPresets::take_editor_request() {
     return impl_->editor_requested.exchange(false);
 }
 
+bool ScreenPresets::take_power_request() {
+    return impl_->power_requested.exchange(false);
+}
+
 int ScreenPresets::mode(int role) const {
     return (role >= 0 && role < Impl::kRoles) ? impl_->mode[role].load() : (int)kLive;
 }
@@ -914,6 +1000,7 @@ void ScreenPresets::stop() {
     Impl& d = *impl_;
     if (d.running.exchange(false)) {
         if (d.saver.joinable()) d.saver.join();
+        d.flush_dirty();          // правка за мить до зупинки теж мусить дійти
     }
 }
 
@@ -1030,6 +1117,19 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
                     if (!d.editor_pressed) {
                         d.editor_pressed = true;
                         std::fprintf(stderr, "[екрани] натиснуто кнопку редактора, закриваю станцію\n");
+                    }
+                } else if (b == d.power_button()) {
+                    // ДВА КЛІКИ. Перший озброює, другий глушить. Станцію
+                    // вимикають у полі, часто наосліп, і одноклацальне
+                    // вимкнення посеред роботи коштувало б вилоту.
+                    if (d.power_armed()) {
+                        d.power_requested.store(true);
+                        std::fprintf(stderr, "[екрани] підтверджено: вимикаю станцію\n");
+                    } else {
+                        d.power_armed_ms = now_ms();
+                        std::fprintf(stderr,
+                            "[екрани] вимкнення: тисни ще раз протягом %lld с\n",
+                            (long long)(Impl::kPowerArmMs / 1000));
                     }
                 } else if (b == d.audio_button()) {
                     d.audio_pop[role] = !d.audio_pop[role];
@@ -1258,6 +1358,10 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
         if (d.editor_button() < d.buttons_on(role)) {        // лише на основному
             d.button_rect(role, d.editor_button() + 1, &bx, &by, &bw, &bh);
             push(d.editor_idx + (d.editor_pressed ? 1 : 0), bx, by, bw, bh);
+        }
+        if (d.power_button() < d.buttons_on(role)) {         // лише на основному
+            d.button_rect(role, d.power_button() + 1, &bx, &by, &bw, &bh);
+            push(d.power_idx + (d.power_armed() ? 1 : 0), bx, by, bw, bh);
         }
     }
     return true;

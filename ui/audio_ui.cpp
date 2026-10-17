@@ -3,6 +3,7 @@
 #include "ui/screen_presets.hpp"
 #include "../osd/json.hpp"
 #include "../osd/json_safe.hpp"
+#include "durable_write.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -406,12 +407,11 @@ struct AudioUi::Impl {
         root["muted"] = mu;
         root["alarm"] = al;
         root["threshold_db"] = t;
-        std::ofstream f(cfg.file);
-        if (!f.is_open()) {
+        // Те саме, що й у пресетах екрана: ofstream обрізає файл на місці
+        // й не доходить до носія до наступного коміту ФС, тож зняття
+        // живлення губило і новий стан, і старий.
+        if (!write_file_durably(cfg.file, root.dump(2) + "\n"))
             std::fprintf(stderr, "[звук] не зберігся стан у %s\n", cfg.file.c_str());
-            return;
-        }
-        f << root.dump(2) << "\n";
     }
 
     // I/O — не з потоку показу: запис файлу там коштував би vblank'ів.

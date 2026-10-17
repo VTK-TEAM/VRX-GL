@@ -48,6 +48,10 @@
 #include "ui/screen_ui.hpp"
 #include "ui/screen_presets.hpp"
 
+#include <unistd.h>
+
+#include <cstring>
+
 #include <gst/gst.h>
 
 #include <atomic>
@@ -68,6 +72,11 @@ std::atomic<bool> g_stop{false};
 // весь протокол між станцією і тим, хто нею керує: без сокетів,
 // файлів-прапорців і сигналів.
 bool g_editor = false;
+
+// Натиснуто кнопку вимкнення. Машину глушимо НЕ з обробника кліку, а в
+// самому кінці main: сенс кнопки в тому, щоб стан (пресети, звук) устиг
+// дійти до носія звичайним шляхом згортання.
+bool g_poweroff = false;
 constexpr int kExitRunEditor = 10;
 void on_signal(int) { g_stop.store(true); }
 
@@ -919,6 +928,13 @@ int main(int argc, char** argv) {
             }
         }
 
+        if (screen_presets && screen_presets->take_power_request()) {
+            std::printf("Кнопка вимкнення: згортаю станцію, далі poweroff.\n");
+            g_poweroff = true;
+            g_stop.store(true);
+            break;
+        }
+
         if (screen_ui->take_editor_request() ||
             (screen_presets && screen_presets->take_editor_request())) {
             std::printf("Перехід у редактор розкладки.\n");
@@ -1139,6 +1155,11 @@ int main(int argc, char** argv) {
     if (recorder3) recorder3->stop();
     if (playback_audio) playback_audio->stop();   // виходи назад на ефір
     if (audio_ui) audio_ui->stop();          // зберегти гучність
+    // Пресети екранів — ЯВНО, а не на руйнуванні shared_ptr. Раніше стан
+    // дописувався лише деструктором, тобто після всіх інших зупинок і
+    // тільки завдяки неявному порядку: правка, зроблена за мить до
+    // вимкнення, трималась на випадковості.
+    if (screen_presets) screen_presets->stop();
     audio_hdmi.stop();
     audio_jack.stop();
     audio_dp.stop();
@@ -1164,6 +1185,21 @@ int main(int argc, char** argv) {
     VRX_PM_REPORT();
 
     display.close();
+
+    // ГЛУШИМО ТУТ, останньою дією. Усі stop() уже відпрацювали, стан
+    // записаний і fsync'нутий, тож систему можна валити безпечно. Через
+    // systemctl, а не прямим reboot(): systemd сам коректно зупинить
+    // наглядача, інакше той підняв би станцію назад, поки машина гасне.
+    if (g_poweroff) {
+        std::printf("Вимкнення станції.\n");
+        std::fflush(nullptr);
+        ::execl("/usr/bin/systemctl", "systemctl", "poweroff", (char*)nullptr);
+        // Дійшли сюди — exec не вдався; кажемо прямо, бо користувач
+        // натиснув вимкнення й має знати, що воно не сталося.
+        std::fprintf(stderr, "poweroff не запустився: %s\n", std::strerror(errno));
+        return 1;
+    }
+
     if (g_editor) {
         std::printf("Вихід для запуску редактора (код %d).\n", kExitRunEditor);
         return kExitRunEditor;
