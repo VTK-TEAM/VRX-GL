@@ -80,10 +80,9 @@ render::OverlayImage make_meter_toggle(bool on) {
     return img;
 }
 
-// Контроль тривоги: дзвоник. Увімкнено — червоний, вимкнено — сірий.
-render::OverlayImage make_alarm_toggle(bool on) {
-    render::OverlayImage img = tile(std::string("alarm") + (on ? "1" : "0"));
-    const uint8_t r = on ? 240 : 120, g = on ? 80 : 125, b = on ? 70 : 135, a = on ? 255 : 210;
+// Дзвоник у квадраті kIcon: купол, обідок, язичок. Спільний для кнопки
+// тривоги й значка над вушком порогу — один знак тривоги скрізь.
+void draw_bell(render::OverlayImage& img, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
     const float cx = (kIcon - 1) * 0.5f;
     const int top = kIcon * 20 / 100, rim = kIcon * 66 / 100;
     for (int y = top; y < rim; ++y) {                       // купол, що розширюється донизу
@@ -98,6 +97,37 @@ render::OverlayImage make_alarm_toggle(bool on) {
     for (int y = 0; y < kIcon; ++y)
         for (int x = 0; x < kIcon; ++x)
             if (std::hypot(float(x) - cx, float(y) - ky) <= kr) put(img.rgba, kIcon, x, y, r, g, b, a);
+}
+
+// Контроль тривоги: дзвоник на плитці. Увімкнено — червоний, вимкнено — сірий.
+render::OverlayImage make_alarm_toggle(bool on) {
+    render::OverlayImage img = tile(std::string("alarm") + (on ? "1" : "0"));
+    draw_bell(img, on ? 240 : 120, on ? 80 : 125, on ? 70 : 135, on ? 255 : 210);
+    return img;
+}
+
+// Дзвоник над вушком порогу: без плитки, з темним обведенням, щоб читався
+// на будь-якому кадрі. Кольори ті самі, що в риски порогу.
+render::OverlayImage make_bell_mark(bool on) {
+    render::OverlayImage img;
+    img.id = std::string("audio:bell") + (on ? "1" : "0");
+    img.width = img.height = kIcon;
+    img.rgba.assign((size_t)kIcon * kIcon * 4, 0);
+    draw_bell(img, on ? 255 : 150, on ? 70 : 150, on ? 60 : 160, 255);
+    // обведення: прозорий піксель поруч із залитим — темний
+    std::vector<uint8_t> src = img.rgba;
+    for (int y = 0; y < kIcon; ++y)
+        for (int x = 0; x < kIcon; ++x) {
+            if (src[((size_t)y * kIcon + x) * 4 + 3]) continue;
+            bool edge = false;
+            for (int dy = -2; dy <= 2 && !edge; ++dy)
+                for (int dx = -2; dx <= 2 && !edge; ++dx) {
+                    const int xx = x + dx, yy = y + dy;
+                    if (xx < 0 || yy < 0 || xx >= kIcon || yy >= kIcon) continue;
+                    edge = src[((size_t)yy * kIcon + xx) * 4 + 3] != 0;
+                }
+            if (edge) put(img.rgba, kIcon, x, y, 0, 0, 0, 200);
+        }
     return img;
 }
 
@@ -182,6 +212,7 @@ struct AudioUi::Impl {
     int i_thr_on = 0, i_thr_off = 0, i_frame = 0;
     int i_tog = 0, i_alarm = 0, i_mute = 0, i_power = 0;   // кожна: +0 вимк, +1 увімк
     int i_dim = 0;                                         // притлумити вимкнене
+    int i_bell = 0;                                        // дзвоник над вушком: +0 сірий, +1 червоний
 
     static constexpr int kRoles = 2;
     std::atomic<int> rw[kRoles] = {};
@@ -262,6 +293,7 @@ struct AudioUi::Impl {
         i_mute   = add(make_mute_toggle(false));    add(make_mute_toggle(true));
         i_power  = add(make_power_toggle(false));   add(make_power_toggle(true));
         i_dim    = add(solid("dim", 20, 22, 30, 170));
+        i_bell   = add(make_bell_mark(false));      add(make_bell_mark(true));
     }
 
     float to_frac(float db) const {
@@ -467,6 +499,11 @@ struct AudioUi::Impl {
         const float th = std::max(m.h * 0.045f, 12.f / float(H));
         const float tw = th * float(H) / float(W);
         push(out, img, m.x - tw, ly - th * 0.5f, tw, th);
+        // Дзвоник над вушком: видно одразу, що цей квадрат — поріг тривоги.
+        const float bh = th * 1.6f;
+        const float bw = bh * float(H) / float(W);
+        push(out, i_bell + (on ? 1 : 0), m.x - tw * 0.5f - bw * 0.5f,
+             ly - th * 0.5f - bh - th * 0.15f, bw, bh);
         hnd_rect[role] = R{m.x - tw, ly - th * 0.5f, tw + m.w, th};
         hnd_valid[role] = true;
     }
