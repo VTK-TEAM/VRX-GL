@@ -26,6 +26,7 @@ struct PlaybackAudio::Impl {
 
     std::thread th;
     std::atomic<bool> running{false};
+    std::atomic<bool> enabled{true};
 
     enum class St { Live, File, Silent };
     St st = St::Live;
@@ -53,6 +54,7 @@ struct PlaybackAudio::Impl {
     }
 
     void step() {
+        if (!enabled.load(std::memory_order_relaxed)) { all_silent(); return; }
         const PlaybackTarget t = target ? target() : PlaybackTarget{};
         if (!t.active) { all_live(); return; }
 
@@ -128,6 +130,10 @@ bool PlaybackAudio::start() {
     impl_->running.store(true);
     impl_->th = std::thread([this] { impl_->loop(); });
     return true;
+}
+
+void PlaybackAudio::set_enabled(bool on) {
+    impl_->enabled.store(on, std::memory_order_relaxed);
 }
 
 void PlaybackAudio::stop() {

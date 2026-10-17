@@ -427,6 +427,12 @@ int main(int argc, char** argv) {
     audio_dp.start();
     audio_meter.start();
 
+    // ГОЛОВНИЙ ВИМИКАЧ ЗВУКУ (кнопка в панелі звуку, стан в audio.json).
+    // Ставить його потік показу, а запис звуку за ним вмикає/вимикає
+    // головний цикл — зупинка рекордера блокує (дозапис файлу на флешку),
+    // і в потоці показу їй не місце.
+    std::atomic<bool> audio_on{true};
+
     std::shared_ptr<vrx::ui::ScreenPresets> screen_presets;
     std::shared_ptr<vrx::ui::PlayerUi> player_ui;
     std::shared_ptr<vrx::ui::AudioUi> audio_ui;
@@ -501,20 +507,6 @@ int main(int argc, char** argv) {
         player_ui->start();
         renderer.add_overlay(player_ui);
 
-        // Шар звуку: панель гучності під динаміком і сам метр. Колбеки —
-        // ДО add_overlay (рендерер уже крутиться).
-        audio_ui = std::make_shared<vrx::ui::AudioUi>(vrx::ui::AudioUi::Config{});
-        audio_ui->attach(&pointer);
-        audio_ui->attach_presets(screen_presets.get());
-        audio_ui->set_level([&audio_meter]() { return audio_meter.level(); });
-        audio_ui->set_volume([&audio_hdmi, &audio_jack, &audio_dp](float v) {
-            audio_hdmi.set_volume(v);
-            audio_jack.set_volume(v);
-            audio_dp.set_volume(v);
-        });
-        audio_ui->start();
-        renderer.add_overlay(audio_ui);
-
         // ЗВУК ПЛЕЄРА: ті самі виходи (HDMI, джек), лише джерело інше —
         // записаний .mka замість ефіру. Карта одна, тож і звук один: грає
         // плеєр екрана, що в режимі плеєра з відкритим сеансом, основний
@@ -538,6 +530,27 @@ int main(int argc, char** argv) {
                 return t;
             });
         playback_audio->start();
+
+        // Шар звуку: панель гучності під динаміком і сам метр. Колбеки —
+        // ДО add_overlay (рендерер уже крутиться).
+        audio_ui = std::make_shared<vrx::ui::AudioUi>(vrx::ui::AudioUi::Config{});
+        audio_ui->attach(&pointer);
+        audio_ui->attach_presets(screen_presets.get());
+        audio_ui->set_level([&audio_meter]() { return audio_meter.level(); });
+        audio_ui->set_volume([&audio_hdmi, &audio_jack, &audio_dp](float v) {
+            audio_hdmi.set_volume(v);
+            audio_jack.set_volume(v);
+            audio_dp.set_volume(v);
+        });
+        audio_ui->set_enabled_cb(
+            [&audio_on, &audio_meter, pa = playback_audio.get()](bool on) {
+                audio_on.store(on);
+                if (on) audio_meter.go_live(); else audio_meter.go_silent();
+                pa->set_enabled(on);      // виходи: ефір/запис або тиша
+            });
+        audio_ui->start();
+        renderer.add_overlay(audio_ui);
+
 
         // Миша одна на всі шари: що забрав таймлайн чи панель звуку, те
         // пресети не обирають і не тягнуть.
@@ -723,7 +736,8 @@ int main(int argc, char** argv) {
     reca_cfg.payload_type = kAudioPt;
     reca_cfg.start_on_keyframe = false;      // у Opus ключових кадрів немає
     vrx::record::Recorder recorder_audio(reca_cfg, storage);
-    if (kRecordEnabled) recorder_audio.start();
+    bool rec_audio_on = false;                   // що зараз із записом звуку
+    if (kRecordEnabled && audio_on.load()) { recorder_audio.start(); rec_audio_on = true; }
 
     // Субтитри поруч із записаним відео: та сама телеметрія й той самий
     // osd_config.json, тож у плеєрі показання стоять там же, де стояли
@@ -893,6 +907,18 @@ int main(int argc, char** argv) {
         // наглядач (scripts/run.sh). Тут ми не запускаємо нічого: поки
         // цей процес живий, він тримає DRM master, і редактор однаково не
         // отримав би екрана.
+        // Вимикач звуку -> запис звуку. Тут, а не в колбеку: stop()
+        // дописує файл на флешку й може тривати секунди.
+        if (kRecordEnabled) {
+            const bool want = audio_on.load();
+            if (want != rec_audio_on) {
+                if (want) recorder_audio.start();
+                else recorder_audio.stop("звук вимкнено");
+                rec_audio_on = want;
+                std::printf("Запис звуку: %s\n", want ? "увімкнено" : "вимкнено");
+            }
+        }
+
         if (screen_ui->take_editor_request() ||
             (screen_presets && screen_presets->take_editor_request())) {
             std::printf("Перехід у редактор розкладки.\n");
@@ -1060,7 +1086,9 @@ int main(int argc, char** argv) {
             if (rc2.active) {
                 std::printf("          ЗАПИС 2: %.1f МБ | файлів %u\n", rc2.bytes / 1e6, rc2.files);
             }
-            {
+            if (!audio_on.load()) {
+                std::printf("          ЗВУК: вимкнено (кнопкою) — не пишеться й не грає\n");
+            } else {
                 const auto ra = recorder_audio.stats();
                 const auto ah = audio_hdmi.stats();
                 const auto aj = audio_jack.stats();

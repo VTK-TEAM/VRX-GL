@@ -54,6 +54,7 @@ struct Recorder::Impl {
 
     std::thread th;
     std::atomic<bool> running{false};
+    std::string stop_reason = "зупинка станції";   // пише stop() до зупинки потоку
 
     GstElement* pipeline = nullptr;
     gulong probe_id = 0;
@@ -931,7 +932,7 @@ struct Recorder::Impl {
             std::this_thread::sleep_for(std::chrono::milliseconds(250));
         }
 
-        if (pipeline) close_file(true, "зупинка станції");
+        if (pipeline) close_file(true, stop_reason.c_str());
         if (probe_fd >= 0) {
             ::close(probe_fd);
             probe_fd = -1;
@@ -952,7 +953,9 @@ bool Recorder::start() {
     return true;
 }
 
-void Recorder::stop() {
+void Recorder::stop(const char* why) {
+    if (!impl_->running.load()) return;
+    impl_->stop_reason = why ? why : "зупинка станції";   // до зупинки потоку, тож гонки немає
     if (!impl_->running.exchange(false)) return;
     if (impl_->th.joinable()) impl_->th.join();
 }

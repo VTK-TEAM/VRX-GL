@@ -143,6 +143,29 @@ render::OverlayImage make_mute_toggle(bool muted) {
     return img;
 }
 
+// ГОЛОВНИЙ ВИМИКАЧ: знак живлення (коло з розривом угорі й риска).
+// Звук увімкнено — зелений, вимкнено — сірий.
+render::OverlayImage make_power_toggle(bool on) {
+    render::OverlayImage img = tile(std::string("power") + (on ? "1" : "0"));
+    const uint8_t r = on ? 90 : 120, g = on ? 210 : 125, b = on ? 110 : 135, a = on ? 255 : 210;
+    const float cx = (kIcon - 1) * 0.5f, cy = (kIcon - 1) * 0.54f;
+    const float rad = kIcon * 0.26f;
+    const int th = std::max(2, kIcon / 13);
+    for (int y = 0; y < kIcon; ++y)
+        for (int x = 0; x < kIcon; ++x) {
+            const float d = std::hypot(float(x) - cx, float(y) - cy);
+            if (d > rad || d < rad - th) continue;
+            // розрив угорі, де стоїть риска
+            const float ang = std::atan2(float(x) - cx, cy - float(y));   // 0 = вгору
+            if (std::fabs(ang) < 0.55f) continue;
+            put(img.rgba, kIcon, x, y, r, g, b, a);
+        }
+    for (int y = (int)(cy - rad - th * 0.5f); y < (int)cy; ++y)
+        for (int x = (int)(cx - th * 0.5f); x < (int)(cx + th * 0.5f + 1); ++x)
+            put(img.rgba, kIcon, x, y, r, g, b, a);
+    return img;
+}
+
 } // namespace
 
 struct AudioUi::Impl {
@@ -151,12 +174,14 @@ struct AudioUi::Impl {
     ScreenPresets* presets = nullptr;
     std::function<audio::AudioLevel()> level_cb;
     std::function<void(float)> volume_cb;
+    std::function<void(bool)> enable_cb;
 
     std::vector<render::OverlayImage> images;
     int i_panel = 0, i_track = 0, i_fill = 0, i_knob = 0;
     int i_mbg = 0, i_dead = 0, i_green = 0, i_yellow = 0, i_red = 0, i_peak = 0;
     int i_thr_on = 0, i_thr_off = 0, i_frame = 0;
-    int i_tog = 0, i_alarm = 0, i_mute = 0;    // кожна: +0 вимк, +1 увімк
+    int i_tog = 0, i_alarm = 0, i_mute = 0, i_power = 0;   // кожна: +0 вимк, +1 увімк
+    int i_dim = 0;                                         // притлумити вимкнене
 
     static constexpr int kRoles = 2;
     std::atomic<int> rw[kRoles] = {};
@@ -189,6 +214,7 @@ struct AudioUi::Impl {
 
     // --- збережуваний стан ---
     std::mutex mtx;
+    bool enabled = true;         // головний вимикач звуку
     float vol_s = 1.0f;          // повзунок 0..1; лінійна гучність = s*s
     bool muted = false;
     bool alarm_on = true;
@@ -234,6 +260,8 @@ struct AudioUi::Impl {
         i_tog    = add(make_meter_toggle(false));   add(make_meter_toggle(true));
         i_alarm  = add(make_alarm_toggle(false));   add(make_alarm_toggle(true));
         i_mute   = add(make_mute_toggle(false));    add(make_mute_toggle(true));
+        i_power  = add(make_power_toggle(false));   add(make_power_toggle(true));
+        i_dim    = add(solid("dim", 20, 22, 30, 170));
     }
 
     float to_frac(float db) const {
@@ -241,8 +269,9 @@ struct AudioUi::Impl {
         return f < 0.f ? 0.f : (f > 1.f ? 1.f : f);
     }
 
-    // Панель під динаміком: [метр][тривога][м'ют] і повзунок до кінця.
-    bool panel(int role, R* pan, R btn[3], R* sl) const {
+    // Панель під динаміком: [звук][метр][тривога][м'ют] і повзунок до кінця.
+    static constexpr int kBtns = 4;
+    bool panel(int role, R* pan, R btn[kBtns], R* sl) const {
         if (!presets || !presets->audio_popup(role)) return false;
         float bx, by, bw, bh;
         presets->audio_button_rect(role, &bx, &by, &bw, &bh);
@@ -253,11 +282,11 @@ struct AudioUi::Impl {
         pan->x = bx - padw;                       pan->y = by + bh + padh;
         pan->w = bw * cfg.panel_buttons + padw * 2.f;
         pan->h = bh + padh * 2.f;
-        for (int k = 0; k < 3; ++k) {
+        for (int k = 0; k < kBtns; ++k) {
             btn[k].x = bx + k * (bw + gap);       btn[k].y = pan->y + padh;
             btn[k].w = bw;                        btn[k].h = bh;
         }
-        sl->x = btn[2].x + bw + padw * 3.f;       sl->y = btn[0].y;
+        sl->x = btn[kBtns - 1].x + bw + padw * 3.f;  sl->y = btn[0].y;
         sl->w = (pan->x + pan->w - padw * 2.f) - sl->x;
         sl->h = bh;
         return sl->w > 0.f;
@@ -298,14 +327,16 @@ struct AudioUi::Impl {
         try { f >> root; } catch (...) { return; }
         const float s = json_get(root, "volume", 1.0f);
         vol_s = s < 0.f ? 0.f : (s > 1.f ? 1.f : s);
+        enabled = json_get(root, "enabled", true);
         muted = json_get(root, "muted", false);
         alarm_on = json_get(root, "alarm", true);
         const float t = json_get(root, "threshold_db", cfg.threshold_db);
         thr_db = t < cfg.db_floor ? cfg.db_floor : (t > 0.f ? 0.f : t);
     }
 
-    void save_state(float s, bool mu, bool al, float t) {
+    void save_state(bool en, float s, bool mu, bool al, float t) {
         nlohmann::json root;
+        root["enabled"] = en;
         root["volume"] = s;
         root["muted"] = mu;
         root["alarm"] = al;
@@ -319,18 +350,18 @@ struct AudioUi::Impl {
     }
 
     // I/O — не з потоку показу: запис файлу там коштував би vblank'ів.
-    bool take_dirty(float* s, bool* mu, bool* al, float* t, bool force) {
+    bool take_dirty(bool* en, float* s, bool* mu, bool* al, float* t, bool force) {
         std::lock_guard<std::mutex> lk(mtx);
         if (!dirty || (!force && now_ms() - changed_ms <= 1000)) return false;
-        *s = vol_s; *mu = muted; *al = alarm_on; *t = thr_db;
+        *en = enabled; *s = vol_s; *mu = muted; *al = alarm_on; *t = thr_db;
         dirty = false;
         return true;
     }
     void saver_loop() {
         while (running.load(std::memory_order_relaxed)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            float s, t; bool mu, al;
-            if (take_dirty(&s, &mu, &al, &t, false)) save_state(s, mu, al, t);
+            float s, t; bool en, mu, al;
+            if (take_dirty(&en, &s, &mu, &al, &t, false)) save_state(en, s, mu, al, t);
         }
     }
 
@@ -342,7 +373,7 @@ struct AudioUi::Impl {
         if (now - last_eval < 10) return;          // раз на кадр, а не на кожен екран
         last_eval = now;
         bool on; float thr;
-        { std::lock_guard<std::mutex> lk(mtx); on = alarm_on; thr = thr_db; }
+        { std::lock_guard<std::mutex> lk(mtx); on = alarm_on && enabled; thr = thr_db; }
         if (!on) { exceed_since = -1; alarm_until = 0; alarm_logged = false; return; }
 
         const audio::AudioLevel L = level_cb ? level_cb() : audio::AudioLevel{};
@@ -458,6 +489,7 @@ void AudioUi::attach(Pointer* p) { impl_->pointer = p; }
 void AudioUi::attach_presets(ScreenPresets* sp) { impl_->presets = sp; }
 void AudioUi::set_level(std::function<audio::AudioLevel()> cb) { impl_->level_cb = std::move(cb); }
 void AudioUi::set_volume(std::function<void(float)> cb) { impl_->volume_cb = std::move(cb); }
+void AudioUi::set_enabled_cb(std::function<void(bool)> cb) { impl_->enable_cb = std::move(cb); }
 
 bool AudioUi::hit(int role, float cx, float cy) const {
     if (role < 0 || role >= Impl::kRoles) return false;
@@ -471,8 +503,10 @@ bool AudioUi::start() {
     Impl& d = *impl_;
     if (d.running.load()) return true;
     d.load_state();
+    if (d.enable_cb) d.enable_cb(d.enabled);
     d.apply_volume();
-    std::fprintf(stderr, "[звук] гучність %.0f%%%s, тривога %s, поріг %.1f дБ\n",
+    std::fprintf(stderr, "[звук] %s, гучність %.0f%%%s, тривога %s, поріг %.1f дБ\n",
+                 d.enabled ? "увімкнено" : "ВИМКНЕНО (камера без мікрофона?)",
                  d.vol_s * 100.f, d.muted ? " (М'ЮТ)" : "",
                  d.alarm_on ? "увімкнена" : "вимкнена", d.thr_db);
     d.running.store(true);
@@ -484,8 +518,8 @@ void AudioUi::stop() {
     Impl& d = *impl_;
     if (!d.running.exchange(false)) return;
     if (d.saver.joinable()) d.saver.join();
-    float s, t; bool mu, al;
-    if (d.take_dirty(&s, &mu, &al, &t, true)) d.save_state(s, mu, al, t);   // остання зміна не губиться
+    float s, t; bool en, mu, al;
+    if (d.take_dirty(&en, &s, &mu, &al, &t, true)) d.save_state(en, s, mu, al, t);   // остання зміна не губиться
 }
 
 void AudioUi::set_frame_size(int role, int width, int height) {
@@ -504,17 +538,20 @@ bool AudioUi::acquire(int role, render::DrawList& out) {
     if (W <= 0 || H <= 0) return true;
 
     const int64_t now = now_ms();
+    bool en;
+    { std::lock_guard<std::mutex> lk(d.mtx); en = d.enabled; }
     d.eval_alarm(now);
 
-    // 1) метр — там, де його поставили пресети
+    // 1) метр — там, де його поставили пресети. Звук вимкнено — метра нема:
+    // вимірювати нічого, і порожня шкала лише займала б екран.
     float mx, my, mw, mh;
-    if (d.presets && d.presets->meter_rect(role, &mx, &my, &mw, &mh))
+    if (en && d.presets && d.presets->meter_rect(role, &mx, &my, &mw, &mh))
         d.draw_meter(role, out, Impl::R{mx, my, mw, mh}, W, H);
     else
         d.hnd_valid[role] = false;
 
     // 2) панель звуку під динаміком
-    Impl::R pan, btn[3], sl;
+    Impl::R pan, btn[Impl::kBtns], sl;
     const bool open = d.panel(role, &pan, btn, &sl);
     d.pan_open[role] = open;
     if (open) d.pan_rect[role] = pan;
@@ -528,15 +565,21 @@ bool AudioUi::acquire(int role, render::DrawList& out) {
             const bool clicked = p.clicks > d.seen_clicks;
             const bool pressed = p.left && !d.was_left;
 
-            if (open && clicked) {
-                if (Impl::inside(btn[0], cx, cy) && d.presets) {
+            if (open && clicked && Impl::inside(btn[0], cx, cy)) {
+                // ГОЛОВНИЙ ВИМИКАЧ — діє завжди, решта лише при ввімкненому звуці.
+                { std::lock_guard<std::mutex> lk(d.mtx); d.enabled = !d.enabled; en = d.enabled; d.touch(); }
+                if (!en) d.alarm_until = 0;
+                if (d.enable_cb) d.enable_cb(en);
+                std::fprintf(stderr, "[звук] звук %s\n", en ? "увімкнено" : "ВИМКНЕНО — не пишеться й не грає");
+            } else if (open && clicked && en) {
+                if (Impl::inside(btn[1], cx, cy) && d.presets) {
                     d.presets->toggle_meter(role);
-                } else if (Impl::inside(btn[1], cx, cy)) {
+                } else if (Impl::inside(btn[2], cx, cy)) {
                     std::lock_guard<std::mutex> lk(d.mtx);
                     d.alarm_on = !d.alarm_on;
                     d.touch();
                     std::fprintf(stderr, "[звук] контроль тривоги: %s\n", d.alarm_on ? "увімкнено" : "вимкнено");
-                } else if (Impl::inside(btn[2], cx, cy)) {
+                } else if (Impl::inside(btn[3], cx, cy)) {
                     { std::lock_guard<std::mutex> lk(d.mtx); d.muted = !d.muted; d.touch(); }
                     d.apply_volume();
                     std::fprintf(stderr, "[звук] %s\n", d.muted ? "М'ЮТ" : "звук увімкнено");
@@ -544,9 +587,9 @@ bool AudioUi::acquire(int role, render::DrawList& out) {
             }
 
             // Повзунок: зона — уся висота кнопки, а не тонка доріжка.
-            if (pressed && open && Impl::inside(sl, cx, cy)) d.vol_drag = true;
+            if (pressed && open && en && Impl::inside(sl, cx, cy)) d.vol_drag = true;
             // Вушко порогу: тягнеш його — міняєш поріг, решту метра — рухаєш вікно.
-            if (pressed && d.hnd_valid[role] && Impl::inside(d.hnd_rect[role], cx, cy)) {
+            if (pressed && en && d.hnd_valid[role] && Impl::inside(d.hnd_rect[role], cx, cy)) {
                 d.thr_drag = true; d.thr_drag_role = role;
             }
             if (!p.left) { d.vol_drag = false; d.thr_drag = false; }
@@ -567,9 +610,10 @@ bool AudioUi::acquire(int role, render::DrawList& out) {
         { std::lock_guard<std::mutex> lk(d.mtx); s = d.vol_s; mu = d.muted; al = d.alarm_on; }
         d.push(out, d.i_panel, pan.x, pan.y, pan.w, pan.h);
         const bool shown = d.presets && d.presets->meter_visible(role);
-        d.push(out, d.i_tog + (shown ? 1 : 0), btn[0].x, btn[0].y, btn[0].w, btn[0].h);
-        d.push(out, d.i_alarm + (al ? 1 : 0), btn[1].x, btn[1].y, btn[1].w, btn[1].h);
-        d.push(out, d.i_mute + (mu ? 1 : 0), btn[2].x, btn[2].y, btn[2].w, btn[2].h);
+        d.push(out, d.i_power + (en ? 1 : 0), btn[0].x, btn[0].y, btn[0].w, btn[0].h);
+        d.push(out, d.i_tog + (shown ? 1 : 0), btn[1].x, btn[1].y, btn[1].w, btn[1].h);
+        d.push(out, d.i_alarm + (al ? 1 : 0), btn[2].x, btn[2].y, btn[2].w, btn[2].h);
+        d.push(out, d.i_mute + (mu ? 1 : 0), btn[3].x, btn[3].y, btn[3].w, btn[3].h);
 
         const float th = sl.h * 0.22f;
         const float ty = sl.y + (sl.h - th) * 0.5f;
@@ -579,6 +623,13 @@ bool AudioUi::acquire(int role, render::DrawList& out) {
         const float kh = sl.h * 0.70f;
         const float kw = kh * 0.45f * float(H) / float(W);
         d.push(out, d.i_knob, sl.x + sl.w * s - kw * 0.5f, sl.y + (sl.h - kh) * 0.5f, kw, kh);
+
+        // Звук вимкнено — усе, крім вимикача, притлумлене: видно, що там є,
+        // але воно зараз не діє.
+        if (!en) {
+            const float x0 = btn[1].x;
+            d.push(out, d.i_dim, x0, btn[1].y, (sl.x + sl.w) - x0, btn[1].h);
+        }
     }
 
     // 3) рамка тривоги — поверх усього, на обох екранах, мигає
