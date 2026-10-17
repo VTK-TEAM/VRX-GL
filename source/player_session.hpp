@@ -105,6 +105,13 @@ public:
     int64_t start_wall_us() const { return start_wall_us_.load(std::memory_order_relaxed); }
     bool live() const { return live_.load(std::memory_order_relaxed); }
 
+    // Журнал відкритого сеансу; порожньо — нічого не відкрито. Для звуку
+    // плеєра: він живе в іншому потоці й за журналом сам шукає .mka.
+    std::string journal_path() const {
+        std::lock_guard<std::mutex> lk(jr_mtx_);
+        return journal_;
+    }
+
     // ЗАПИСАНА ТЕЛЕМЕТРІЯ цього сеансу. Віддається OSD замість ефірної, і
     // той малює з неї звичним шляхом. nullptr, якщо логу немає — тоді на
     // екрані просто не буде телеметрії, а решта працює.
@@ -123,6 +130,7 @@ private:
     bool open_ = false;
 
     std::string journal_;
+    mutable std::mutex jr_mtx_;   // журнал_ читають з інших потоків
     std::atomic<int64_t> length_us_{0};
     std::atomic<int64_t> start_wall_us_{0};
     std::atomic<bool> live_{false};

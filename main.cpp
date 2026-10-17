@@ -26,6 +26,7 @@
 #include "record/recorder.hpp"
 #include "audio/audio_out.hpp"
 #include "ui/audio_ui.hpp"
+#include "audio/playback_audio.hpp"
 #include "record/storage.hpp"
 #include "diag/link_monitor.hpp"
 #include "diag/path_meter.hpp"
@@ -387,7 +388,7 @@ int main(int argc, char** argv) {
     // змагалося б із потоком показу. Запис звуку — нижче, поруч з іншими
     // рекордерами.
     //
-    // Вивід — на HDMI і на джек одночасно, кожен своїм пайплайном: карта, що
+    // Вивід — на HDMI, джек і DP одночасно, кожен своїм пайплайном: карта, що
     // не відкрилась (монітор без звуку), не глушить другу. Розсинхрон між
     // ними не лікується — слухають щось одне. Метр — третій, без карти
     // взагалі (level ! fakesink): він живе, хоч би які карти не відкрились.
@@ -408,6 +409,14 @@ int main(int argc, char** argv) {
     aj_cfg.unmute_control = "Headphone";
     vrx::audio::AudioOut audio_jack(aj_cfg);
 
+    // DP (через USB-C) — третій вихід, той самий звук. Поки до нього нічого
+    // не під'єднано, він тихо пробує знову; з'явиться монітор зі звуком —
+    // заграє сам.
+    vrx::audio::AudioOut::Config ad_cfg = ah_cfg;
+    ad_cfg.name = "DP";
+    ad_cfg.device = "plughw:CARD=rockchipdp0,DEV=0";
+    vrx::audio::AudioOut audio_dp(ad_cfg);
+
     vrx::audio::AudioOut::Config am_cfg = ah_cfg;
     am_cfg.name = "метр";
     am_cfg.meter = true;
@@ -415,11 +424,13 @@ int main(int argc, char** argv) {
 
     audio_hdmi.start();
     audio_jack.start();
+    audio_dp.start();
     audio_meter.start();
 
     std::shared_ptr<vrx::ui::ScreenPresets> screen_presets;
     std::shared_ptr<vrx::ui::PlayerUi> player_ui;
     std::shared_ptr<vrx::ui::AudioUi> audio_ui;
+    std::unique_ptr<vrx::audio::PlaybackAudio> playback_audio;
     if (!kSingleChannel) {
         screen_presets = std::make_shared<vrx::ui::ScreenPresets>(
             vrx::ui::ScreenPresets::Config{});
@@ -496,12 +507,37 @@ int main(int argc, char** argv) {
         audio_ui->attach(&pointer);
         audio_ui->attach_presets(screen_presets.get());
         audio_ui->set_level([&audio_meter]() { return audio_meter.level(); });
-        audio_ui->set_volume([&audio_hdmi, &audio_jack](float v) {
+        audio_ui->set_volume([&audio_hdmi, &audio_jack, &audio_dp](float v) {
             audio_hdmi.set_volume(v);
             audio_jack.set_volume(v);
+            audio_dp.set_volume(v);
         });
         audio_ui->start();
         renderer.add_overlay(audio_ui);
+
+        // ЗВУК ПЛЕЄРА: ті самі виходи (HDMI, джек), лише джерело інше —
+        // записаний .mka замість ефіру. Карта одна, тож і звук один: грає
+        // плеєр екрана, що в режимі плеєра з відкритим сеансом, основний
+        // має перевагу. Метр лишається на ефірі — тривога не засинає.
+        playback_audio = std::make_unique<vrx::audio::PlaybackAudio>(
+            vrx::audio::PlaybackAudio::Config{},
+            std::vector<vrx::audio::AudioOut*>{&audio_hdmi, &audio_jack, &audio_dp},
+            [sp = screen_presets, &players, own = std::string(session)]() {
+                vrx::audio::PlaybackTarget t;
+                for (int r : {vrx::render::Scene::kPrimary, vrx::render::Scene::kSecondary}) {
+                    if (sp->mode(r) != vrx::ui::ScreenPresets::kPlayer) continue;
+                    std::string j = players[r]->journal_path();
+                    if (j.empty()) continue;
+                    t.active = true;
+                    t.journal = std::move(j);
+                    t.own_session = own;
+                    t.pos_us = players[r]->position_us();
+                    t.speed = players[r]->speed();
+                    break;
+                }
+                return t;
+            });
+        playback_audio->start();
 
         // Миша одна на всі шари: що забрав таймлайн чи панель звуку, те
         // пресети не обирають і не тягнуть.
@@ -683,7 +719,7 @@ int main(int argc, char** argv) {
     // Вшивати звук у відеофайл не стали навмисно: муксер чекає обидва
     // потоки, і запнутий звук притримав би запис картинки.
     //
-    // Вивід — на HDMI і на джек одночасно, кожен своїм пайплайном: карта, що
+    // Вивід — на HDMI, джек і DP одночасно, кожен своїм пайплайном: карта, що
     // не відкрилась (монітор без звуку), не глушить другу. Розсинхрон між
     // ними не лікується — слухають щось одне.
     vrx::record::Recorder::Config reca_cfg;
@@ -841,6 +877,7 @@ int main(int argc, char** argv) {
                 recorder_audio.set_udp_port(bad_aud);
                 audio_hdmi.set_udp_port(bad_aud);
                 audio_jack.set_udp_port(bad_aud);
+                audio_dp.set_udp_port(bad_aud);
                 audio_meter.set_udp_port(bad_aud);
                 if (osd) osd->set_notice("SD CARD ERROR  E-19");
             } else {
@@ -852,6 +889,7 @@ int main(int argc, char** argv) {
                 recorder_audio.set_udp_port(kAudioPort);
                 audio_hdmi.set_udp_port(kAudioPort);
                 audio_jack.set_udp_port(kAudioPort);
+                audio_dp.set_udp_port(kAudioPort);
                 audio_meter.set_udp_port(kAudioPort);
                 if (osd) osd->set_notice("");
             }
@@ -1033,9 +1071,11 @@ int main(int argc, char** argv) {
                 const auto ra = recorder_audio.stats();
                 const auto ah = audio_hdmi.stats();
                 const auto aj = audio_jack.stats();
-                std::printf("          ЗВУК: HDMI %s буферів %llu | джек %s буферів %llu | запис %s%.2f МБ\n",
+                const auto ad = audio_dp.stats();
+                std::printf("          ЗВУК: HDMI %s %llu | джек %s %llu | DP %s %llu | запис %s%.2f МБ\n",
                             ah.playing ? "грає," : "стоїть,", (unsigned long long)ah.buffers,
                             aj.playing ? "грає," : "стоїть,", (unsigned long long)aj.buffers,
+                            ad.playing ? "грає," : "стоїть,", (unsigned long long)ad.buffers,
                             ra.active ? "" : "не йде, ", ra.bytes / 1e6);
             }
             if (recorder3) {
@@ -1076,9 +1116,11 @@ int main(int argc, char** argv) {
     recorder.stop();
     recorder2.stop();
     if (recorder3) recorder3->stop();
+    if (playback_audio) playback_audio->stop();   // виходи назад на ефір
     if (audio_ui) audio_ui->stop();          // зберегти гучність
     audio_hdmi.stop();
     audio_jack.stop();
+    audio_dp.stop();
     audio_meter.stop();
     recorder_audio.stop();
     storage.stop();

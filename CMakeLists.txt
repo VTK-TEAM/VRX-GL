@@ -64,6 +64,7 @@ add_executable(vrx_gl
     record/snapshot.cpp
     record/recorder.cpp
     audio/audio_out.cpp
+    audio/playback_audio.cpp
     osd/telemetry_log.cpp
     osd/telemetry_reader.cpp
     osd/osd.cpp

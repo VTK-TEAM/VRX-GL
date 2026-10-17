@@ -46,7 +46,7 @@ void PlayerSession::adopt() {
 bool PlayerSession::open(const std::string& journal_path, int64_t t_us) {
     for (auto& c : ch_) c->stop();
     if (!ix_.load(journal_path, own_session_)) return false;
-    journal_ = journal_path;
+    { std::lock_guard<std::mutex> lk(jr_mtx_); journal_ = journal_path; }
     adopt();
 
     // Невдача каналу — НЕ привід кидати сеанс: канал міг узагалі не
@@ -81,7 +81,7 @@ void PlayerSession::close() {
     tlm_.close();
     tlm_ok_ = false;
     ix_ = record::SessionIndex{};
-    journal_.clear();
+    { std::lock_guard<std::mutex> lk(jr_mtx_); journal_.clear(); }
     length_us_.store(0, std::memory_order_relaxed);
     start_wall_us_.store(0, std::memory_order_relaxed);
     live_.store(false, std::memory_order_relaxed);

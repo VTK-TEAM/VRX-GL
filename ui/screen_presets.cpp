@@ -444,7 +444,9 @@ struct ScreenPresets::Impl {
     // Файл пресету при цьому лишається спільним: у ньому обидві секції,
     // просто екрани можуть читати РІЗНІ файли одночасно.
     // Режим кожної ролі й СВІЙ активний пресет на кожен режим.
-    int mode[kRoles] = {ScreenPresets::kLive, ScreenPresets::kLive};
+    // АТОМАРНИЙ: його читає звук плеєра з власного потоку (mode()), а брати
+    // для цього м'ютекс не можна — on_mode кличеться під ним.
+    std::atomic<int> mode[kRoles] = {ScreenPresets::kLive, ScreenPresets::kLive};
     int active_by[ScreenPresets::kModes][kRoles] = {{0, 0}, {0, 0}};
 
     int& active_of(int role) { return active_by[mode[role]][role]; }
@@ -856,7 +858,7 @@ bool ScreenPresets::menu_open(int role) const {
 }
 
 int ScreenPresets::mode(int role) const {
-    return (role >= 0 && role < Impl::kRoles) ? impl_->mode[role] : kLive;
+    return (role >= 0 && role < Impl::kRoles) ? impl_->mode[role].load() : (int)kLive;
 }
 
 bool ScreenPresets::start() {
