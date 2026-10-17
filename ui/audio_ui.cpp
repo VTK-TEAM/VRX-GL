@@ -106,57 +106,60 @@ render::OverlayImage make_alarm_toggle(bool on) {
     return img;
 }
 
-// ДЗВОНИК НАД ВУШКОМ ПОРОГУ — окремий малюнок, а не стиснута іконка кнопки.
+// ДЗВОНИК НАД ВУШКОМ ПОРОГУ — та сама форма, що на кнопці тривоги, але
+// ПЕРЕРАХОВАНА під свій розмір, а не стиснута.
 //
-// Іконку 48 px, стиснуту до ~20, видно сходинками: зменшення без
-// згладжування губить пікселі через один. Тут малюємо одразу в робочому
-// розмірі kBellW x kBellH зі згладженим краєм (покриття пікселя рахуємо 4x4
-// точками), а показуємо рівно піксель у піксель.
-//
-// Форма присадкувата: широка низька баня, плаский широкий обідок, маленький
-// язичок і "вушко" зверху. Темне обведення в піксель — щоб читався на будь-
-// якому кадрі.
-constexpr int kBellW = 24, kBellH = 20;
+// Стиснута до ~20 px картинка кнопки (48 px) виходила сходинками:
+// зменшення без згладжування губить пікселі через один. Тут ті самі
+// пропорції бані, обідка й язичка (draw_bell) рахуються як неперервна
+// фігура в масштабі kBellS і малюються зі згладженим краєм (покриття
+// пікселя 4x4 точками); картинка обрізана впритул до дзвоника й
+// показується піксель у піксель. Темне обведення в піксель — щоб читався на
+// будь-якому кадрі.
+constexpr float kBellS = 31.f;            // "розмір кнопки", під який рахується форма
+constexpr float kBellGrow = 1.0f;         // товщина обведення, px
 
 bool bell_in(float x, float y, float grow) {
-    const float cx = kBellW * 0.5f;
-    const float top = 3.0f, rim = 13.6f;              // баня від top до rim
-    if (y >= top - grow && y <= rim + grow) {
+    const float S = kBellS, cx = S * 0.5f;
+    const float top = 0.20f * S, rim = 0.66f * S;
+    if (y >= top - grow && y < rim) {                         // баня — як на кнопці
         const float k = std::max(0.f, (y - top) / (rim - top));
-        const float half = 3.6f + 6.0f * std::pow(k, 0.55f);   // широко внизу, кругло вгорі
-        if (std::fabs(x - cx) <= half + grow) {
-            if (y >= top) return true;
-            return std::hypot(x - cx, y - top) <= 3.6f + grow;  // заокруглений верх
-        }
+        const float half = S * (0.07f + 0.20f * std::sqrt(k));
+        if (std::fabs(x - cx) <= half + grow) return true;
     }
-    if (y >= rim - 0.4f - grow && y <= rim + 2.2f + grow &&
-        std::fabs(x - cx) <= 10.4f + grow) return true;          // обідок
-    if (std::hypot(x - cx, y - 17.4f) <= 1.9f + grow) return true; // язичок
-    if (std::hypot(x - cx, y - 2.2f) <= 1.3f + grow) return true;  // вушко зверху
-    return false;
+    if (y >= rim - grow && y < rim + S / 14.f + grow &&
+        std::fabs(x - cx) <= 0.31f * S + grow) return true;   // обідок
+    return std::hypot(x - cx, y - (rim + 0.12f * S)) <= 0.065f * S + grow;   // язичок
 }
 
 render::OverlayImage make_bell_mark(bool on) {
+    const float S = kBellS, g = kBellGrow;
+    // Межі фігури з обведенням — картинка рівно під них.
+    const float x0 = S * 0.5f - 0.31f * S - g - 1.f;
+    const float y0 = 0.20f * S - g - 1.f;
+    const int w = (int)std::ceil(0.62f * S + 2.f * g + 2.f);
+    const int h = (int)std::ceil((0.66f + 0.12f + 0.065f - 0.20f) * S + 2.f * g + 2.f);
+
     render::OverlayImage img;
     img.id = std::string("audio:bell") + (on ? "1" : "0");
-    img.width = kBellW; img.height = kBellH;
-    img.rgba.assign((size_t)kBellW * kBellH * 4, 0);
+    img.width = w; img.height = h;
+    img.rgba.assign((size_t)w * h * 4, 0);
     const float fr = on ? 255 : 150, fg = on ? 70 : 150, fb = on ? 60 : 160;
-    for (int py = 0; py < kBellH; ++py)
-        for (int px = 0; px < kBellW; ++px) {
+    for (int py = 0; py < h; ++py)
+        for (int px = 0; px < w; ++px) {
             int nf = 0, no = 0;
             for (int sy = 0; sy < 4; ++sy)
                 for (int sx = 0; sx < 4; ++sx) {
-                    const float x = px + (sx + 0.5f) / 4.f, y = py + (sy + 0.5f) / 4.f;
+                    const float x = x0 + px + (sx + 0.5f) / 4.f, y = y0 + py + (sy + 0.5f) / 4.f;
                     if (bell_in(x, y, 0.f)) ++nf;
-                    if (bell_in(x, y, 1.1f)) ++no;
+                    if (bell_in(x, y, g)) ++no;
                 }
-            const float cf = nf / 16.f;                      // заливка
-            const float co = no / 16.f * 0.85f;              // обведення під нею
+            const float cf = nf / 16.f;                 // заливка
+            const float co = no / 16.f * 0.85f;         // обведення під нею, чорне
             const float a = cf + co * (1.f - cf);
             if (a <= 0.f) continue;
-            const float r = (fr * cf) / a, g = (fg * cf) / a, b = (fb * cf) / a;   // обведення чорне
-            put(img.rgba, kBellW, px, py, (uint8_t)r, (uint8_t)g, (uint8_t)b, (uint8_t)(a * 255.f));
+            put(img.rgba, w, px, py, (uint8_t)(fr * cf / a), (uint8_t)(fg * cf / a),
+                (uint8_t)(fb * cf / a), (uint8_t)(a * 255.f));
         }
     return img;
 }
@@ -533,8 +536,8 @@ struct AudioUi::Impl {
         // Піксель у піксель (ціле збільшення лише для великого метра), щоб
         // згладжений край не розмивався масштабуванням.
         const int k = std::max(1, (int)std::lround(th * float(H) / 16.f));
-        const float bw = float(kBellW * k) / float(W);
-        const float bh = float(kBellH * k) / float(H);
+        const float bw = float(images[i_bell].width * k) / float(W);
+        const float bh = float(images[i_bell].height * k) / float(H);
         push(out, i_bell + (on ? 1 : 0), m.x - tw * 0.5f - bw * 0.5f,
              ly - th * 0.5f - bh - 2.f / float(H), bw, bh);
         hnd_rect[role] = R{m.x - tw, ly - th * 0.5f, tw + m.w, th};
