@@ -106,27 +106,57 @@ render::OverlayImage make_alarm_toggle(bool on) {
     return img;
 }
 
-// Дзвоник над вушком порогу: без плитки, з темним обведенням, щоб читався
-// на будь-якому кадрі. Кольори ті самі, що в риски порогу.
+// ДЗВОНИК НАД ВУШКОМ ПОРОГУ — окремий малюнок, а не стиснута іконка кнопки.
+//
+// Іконку 48 px, стиснуту до ~20, видно сходинками: зменшення без
+// згладжування губить пікселі через один. Тут малюємо одразу в робочому
+// розмірі kBellW x kBellH зі згладженим краєм (покриття пікселя рахуємо 4x4
+// точками), а показуємо рівно піксель у піксель.
+//
+// Форма присадкувата: широка низька баня, плаский широкий обідок, маленький
+// язичок і "вушко" зверху. Темне обведення в піксель — щоб читався на будь-
+// якому кадрі.
+constexpr int kBellW = 24, kBellH = 20;
+
+bool bell_in(float x, float y, float grow) {
+    const float cx = kBellW * 0.5f;
+    const float top = 3.0f, rim = 13.6f;              // баня від top до rim
+    if (y >= top - grow && y <= rim + grow) {
+        const float k = std::max(0.f, (y - top) / (rim - top));
+        const float half = 3.6f + 6.0f * std::pow(k, 0.55f);   // широко внизу, кругло вгорі
+        if (std::fabs(x - cx) <= half + grow) {
+            if (y >= top) return true;
+            return std::hypot(x - cx, y - top) <= 3.6f + grow;  // заокруглений верх
+        }
+    }
+    if (y >= rim - 0.4f - grow && y <= rim + 2.2f + grow &&
+        std::fabs(x - cx) <= 10.4f + grow) return true;          // обідок
+    if (std::hypot(x - cx, y - 17.4f) <= 1.9f + grow) return true; // язичок
+    if (std::hypot(x - cx, y - 2.2f) <= 1.3f + grow) return true;  // вушко зверху
+    return false;
+}
+
 render::OverlayImage make_bell_mark(bool on) {
     render::OverlayImage img;
     img.id = std::string("audio:bell") + (on ? "1" : "0");
-    img.width = img.height = kIcon;
-    img.rgba.assign((size_t)kIcon * kIcon * 4, 0);
-    draw_bell(img, on ? 255 : 150, on ? 70 : 150, on ? 60 : 160, 255);
-    // обведення: прозорий піксель поруч із залитим — темний
-    std::vector<uint8_t> src = img.rgba;
-    for (int y = 0; y < kIcon; ++y)
-        for (int x = 0; x < kIcon; ++x) {
-            if (src[((size_t)y * kIcon + x) * 4 + 3]) continue;
-            bool edge = false;
-            for (int dy = -2; dy <= 2 && !edge; ++dy)
-                for (int dx = -2; dx <= 2 && !edge; ++dx) {
-                    const int xx = x + dx, yy = y + dy;
-                    if (xx < 0 || yy < 0 || xx >= kIcon || yy >= kIcon) continue;
-                    edge = src[((size_t)yy * kIcon + xx) * 4 + 3] != 0;
+    img.width = kBellW; img.height = kBellH;
+    img.rgba.assign((size_t)kBellW * kBellH * 4, 0);
+    const float fr = on ? 255 : 150, fg = on ? 70 : 150, fb = on ? 60 : 160;
+    for (int py = 0; py < kBellH; ++py)
+        for (int px = 0; px < kBellW; ++px) {
+            int nf = 0, no = 0;
+            for (int sy = 0; sy < 4; ++sy)
+                for (int sx = 0; sx < 4; ++sx) {
+                    const float x = px + (sx + 0.5f) / 4.f, y = py + (sy + 0.5f) / 4.f;
+                    if (bell_in(x, y, 0.f)) ++nf;
+                    if (bell_in(x, y, 1.1f)) ++no;
                 }
-            if (edge) put(img.rgba, kIcon, x, y, 0, 0, 0, 200);
+            const float cf = nf / 16.f;                      // заливка
+            const float co = no / 16.f * 0.85f;              // обведення під нею
+            const float a = cf + co * (1.f - cf);
+            if (a <= 0.f) continue;
+            const float r = (fr * cf) / a, g = (fg * cf) / a, b = (fb * cf) / a;   // обведення чорне
+            put(img.rgba, kBellW, px, py, (uint8_t)r, (uint8_t)g, (uint8_t)b, (uint8_t)(a * 255.f));
         }
     return img;
 }
@@ -500,10 +530,13 @@ struct AudioUi::Impl {
         const float tw = th * float(H) / float(W);
         push(out, img, m.x - tw, ly - th * 0.5f, tw, th);
         // Дзвоник над вушком: видно одразу, що цей квадрат — поріг тривоги.
-        const float bh = th * 1.6f;
-        const float bw = bh * float(H) / float(W);
+        // Піксель у піксель (ціле збільшення лише для великого метра), щоб
+        // згладжений край не розмивався масштабуванням.
+        const int k = std::max(1, (int)std::lround(th * float(H) / 16.f));
+        const float bw = float(kBellW * k) / float(W);
+        const float bh = float(kBellH * k) / float(H);
         push(out, i_bell + (on ? 1 : 0), m.x - tw * 0.5f - bw * 0.5f,
-             ly - th * 0.5f - bh - th * 0.15f, bw, bh);
+             ly - th * 0.5f - bh - 2.f / float(H), bw, bh);
         hnd_rect[role] = R{m.x - tw, ly - th * 0.5f, tw + m.w, th};
         hnd_valid[role] = true;
     }
