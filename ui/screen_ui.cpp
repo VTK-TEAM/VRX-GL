@@ -299,7 +299,7 @@ bool ScreenUi::acquire(int role, render::DrawList& out) {
     // окрема програма під X, вона одна й показується там; кнопка на
     // додатковому екрані вела б у те саме місце, тільки збивала б з
     // пантелику.
-    const bool show_btn = role == 0 && (!d.visible || d.visible(role));
+    const bool show_btn = d.cfg.editor_button && role == 0 && (!d.visible || d.visible(role));
     if (show_btn) {
         // ВЛАСНА ПІДКЛАДКА ЛИШЕ ТОДІ, КОЛИ РЯДОМ НІКОГО НЕМАЄ.
         //

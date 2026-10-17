@@ -547,21 +547,13 @@ int main(int argc, char** argv) {
             });
     }
 
-    // Кнопка редактора стоїть у спільному ряду з пресетами, через одне
-    // порожнє місце. В одноканальній збірці пресетів немає — тоді вона
-    // перша й сама.
+    // Курсор. Кнопка редактора — звичайна кнопка ряду пресетів; власну
+    // цей шар малює лише в одноканальній збірці, де ряду немає взагалі.
     vrx::ui::ScreenUi::Config ui_cfg;
-    ui_cfg.slot = screen_presets ? screen_presets->row_slots() : 0;
+    ui_cfg.editor_button = !screen_presets;
     auto screen_ui = std::make_shared<vrx::ui::ScreenUi>(ui_cfg);
-
-    // Кнопка редактора живе в іншому шарі, але в тому ж ряду кнопок — тож
-    // з'являється й зникає разом із меню.
-    if (screen_presets) {
-        auto sp = screen_presets;
-        screen_ui->set_visible([sp](int role) { return sp->menu_open(role); });
-    }
     screen_ui->attach(&pointer);
-    renderer.add_overlay(screen_ui);         // курсор і кнопка редактора — зверху
+    renderer.add_overlay(screen_ui);         // курсор — зверху
 
     // Фазове автопідстроювання. Веде ЧАСТОТУ камери так, щоб прихід
     // кадру стояв трохи раніше за опит рендерера — настільки раніше,
@@ -901,7 +893,8 @@ int main(int argc, char** argv) {
         // наглядач (scripts/run.sh). Тут ми не запускаємо нічого: поки
         // цей процес живий, він тримає DRM master, і редактор однаково не
         // отримав би екрана.
-        if (screen_ui->take_editor_request()) {
+        if (screen_ui->take_editor_request() ||
+            (screen_presets && screen_presets->take_editor_request())) {
             std::printf("Перехід у редактор розкладки.\n");
             g_editor = true;
             g_stop.store(true);

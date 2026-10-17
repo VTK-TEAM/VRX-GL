@@ -349,6 +349,26 @@ render::OverlayImage make_audio_button(bool open) {
     return img;
 }
 
+// РЕДАКТОР РОЗКЛАДКИ: три смужки різної довжини — "налаштування". Після
+// натискання плитка бурштинова: закриття станції займає секунди
+// (дозапис файлів, скидання кешів), і без відгуку клік здавався б
+// неприйнятим — у лозі видно, як тиснуть вісім разів поспіль.
+render::OverlayImage make_editor_button(bool pressed) {
+    const int size = 48;
+    render::OverlayImage img;
+    img.id = std::string("presets:editor") + (pressed ? "1" : "0");
+    img.width = img.height = size;
+    img.rgba.assign((size_t)size * size * 4, 0);
+    draw_button_bg(img, pressed, size);
+    const uint8_t r = pressed ? 30 : 235, g = pressed ? 30 : 235, b = pressed ? 30 : 240;
+    const int bar_h = std::max(2, size / 12);
+    const int x0 = size / 4;
+    const int lens[3] = {size / 2, size / 3, size * 5 / 12};
+    for (int i = 0; i < 3; ++i)
+        fill_box(img, size, x0, size / 4 + i * (size / 5), lens[i], bar_h, r, g, b, 245);
+    return img;
+}
+
 render::OverlayImage make_menu_button(bool open) {
     const int size = 48;
     render::OverlayImage img;
@@ -407,6 +427,9 @@ struct ScreenPresets::Impl {
     int lock_idx = 0;      // +0 відкритий, +1 закритий
     int shot_idx = 0;      // +0 звичайна, +1 зелена після натискання
     int audio_idx = 0;     // +0 панель звуку згорнута, +1 розгорнута
+    int editor_idx = 0;    // +0 звичайна, +1 бурштинова після натискання
+    std::atomic<bool> editor_requested{false};
+    bool editor_pressed = false;
     bool audio_pop[2] = {false, false};   // панель звуку під динаміком
     int meter_win = -1;    // індекс вікна "meter" або -1
     int64_t shot_flash_ms[2] = {0, 0};   // kRoles оголошено нижче
@@ -527,6 +550,9 @@ struct ScreenPresets::Impl {
         audio_idx = (int)images.size();
         images.push_back(make_audio_button(false));
         images.push_back(make_audio_button(true));
+        editor_idx = (int)images.size();
+        images.push_back(make_editor_button(false));
+        images.push_back(make_editor_button(true));
     }
 
     // Розкладка однієї ролі з уже розібраного json.
@@ -733,7 +759,8 @@ struct ScreenPresets::Impl {
     int shot_button() const { return cfg.preset_count + 2; }
     int audio_button() const { return cfg.preset_count + 3; }   // перед плеєром
     int play_button() const { return cfg.preset_count + 4; }
-    int button_count() const { return cfg.preset_count + 5; }
+    int editor_button() const { return cfg.preset_count + 5; }   // останньою
+    int button_count() const { return cfg.preset_count + 6; }
 
     void button_rect(int role, int b, float* x, float* y, float* w, float* h) const {
         const int W = rw[role].load(), H = rh[role].load();
@@ -857,7 +884,9 @@ bool ScreenPresets::menu_open(int role) const {
     return (role >= 0 && role < Impl::kRoles) && impl_->menu[role];
 }
 
-int ScreenPresets::row_slots() const { return impl_->button_count() + 1; }
+bool ScreenPresets::take_editor_request() {
+    return impl_->editor_requested.exchange(false);
+}
 
 int ScreenPresets::mode(int role) const {
     return (role >= 0 && role < Impl::kRoles) ? impl_->mode[role].load() : (int)kLive;
@@ -986,6 +1015,15 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
                                  d.active_of(role) + 1,
                                  role == render::Scene::kPrimary ? "основному" : "додатковому",
                                  flag ? "ЗАМКНЕНО" : "відкрито");
+                } else if (b == d.editor_button()) {
+                    d.editor_requested.store(true);
+                    // Друкуємо лише перший: далі тиснути можна скільки
+                    // завгодно, і десяток однакових рядків приховав би, що
+                    // ПЕРШИЙ клік уже прийнято.
+                    if (!d.editor_pressed) {
+                        d.editor_pressed = true;
+                        std::fprintf(stderr, "[екрани] натиснуто кнопку редактора, закриваю станцію\n");
+                    }
                 } else if (b == d.audio_button()) {
                     d.audio_pop[role] = !d.audio_pop[role];
                 } else if (b == d.play_button()) {
@@ -1172,7 +1210,7 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
         // картинку.
         if (d.menu[role]) {
             float lx, ly, lw, lh;
-            d.button_rect(role, d.button_count() + 1, &lx, &ly, &lw, &lh);
+            d.button_rect(role, d.button_count(), &lx, &ly, &lw, &lh);   // остання кнопка ряду (редактор)
             const float pad = bh * 0.12f;                    // ~3 пікселі
             const float padx = pad * float(H) / float(W);    // стільки ж по ширині
             push(d.panel_idx, bx - padx, by - pad,
@@ -1209,6 +1247,9 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
 
         d.button_rect(role, d.audio_button() + 1, &bx, &by, &bw, &bh);
         push(d.audio_idx + (d.audio_pop[role] ? 1 : 0), bx, by, bw, bh);
+
+        d.button_rect(role, d.editor_button() + 1, &bx, &by, &bw, &bh);
+        push(d.editor_idx + (d.editor_pressed ? 1 : 0), bx, by, bw, bh);
     }
     return true;
 }
