@@ -373,18 +373,26 @@ render::OverlayImage make_editor_button(bool pressed) {
 // Кнопка ВИМКНЕННЯ: стандартний знак живлення — коло з розривом згори й
 // риска в розриві.
 //
-// Два стани не косметичні, а суть: `armed` це "перший клік прийнято, тисни
-// вдруге". Одне клацання не має глушити станцію в полі, тому кнопка
-// червоніє й чекає підтвердження.
-render::OverlayImage make_power_button(bool armed) {
+// ТРИ СТАНИ, І ЖОДЕН НЕ КОСМЕТИЧНИЙ:
+//   0 спокійна   — нічого не натиснуто;
+//   1 помаранчева — перший клік прийнято, тисни вдруге;
+//   2 червона     — підтверджено, станція гаситься.
+//
+// Одне клацання не має глушити станцію в полі, звідси проміжний стан. А
+// третій потрібен тому, що вимкнення НЕ МИТТЄВЕ: між другим кліком і
+// згаслим екраном проходять секунди згортання, і без окремого кольору
+// незрозуміло, чи клік узагалі прийнято.
+render::OverlayImage make_power_button(int state /*0,1,2*/) {
     const int size = 48;
     render::OverlayImage img;
-    img.id = std::string("presets:power") + (armed ? "1" : "0");
+    img.id = "presets:power" + std::to_string(state);
     img.width = img.height = size;
     img.rgba.assign((size_t)size * size * 4, 0);
-    draw_button_bg(img, armed, size);
+    draw_button_bg(img, state != 0, size);
 
-    const uint8_t r = armed ? 255 : 235, g = armed ? 70 : 235, b = armed ? 60 : 240;
+    uint8_t r = 235, g = 235, b = 240;          // спокійна
+    if (state == 1) { r = 255; g = 165; b = 40; }   // помаранчева
+    if (state == 2) { r = 255; g = 60;  b = 50; }   // червона
     const float c = (size - 1) * 0.5f;
     const float rad = size * 0.27f, th = std::max(2.f, size / 16.f);
 
@@ -473,6 +481,12 @@ struct ScreenPresets::Impl {
     // скинути.
     int64_t power_armed_ms = 0;
     std::atomic<bool> power_requested{false};
+
+    // ЗАЛИПАЄ НАЗОВСІМ. `power_requested` з'їдається при зчитуванні
+    // (exchange), тож малювати по ньому не можна: кнопка блимнула б на один
+    // кадр. А гаситься станція секунди, і саме цей час користувач має
+    // бачити, що його клік прийнято.
+    bool power_dying = false;
     std::atomic<bool> editor_requested{false};
     bool editor_pressed = false;
     static constexpr int64_t kPowerArmMs = 4000;
@@ -600,8 +614,9 @@ struct ScreenPresets::Impl {
         images.push_back(make_editor_button(false));
         images.push_back(make_editor_button(true));
         power_idx = (int)images.size();
-        images.push_back(make_power_button(false));
-        images.push_back(make_power_button(true));
+        images.push_back(make_power_button(0));
+        images.push_back(make_power_button(1));
+        images.push_back(make_power_button(2));
     }
 
     // Розкладка однієї ролі з уже розібраного json.
@@ -1122,7 +1137,10 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
                     // ДВА КЛІКИ. Перший озброює, другий глушить. Станцію
                     // вимикають у полі, часто наосліп, і одноклацальне
                     // вимкнення посеред роботи коштувало б вилоту.
-                    if (d.power_armed()) {
+                    if (d.power_dying) {
+                        // Уже гасимо — клацати далі нема сенсу й нема куди.
+                    } else if (d.power_armed()) {
+                        d.power_dying = true;
                         d.power_requested.store(true);
                         std::fprintf(stderr, "[екрани] підтверджено: вимикаю станцію\n");
                     } else {
@@ -1361,7 +1379,8 @@ bool ScreenPresets::acquire(int role, render::DrawList& out) {
         }
         if (d.power_button() < d.buttons_on(role)) {         // лише на основному
             d.button_rect(role, d.power_button() + 1, &bx, &by, &bw, &bh);
-            push(d.power_idx + (d.power_armed() ? 1 : 0), bx, by, bw, bh);
+            const int st = d.power_dying ? 2 : (d.power_armed() ? 1 : 0);
+            push(d.power_idx + st, bx, by, bw, bh);
         }
     }
     return true;
