@@ -1,6 +1,7 @@
 #include "subtitle_writer.hpp"
 
 #include "json.hpp"
+#include "json_safe.hpp"
 #include "telemetry/vt_telemetry_index.h"
 #include "telemetry/vt_telemetry_names.h"
 
@@ -207,13 +208,18 @@ struct SubtitleWriter::Impl {
             if (!val.is_object()) continue;
 
             Element e;
-            e.l = val.value("L", 0.f);
-            e.t = val.value("T", 0.f);
-            e.units = val.value("UNITS", std::string(""));
-            e.decimals = val.value("DECIMALS", 0);
-            e.value_format = val.value("FORMAT", std::string(""));
-            e.label = trim_copy(strip_icon_tokens(val.value("LABEL", std::string(""))));
-            e.channel = val.value("DATACHANNEL", -1);
+            // json_get, а не val.value(): `value()` віддає дефолт лише коли
+            // ключа НЕМА, а при невідповідності типу кидає type_error. try
+            // вище накриває тільки розбір файлу, тут його вже немає — тобто
+            // одне число в лапках у osd_config.json з флешки вбивало б
+            // станцію. Саме так вона й гинула з відповіддю старої камери.
+            e.l = json_get(val, "L", 0.f);
+            e.t = json_get(val, "T", 0.f);
+            e.units = json_get(val, "UNITS", std::string(""));
+            e.decimals = json_get(val, "DECIMALS", 0);
+            e.value_format = json_get(val, "FORMAT", std::string(""));
+            e.label = trim_copy(strip_icon_tokens(json_get(val, "LABEL", std::string(""))));
+            e.channel = json_get(val, "DATACHANNEL", -1);
 
             // Ні каналу, ні підпису — писати нічого.
             if (e.channel < 0 && e.label.empty()) continue;

@@ -533,10 +533,24 @@ void EditorApp::open_add_menu() {
     std::vector<int> visible_to_catalog;
     visible_to_catalog.reserve(entries.size() + 16);
 
+    // ЧОМУ ТУТ СВІЙ ХЕЛПЕР, А НЕ osd/json_safe.hpp. У редактора ВЛАСНА
+    // копія json.hpp, і це інша версія nlohmann, ніж в osd/. Підключити
+    // спільний заголовок означало б затягнути сюди другу версію: типи
+    // `nlohmann::json` у них різні, і аргумент просто не підійшов би.
+    //
+    // Потрібно це з тієї ж причини, що й там: `value()` віддає дефолт лише
+    // коли ключа НЕМА, а при невідповідності типу кидає type_error — і тут
+    // його нікому ловити.
+    auto chan_of = [](const nlohmann::json& o) -> int {
+        const auto it = o.is_object() ? o.find("DATACHANNEL") : o.end();
+        if (it == o.end() || !it->is_number()) return -1;
+        return it->get<int>();
+    };
+
     auto add_row = [&](const CatalogEntry& e, int catalog_idx) {
         ListItem item;
         item.text = e.display_name;
-        item.subtitle = vt_telemetry_channel_label(e.tpl.value("DATACHANNEL", -1));
+        item.subtitle = vt_telemetry_channel_label(chan_of(e.tpl));
         add_list_view_->items.push_back(item);
         visible_to_catalog.push_back(catalog_idx);
     };
