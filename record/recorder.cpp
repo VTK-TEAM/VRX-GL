@@ -493,7 +493,8 @@ struct Recorder::Impl {
         // make_path МОЖЕ ЗАБЛОКУВАТИСЬ: усередині mkdir на носії, тобто
         // те саме блокуюче I/O. Скільки саме — видно лише звідси.
         const std::string path = storage.make_path(
-            cfg.file_name.empty() ? cfg.name : cfg.file_name);
+            cfg.file_name.empty() ? cfg.name : cfg.file_name,
+            cfg.codec == Recorder::Codec::OPUS ? "mka" : "mkv");
         if (path.empty()) {
             VRX_RLOG(cfg.name.c_str(), "НЕ ВІДКРИВ: шлях не склався (%lld мс)",
                      (long long)(now_ms() - open_t0));
@@ -501,7 +502,26 @@ struct Recorder::Impl {
         }
 
         char desc[1024];
-        if (cfg.codec == Recorder::Codec::MJPEG) {
+        if (cfg.codec == Recorder::Codec::OPUS) {
+            // Звук: RTP Opus -> контейнер без перекодування. opusparse —
+            // той самий вузол "parse", що в інших кодеків: з нього беруться
+            // мітки журналу (PTS кадру), за якими плеєр ставить звук поруч
+            // із відео. Кадр Opus — 20 мс, ключових кадрів немає, тож
+            // очікування ключового тут нема на що чекати.
+            std::snprintf(desc, sizeof(desc),
+                "%s caps=\"application/x-rtp,media=audio,clock-rate=48000,"
+                "encoding-name=OPUS,payload=%d\" "
+                "! rtpjitterbuffer latency=%d drop-on-latency=false "
+                "! rtpopusdepay "
+                "! opusparse name=parse "
+                "! queue name=buf leaky=downstream max-size-time=%llu "
+                "max-size-bytes=%d max-size-buffers=%d "
+                "! matroskamux name=mux streamable=true "
+                "! filesink name=sink location=\"%s\" sync=false async=false",
+                udpsrc_prefix().c_str(), cfg.payload_type, cfg.jitter_ms,
+                (unsigned long long)cfg.queue_ms * 1000000ULL,
+                cfg.queue_bytes, cfg.queue_buffers, path.c_str());
+        } else if (cfg.codec == Recorder::Codec::MJPEG) {
             // Без jitterbuffer: RTP немає, переставляти нічого. jpegparse
             // потрібен не лише для меж кадрів — без коректних image/jpeg
             // на буферах muxer мовчки не запише жодного кадру.

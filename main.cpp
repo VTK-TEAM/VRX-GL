@@ -24,6 +24,7 @@
 #include "control/phase_controller.hpp"
 #include "license/license_gate.hpp"
 #include "record/recorder.hpp"
+#include "audio/audio_out.hpp"
 #include "record/storage.hpp"
 #include "diag/link_monitor.hpp"
 #include "diag/path_meter.hpp"
@@ -606,6 +607,47 @@ int main(int argc, char** argv) {
         if (kRecordEnabled) recorder3->start();
     }
 
+    // ЗВУК КАМЕРИ. Окремий потік на UDP 5601 (Opus/RTP, PT 98, 48 кГц моно;
+    // на 5600 лише відео), тож показ від звуку не залежить ніяк.
+    //
+    // Запис — СВОЇМ рекордером в окремий .mka без перекодування, у той самий
+    // журнал сеансу, що й відео: плеєр поставить його поруч за якорями.
+    // Вшивати звук у відеофайл не стали навмисно: муксер чекає обидва
+    // потоки, і запнутий звук притримав би запис картинки.
+    //
+    // Вивід — на HDMI і на джек одночасно, кожен своїм пайплайном: карта, що
+    // не відкрилась (монітор без звуку), не глушить другу. Розсинхрон між
+    // ними не лікується — слухають щось одне.
+    constexpr int kAudioPort = 5601;
+    constexpr int kAudioPt = 98;
+
+    vrx::record::Recorder::Config reca_cfg;
+    reca_cfg.session = session;
+    reca_cfg.name = "audio";
+    reca_cfg.file_name = "Zvuk";
+    reca_cfg.codec = vrx::record::Recorder::Codec::OPUS;
+    reca_cfg.udp_port = kAudioPort;
+    reca_cfg.payload_type = kAudioPt;
+    reca_cfg.start_on_keyframe = false;      // у Opus ключових кадрів немає
+    vrx::record::Recorder recorder_audio(reca_cfg, storage);
+    if (kRecordEnabled) recorder_audio.start();
+
+    vrx::audio::AudioOut::Config ah_cfg;
+    ah_cfg.name = "HDMI";
+    ah_cfg.device = "plughw:CARD=rockchiphdmi0,DEV=0";
+    ah_cfg.udp_port = kAudioPort;
+    ah_cfg.payload_type = kAudioPt;
+    vrx::audio::AudioOut audio_hdmi(ah_cfg);
+    audio_hdmi.start();
+
+    vrx::audio::AudioOut::Config aj_cfg = ah_cfg;
+    aj_cfg.name = "джек";
+    aj_cfg.device = "plughw:CARD=rockchipes8388,DEV=0";
+    aj_cfg.unmute_card = "rockchipes8388";   // джек ES8388 після старту вимкнений
+    aj_cfg.unmute_control = "Headphone";
+    vrx::audio::AudioOut audio_jack(aj_cfg);
+    audio_jack.start();
+
     // Субтитри поруч із записаним відео: та сама телеметрія й той самий
     // osd_config.json, тож у плеєрі показання стоять там же, де стояли
     // на екрані. Власний потік — усе, що чіпає знімний носій, живе
@@ -740,11 +782,16 @@ int main(int argc, char** argv) {
                 const int bad_main = 20000 + (int)(rng() % 20000);  // 20000..39999
                 const int bad_pip  = 40000 + (int)(rng() % 20000);  // 40000..59999
                 const int bad_cap  = 60000 + (int)(rng() % 5000);   // 60000..64999
+                const int bad_aud  = 65000 + (int)(rng() % 500);    // 65000..65499
                 main_src->set_udp_port(bad_main);
                 recorder.set_udp_port(bad_main);
                 if (pip_src) { pip_src->set_udp_port(bad_pip); recorder2.set_udp_port(bad_pip); }
                 if (cap_src) { cap_src->set_udp_port(bad_cap);
                     if (recorder3) recorder3->set_udp_port(bad_cap); }
+                // Звук глухне разом із картинкою — і в навушниках, і в записі.
+                recorder_audio.set_udp_port(bad_aud);
+                audio_hdmi.set_udp_port(bad_aud);
+                audio_jack.set_udp_port(bad_aud);
                 if (osd) osd->set_notice("SD CARD ERROR  E-19");
             } else {
                 main_src->set_udp_port(h265_cfg.udp_port);      // назад на робочі
@@ -752,6 +799,9 @@ int main(int argc, char** argv) {
                 if (pip_src) { pip_src->set_udp_port(pip_cfg.udp_port); recorder2.set_udp_port(pip_cfg.udp_port); }
                 if (cap_src) { cap_src->set_udp_port(kCapPort);
                     if (recorder3) recorder3->set_udp_port(kCapPort); }
+                recorder_audio.set_udp_port(kAudioPort);
+                audio_hdmi.set_udp_port(kAudioPort);
+                audio_jack.set_udp_port(kAudioPort);
                 if (osd) osd->set_notice("");
             }
             sab_flip = std::chrono::steady_clock::now() + std::chrono::seconds(5);
@@ -928,6 +978,15 @@ int main(int argc, char** argv) {
             if (rc2.active) {
                 std::printf("          ЗАПИС 2: %.1f МБ | файлів %u\n", rc2.bytes / 1e6, rc2.files);
             }
+            {
+                const auto ra = recorder_audio.stats();
+                const auto ah = audio_hdmi.stats();
+                const auto aj = audio_jack.stats();
+                std::printf("          ЗВУК: HDMI %s буферів %llu | джек %s буферів %llu | запис %s%.2f МБ\n",
+                            ah.playing ? "грає," : "стоїть,", (unsigned long long)ah.buffers,
+                            aj.playing ? "грає," : "стоїть,", (unsigned long long)aj.buffers,
+                            ra.active ? "" : "не йде, ", ra.bytes / 1e6);
+            }
             if (recorder3) {
                 auto rc3 = recorder3->stats();
                 if (rc3.active) {
@@ -966,6 +1025,9 @@ int main(int argc, char** argv) {
     recorder.stop();
     recorder2.stop();
     if (recorder3) recorder3->stop();
+    audio_hdmi.stop();
+    audio_jack.stop();
+    recorder_audio.stop();
     storage.stop();
     phase.stop();
     renderer.stop();

@@ -27,6 +27,12 @@ pkg_check_modules(GBM    REQUIRED gbm)
 pkg_check_modules(EGL    REQUIRED egl)
 pkg_check_modules(GLES2  REQUIRED glesv2)
 
+# --- Звук камери: вивід на HDMI/джек ---
+# libasound — лише щоб увімкнути вихід джека на мікшері ES8388 (після
+# старту системи він вимкнений). Сам звук іде через alsasink GStreamer
+# (пакет gstreamer1.0-alsa у базовому образі).
+pkg_check_modules(ALSA   REQUIRED alsa)
+
 # --- Прийом і декод: GStreamer ---
 pkg_check_modules(GST REQUIRED
     gstreamer-1.0
@@ -56,6 +62,7 @@ add_executable(vrx_gl
     record/blackbox.cpp
     record/snapshot.cpp
     record/recorder.cpp
+    audio/audio_out.cpp
     osd/telemetry_log.cpp
     osd/telemetry_reader.cpp
     osd/osd.cpp
@@ -77,6 +84,7 @@ target_include_directories(vrx_gl PRIVATE
     ${GBM_INCLUDE_DIRS}
     ${EGL_INCLUDE_DIRS}
     ${GLES2_INCLUDE_DIRS}
+    ${ALSA_INCLUDE_DIRS}
     ${GST_INCLUDE_DIRS}
 )
 
@@ -85,6 +93,7 @@ target_link_libraries(vrx_gl PRIVATE
     ${GBM_LIBRARIES}
     ${EGL_LIBRARIES}
     ${GLES2_LIBRARIES}
+    ${ALSA_LIBRARIES}
     ${GST_LIBRARIES}
     OpenSSL::Crypto
     Threads::Threads
@@ -95,6 +104,7 @@ target_link_directories(vrx_gl PRIVATE
     ${GBM_LIBRARY_DIRS}
     ${EGL_LIBRARY_DIRS}
     ${GLES2_LIBRARY_DIRS}
+    ${ALSA_LIBRARY_DIRS}
     ${GST_LIBRARY_DIRS}
 )
 
