@@ -503,6 +503,10 @@ struct AudioUi::Impl {
         if (target >= hold_db[role]) { hold_db[role] = target; hold_ms[role] = now; }
         else if (now - hold_ms[role] > 1000) hold_db[role] -= 20.f * dt;
 
+        // Поріг і тривога потрібні вже тут: від них залежить колір стовпчика.
+        float thr; bool on;
+        { std::lock_guard<std::mutex> lk(mtx); thr = thr_db; on = alarm_on; }
+
         if (alive) {
             const float fb = to_frac(bar_db[role]);
             const float fy = to_frac(cfg.db_yellow), fr = to_frac(cfg.db_red);
@@ -510,9 +514,26 @@ struct AudioUi::Impl {
                 if (b <= a) return;
                 push(out, img, in.x, in.y + in.h * (1.f - b), in.w, in.h * (b - a));
             };
-            seg(i_green, 0.f, std::min(fb, fy));
-            seg(i_yellow, fy, std::min(fb, fr));
-            seg(i_red, fr, fb);
+            // КОЛІР СТОВПЧИКА КАЖЕ ПРО ТРИВОГУ:
+            //   тривога йде      — весь червоний і мигає В ОДНІЙ ФАЗІ з рамкою
+            //                      (той самий годинник blink_ms), зокрема й у
+            //                      5-секундному хвості після перевищення;
+            //   рівень над порогом — весь червоний ОДРАЗУ, у мить перетину, ще
+            //                      до спрацювання тривоги;
+            //   інакше            — звичайні зони.
+            // Лише при ввімкненому контролі тривоги: вимкнений поріг (сіра
+            // риска) нічого не означає, і фарбувати за ним нема чого.
+            const bool alarm_now = on && now < alarm_until;
+            const bool crossing = on && L.peak_db > thr;
+            if (alarm_now) {
+                if (((now / cfg.blink_ms) % 2) == 0) seg(i_red, 0.f, fb);
+            } else if (crossing) {
+                seg(i_red, 0.f, fb);
+            } else {
+                seg(i_green, 0.f, std::min(fb, fy));
+                seg(i_yellow, fy, std::min(fb, fr));
+                seg(i_red, fr, fb);
+            }
             const float fh = to_frac(hold_db[role]);
             if (fh > 0.f) {
                 const float th = std::max(in.h * 0.012f, 2.f / float(H));
@@ -521,8 +542,6 @@ struct AudioUi::Impl {
         }
 
         // поріг: риска через шкалу + вушко зліва від метра
-        float thr; bool on;
-        { std::lock_guard<std::mutex> lk(mtx); thr = thr_db; on = alarm_on; }
         const float ly = in.y + in.h * (1.f - to_frac(thr));
         const float lt = std::max(in.h * 0.012f, 3.f / float(H));
         const int img = on ? i_thr_on : i_thr_off;
