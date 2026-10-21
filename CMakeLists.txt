@@ -162,6 +162,22 @@ add_executable(vrx_supervisor supervisor/supervisor.c)
 # жене MJPEG бродкастом; станція читає його як звичайну мережеву камеру.
 # Чистий V4L2 + сокети, без жодних залежностей проєкту.
 add_executable(uvc_relay relay/uvc_relay.c)
+
+# RTSP-видача каналів центральному комп'ютеру через USB-Ethernet (як типова
+# поведінка енкодера BM1000H). ОКРЕМИЙ процес, а не частина станції:
+# libgstrtspserver ставиться з apt, а пакет оновлення apt-пакетів не ставить.
+# На образі без бібліотеки падає лише цей процес, станція живе.
+#
+# Умовно, як і редактор: немає заголовків (libgstrtspserver-1.0-dev) — ціль
+# просто не збирається, а решта проєкту збирається як завжди.
+pkg_check_modules(RTSPSRV gstreamer-rtsp-server-1.0 gstreamer-rtsp-1.0 gstreamer-video-1.0)
+if(RTSPSRV_FOUND)
+    add_executable(vrx_rtsp rtsp/vrx_rtsp.c)
+    target_include_directories(vrx_rtsp PRIVATE ${RTSPSRV_INCLUDE_DIRS})
+    target_link_libraries(vrx_rtsp PRIVATE ${RTSPSRV_LIBRARIES})
+else()
+    message(STATUS "VRX: немає libgstrtspserver-1.0-dev — vrx_rtsp не збирається")
+endif()
 # ---------------------------------------------------------------------
 # Редактор розкладки OSD
 #

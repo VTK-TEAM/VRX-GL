@@ -73,6 +73,11 @@ static char* g_relay_argv[8] = {0};   // NULL[0] = релей не налашт�
 static long g_relay_started = 0;
 static int g_relay_fails = 0;
 
+// RTSP-ВИДАЧА ЦЕНТРАЛЬНОМУ КОМП'ЮТЕРУ (vrx_rtsp). Живою її тримає СТОРОЖ —
+// окремий відгалужений процес; навіщо саме так, сказано біля rtsp_keeper().
+static volatile pid_t g_rtsp_keeper = 0;
+static char g_rtsp_bin[PATH_MAX] = "";
+
 static void on_signal(int sig) {
     g_stop = 1;
     // Обидві дитини глушимо тим самим сигналом: станція вміє коректно
@@ -80,6 +85,7 @@ static void on_signal(int sig) {
     // закрити пристрій і сокет.
     if (g_child > 0) kill(g_child, sig);
     if (g_relay > 0) kill(g_relay, sig);
+    if (g_rtsp_keeper > 0) kill(g_rtsp_keeper, sig);
 }
 
 static long now_ms(void) {
@@ -194,6 +200,81 @@ static void restart_relay(void) {
     start_relay();
 }
 
+// СТОРОЖ vrx_rtsp.
+//
+// ЧОМУ НЕ ЯК РЕЛЕЙ. Релей наглядач піднімає синхронно, просто в циклі
+// очікування станції, з фіксованою паузою 500 мс. Для vrx_rtsp пауза мусить
+// РОСТИ: на образі без libgstrtspserver процес гине ще в завантажувачі,
+// миттєво, і з фіксованою паузою крутився б двічі на секунду вічно. А
+// хвилинний сон усередині того циклу на хвилину затримав би й перезапуск
+// самої станції, якщо вона впаде саме тоді.
+//
+// Тому окремий процес, чия єдина робота — тримати vrx_rtsp: запустити,
+// дочекатись, почекати з наростаючою паузою, повторити. Наглядач лише
+// стежить, щоб жив сам сторож; основний цикл не зачіпається зовсім.
+//
+// Пауза: 1 с після процесу, що прожив понад 30 с (звичайний збій —
+// висмикнули USB-адаптер, і vrx_rtsp вийшов сам, щоб перев'язатися), інакше
+// подвоюється до 60 с (не стартує взагалі: немає бібліотеки чи адреси .168).
+static volatile pid_t k_child = 0;
+static volatile sig_atomic_t k_stop = 0;
+
+static void keeper_on_signal(int sig) {
+    k_stop = 1;
+    if (k_child > 0) kill(k_child, sig);
+}
+
+static void rtsp_keeper(void) {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = keeper_on_signal;
+    sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGTERM, &sa, NULL);
+
+    long delay = 1000;
+    while (!k_stop) {
+        const long t0 = now_ms();
+        const pid_t pid = fork();
+        if (pid == 0) {
+            char* av[] = { g_rtsp_bin, NULL };
+            execv(av[0], av);
+            _exit(127);
+        }
+        if (pid > 0) {
+            k_child = pid;
+            int st = 0;
+            while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {}
+            k_child = 0;
+            if (k_stop) break;
+            const long lived = now_ms() - t0;
+            delay = lived > 30000 ? 1000 : (delay * 2 > 60000 ? 60000 : delay * 2);
+            if (WIFSIGNALED(st))
+                fprintf(stderr, "[наглядач] rtsp: сигнал %d, прожив %ld мс, знову за %ld с\n",
+                        WTERMSIG(st), lived, delay / 1000);
+            else
+                fprintf(stderr, "[наглядач] rtsp: код %d, прожив %ld мс, знову за %ld с\n",
+                        WEXITSTATUS(st), lived, delay / 1000);
+            fflush(stderr);
+        }
+        for (long s = 0; s < delay && !k_stop; s += 100) sleep_ms(100);
+    }
+    _exit(0);
+}
+
+static void start_rtsp_keeper(void) {
+    if (g_stop || !g_rtsp_bin[0]) return;
+    const pid_t pid = fork();
+    if (pid < 0) {
+        fprintf(stderr, "[наглядач] fork сторожа rtsp: %s\n", strerror(errno));
+        return;
+    }
+    if (pid == 0) {
+        setpgid(0, 0);
+        rtsp_keeper();                     // не повертається
+    }
+    g_rtsp_keeper = pid;
+}
+
 // Запускає програму й чекає. Повертає код виходу, або -1 якщо процес
 // убито сигналом (це не збій станції, це нас зупиняють).
 //
@@ -232,6 +313,13 @@ static int run_and_wait(const char* what, char* const argv[], char* const envp_e
         if (g_relay > 0 && got == g_relay) {
             g_relay = 0;
             restart_relay();                // релей помер — незалежно від станції
+            continue;
+        }
+        if (g_rtsp_keeper > 0 && got == g_rtsp_keeper) {
+            // Сторож сам не виходить, лише якщо його вбили. Піднімаємо.
+            g_rtsp_keeper = 0;
+            sleep_ms(500);
+            start_rtsp_keeper();
             continue;
         }
         if (got == pid) { status = st; break; }
@@ -309,6 +397,16 @@ int main(int argc, char** argv) {
         g_relay_argv[4] = relay_fps; g_relay_argv[5] = relay_dst;
         g_relay_argv[6] = NULL;
         start_relay();
+    }
+
+    // RTSP-видача центральному комп'ютеру. Бінарника може не бути: ціль не
+    // збирається там, де немає libgstrtspserver-dev, — тоді просто без неї.
+    snprintf(g_rtsp_bin, sizeof(g_rtsp_bin), "%s/build/vrx_rtsp", root);
+    if (access(g_rtsp_bin, X_OK) == 0) {
+        start_rtsp_keeper();
+    } else {
+        fprintf(stderr, "[наглядач] немає %s — RTSP-видачі не буде\n", g_rtsp_bin);
+        g_rtsp_bin[0] = '\0';
     }
 
     int fail_streak = 0;
